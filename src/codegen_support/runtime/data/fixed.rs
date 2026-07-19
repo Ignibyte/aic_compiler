@@ -242,6 +242,10 @@ pub(crate) fn emit_runtime_data_fixed(heap_size: usize, target: Target) -> Strin
             "array_combine(): Argument #1 ($keys) and argument #2 ($values) must have the same number of elements",
         ),
         (
+            "_mixed_arg_not_array_msg",
+            "Argument must be of type array",
+        ),
+        (
             "_iterator_iterator_downcast_msg",
             "Class to downcast to not found or not base class or does not implement Traversable",
         ),

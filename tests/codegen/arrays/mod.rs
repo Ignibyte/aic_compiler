@@ -17,3 +17,4 @@ mod list_and_keys;
 mod assoc_set_ops;
 mod empty_array_params;
 mod key_exists_mixed_storage;
+mod mixed_array_param;

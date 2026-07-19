@@ -5200,6 +5200,21 @@ fn materialize_direct_call_arg_for_param(
             emit_mixed_unbox_to_object_pointer(ctx.emitter);
             Ok(param_ty.codegen_repr())
         }
+        // A boxed-`Mixed` source passed to an `array` parameter must be unboxed to the
+        // underlying array/hash pointer. Without this the callee received the boxed cell
+        // pointer and read the Mixed tag word as the array header — `count()` returned the
+        // tag (always 4), `foreach` aborted on the cell's heap kind, and `array_filter`
+        // segfaulted (the #650 boundary: static type says `array`, storage is a boxed
+        // Mixed). Unlike the `Object` arm above, the checker permits `mixed -> array` as a
+        // runtime-checked coercion with no narrowing, so the runtime tag is validated:
+        // tags 4 (indexed) / 5 (hash) unbox to the array pointer; any other tag raises a
+        // `TypeError`, matching PHP under `strict_types`.
+        PhpType::Array(_) | PhpType::AssocArray { .. }
+            if matches!(source_ty.codegen_repr(), PhpType::Mixed | PhpType::Union(_)) =>
+        {
+            emit_mixed_unbox_to_array_pointer(ctx);
+            Ok(param_ty.codegen_repr())
+        }
         PhpType::Array(param_elem) if param_elem.codegen_repr() == PhpType::Mixed => {
             if let PhpType::Array(source_elem) = source_ty.codegen_repr() {
                 let source_elem = source_elem.codegen_repr();
@@ -5229,6 +5244,96 @@ fn emit_mixed_unbox_to_object_pointer(emitter: &mut crate::codegen_support::emit
         Arch::X86_64 => "rdi",
     };
     emitter.instruction(&format!("mov {}, {}", result_reg, payload_lo_reg));
+}
+
+/// Length of the `TypeError` message raised when a boxed `Mixed` argument passed to an
+/// `array` parameter does not actually hold an array at runtime.
+const MIXED_ARG_NOT_ARRAY_MSG_LEN: usize = "Argument must be of type array".len();
+
+/// Unboxes the boxed `Mixed` cell in the result register to the raw array/hash pointer it
+/// holds, or raises a `TypeError` when the cell is not an array.
+///
+/// `__rt_mixed_unbox` returns the runtime tag in the int-result register and the payload low
+/// word (the array/hash pointer for an array cell) in the first payload register (AArch64
+/// `x1`, x86_64 `rdi`). Tags 4 (indexed array) and 5 (associative hash) unbox to that pointer;
+/// any other tag — object, scalar, or null — raises a `TypeError`, matching PHP's `strict_types`
+/// rejection of a non-array argument for an `array` parameter. This differs from
+/// `emit_mixed_unbox_to_object_pointer`, which trusts a preceding narrowing; here the checker
+/// admits `mixed -> array` unconditionally, so the tag must be checked at runtime.
+fn emit_mixed_unbox_to_array_pointer(ctx: &mut FunctionContext<'_>) {
+    abi::emit_call_label(ctx.emitter, "__rt_mixed_unbox");
+    let ok_label = ctx.next_label("mixed_arg_is_array");
+    let result_reg = abi::int_result_reg(ctx.emitter);
+    let payload_lo_reg = match ctx.emitter.target.arch {
+        Arch::AArch64 => "x1",
+        Arch::X86_64 => "rdi",
+    };
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.emitter.instruction("cmp x0, #4");                              // tag 4 = indexed array
+            ctx.emitter.instruction(&format!("b.eq {}", ok_label));
+            ctx.emitter.instruction("cmp x0, #5");                              // tag 5 = associative hash
+            ctx.emitter.instruction(&format!("b.eq {}", ok_label));
+        }
+        Arch::X86_64 => {
+            ctx.emitter.instruction("cmp rax, 4");                              // tag 4 = indexed array
+            ctx.emitter.instruction(&format!("je {}", ok_label));
+            ctx.emitter.instruction("cmp rax, 5");                              // tag 5 = associative hash
+            ctx.emitter.instruction(&format!("je {}", ok_label));
+        }
+    }
+    emit_throw_type_error_static_message(
+        ctx,
+        "_mixed_arg_not_array_msg",
+        MIXED_ARG_NOT_ARRAY_MSG_LEN,
+    );
+    ctx.emitter.label(&ok_label);
+    ctx.emitter
+        .instruction(&format!("mov {}, {}", result_reg, payload_lo_reg));
+}
+
+/// Emits an inline `TypeError` throw using a static message symbol, then jumps to the unwinder.
+///
+/// Allocates the compact 32-byte Throwable payload, stamps the per-program `TypeError` class id
+/// and the static message pointer/length, publishes `_exc_value`, and enters `__rt_throw_current`.
+/// Never returns to the caller.
+fn emit_throw_type_error_static_message(
+    ctx: &mut FunctionContext<'_>,
+    message_label: &str,
+    message_len: usize,
+) {
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            abi::emit_load_int_immediate(ctx.emitter, "x0", 32);
+            abi::emit_call_label(ctx.emitter, "__rt_heap_alloc");
+            ctx.emitter.instruction("mov x9, #6");                              // heap kind 6 = throwable object instance
+            ctx.emitter.instruction("str x9, [x0, #-8]");                       // stamp allocation as a runtime object
+            abi::emit_load_symbol_to_reg(ctx.emitter, "x9", "_spl_type_error_class_id", 0);
+            ctx.emitter.instruction("str x9, [x0]");                            // store TypeError class id at object header
+            abi::emit_symbol_address(ctx.emitter, "x9", message_label);
+            ctx.emitter.instruction("str x9, [x0, #8]");                        // store static exception message pointer
+            abi::emit_load_int_immediate(ctx.emitter, "x9", message_len as i64);
+            ctx.emitter.instruction("str x9, [x0, #16]");                       // store static exception message length
+            ctx.emitter.instruction("str xzr, [x0, #24]");                      // exception code defaults to zero
+            abi::emit_store_reg_to_symbol(ctx.emitter, "x0", "_exc_value", 0);
+            abi::emit_jump(ctx.emitter, "__rt_throw_current");
+        }
+        Arch::X86_64 => {
+            abi::emit_load_int_immediate(ctx.emitter, "rax", 32);
+            abi::emit_call_label(ctx.emitter, "__rt_heap_alloc");
+            ctx.emitter.instruction("mov r10, 0x4548504c00000006");             // x86_64 heap-kind word: HELP magic + kind 6 object
+            ctx.emitter.instruction("mov QWORD PTR [rax - 8], r10");            // stamp allocation as a runtime object
+            abi::emit_load_symbol_to_reg(ctx.emitter, "r10", "_spl_type_error_class_id", 0);
+            ctx.emitter.instruction("mov QWORD PTR [rax], r10");                // store TypeError class id at object header
+            abi::emit_symbol_address(ctx.emitter, "r10", message_label);
+            ctx.emitter.instruction("mov QWORD PTR [rax + 8], r10");            // store static exception message pointer
+            abi::emit_load_int_immediate(ctx.emitter, "r10", message_len as i64);
+            ctx.emitter.instruction("mov QWORD PTR [rax + 16], r10");           // store static exception message length
+            ctx.emitter.instruction("mov QWORD PTR [rax + 24], 0");             // exception code defaults to zero
+            abi::emit_store_reg_to_symbol(ctx.emitter, "rax", "_exc_value", 0);
+            abi::emit_jump(ctx.emitter, "__rt_throw_current");
+        }
+    }
 }
 
 /// Converts the currently loaded result registers into the inline nullable-int shape.
