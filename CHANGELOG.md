@@ -3,6 +3,9 @@
 All notable changes to elephc, a PHP-to-native compiler written in Rust.
 Releases are listed newest first.
 
+## [Unreleased]
+- Ported `Exception`/`Error` `$previous` (`?Throwable`) storage from upstream illegalstudio/elephc (issue #628): constructors now accept and store the third `$previous` argument so `getPrevious()` round-trips instead of always returning null. The compact Throwable payload grows uniformly to 56 bytes (class id / message / code / previous) across every allocation site, `getPrevious()` reads the stored slot at offset 40 (null-guarded), and `?Throwable` method dispatch routes through the compact Throwable intrinsics. The orthogonal covariance, soft-keyword `enum`, and `use const` fixes from the same upstream commit are intentionally not ported.
+
 ## [0.26.1]
 - Expanded flow-sensitive type narrowing for PHP's common guard patterns: `int|false` and other false-sentinel unions now preserve the literal `false` subtype and narrow to their success type after a divergent `=== false` guard, without incorrectly removing a full `bool` member; `=== null` and `is_null()` guards narrow nullable values; and stable object properties can be narrowed through `instanceof`, ternaries, and throw guards. Property facts are invalidated after writes or receiver rebindings and are not retained across property hooks or `__get`, whose repeated reads may differ.
 - Object-subtype declaration defaults are now validated after class and interface schemas are complete: parameters, methods, and constructor-promoted properties may use an implementing class or subclass instance as the default for an interface/base-class type, while unrelated object defaults are still rejected with a type error.

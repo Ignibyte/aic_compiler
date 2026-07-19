@@ -42,7 +42,8 @@ pub(super) fn builtin_exception_message_property() -> ClassProperty {
 }
 
 /// Returns a synthetic `ClassMethod` AST node for the `__construct` method of builtin Exception classes.
-/// Takes `message` (string, default `""`) and `code` (int, default `0`) parameters and assigns them to the corresponding properties.
+/// Takes `message` (string, default `""`), `code` (int, default `0`), and `previous`
+/// (`?Throwable`, default `null`) — matching PHP's `Exception::__construct` arity.
 pub(super) fn builtin_exception_constructor_method() -> ClassMethod {
     ClassMethod {
         name: "__construct".to_string(),
@@ -70,18 +71,14 @@ pub(super) fn builtin_exception_constructor_method() -> ClassMethod {
                 )),
                 false,
             ),
-            // PHP's third parameter, `?Throwable $previous = null`. Accepted (positionally and
-            // as the `previous:` named argument) but not stored: the compact throwable payload
-            // has no previous slot and `getPrevious()` is already synthesized as null. The
-            // `?Throwable` annotation is explicit — without it the param is untyped and infers
-            // from the `null` default as `Str`, which then corrupts a subclass constructor that
-            // forwards its own `?Throwable $previous` through `parent::__construct(...)` (the
-            // subclass param is re-typed `Str`, rejecting a real Throwable at every call site).
+            // PHP's third parameter, `?Throwable $previous = null` — stored into the compact
+            // payload's previous slot (offset 40) and returned by `getPrevious()` (#628). The
+            // `?Throwable` annotation is explicit — without it the param infers from the `null`
+            // default as `Str`, corrupting a subclass ctor that forwards its own `?Throwable
+            // $previous` through `parent::__construct(...)`.
             (
                 "previous".to_string(),
-                Some(TypeExpr::Nullable(Box::new(TypeExpr::Named(Name::unqualified(
-                    "Throwable",
-                ))))),
+                Some(nullable_throwable_type()),
                 Some(Expr::new(ExprKind::Null, crate::span::Span::dummy())),
                 false,
             ),
@@ -113,6 +110,17 @@ pub(super) fn builtin_exception_constructor_method() -> ClassMethod {
                 },
                 crate::span::Span::dummy(),
             ),
+            Stmt::new(
+                StmtKind::PropertyAssign {
+                    object: Box::new(Expr::new(ExprKind::This, crate::span::Span::dummy())),
+                    property: "previous".to_string(),
+                    value: Expr::new(
+                        ExprKind::Variable("previous".to_string()),
+                        crate::span::Span::dummy(),
+                    ),
+                },
+                crate::span::Span::dummy(),
+            ),
         ],
         span: crate::span::Span::dummy(),
         attributes: Vec::new(),
@@ -137,6 +145,28 @@ pub(super) fn builtin_exception_code_property() -> ClassProperty {
             ExprKind::IntLiteral(0),
             crate::span::Span::dummy(),
         )),
+        span: crate::span::Span::dummy(),
+        attributes: Vec::new(),
+    }
+}
+
+/// Returns a synthetic `ClassProperty` for PHP's `$previous` chain on builtin Exception classes.
+///
+/// Typed `?Throwable` and stored at compact-payload offset 40 so `getPrevious()` round-trips
+/// wrap-and-rethrow chains. Default is `null`.
+pub(super) fn builtin_exception_previous_property() -> ClassProperty {
+    ClassProperty {
+        name: "previous".to_string(),
+        visibility: Visibility::Protected,
+        set_visibility: None,
+        type_expr: Some(nullable_throwable_type()),
+        hooks: PropertyHooks::none(),
+        readonly: false,
+        is_final: false,
+        is_static: false,
+        is_abstract: false,
+        by_ref: false,
+        default: Some(Expr::new(ExprKind::Null, crate::span::Span::dummy())),
         span: crate::span::Span::dummy(),
         attributes: Vec::new(),
     }
@@ -366,6 +396,9 @@ pub(crate) fn patch_builtin_exception_signatures(checker: &mut Checker) {
                 }
                 if let Some(param) = sig.params.get_mut(1) {
                     param.1 = PhpType::Int;
+                }
+                if let Some(param) = sig.params.get_mut(2) {
+                    param.1 = nullable_throwable.clone();
                 }
                 sig.return_type = PhpType::Void;
             }
