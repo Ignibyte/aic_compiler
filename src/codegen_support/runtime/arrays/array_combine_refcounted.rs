@@ -8,8 +8,14 @@
 //! Key details:
 //! - Array helpers operate on runtime array headers and element cells; mutations must respect capacity and COW contracts.
 
+use super::value_error;
 use crate::codegen_support::emit::Emitter;
 use crate::codegen_support::platform::Arch;
+
+/// Length of the `ValueError` message PHP raises when `array_combine()` is
+/// called with key and value arrays of differing lengths.
+const ARRAY_COMBINE_LENGTH_MSG_LEN: usize =
+    "array_combine(): Argument #1 ($keys) and argument #2 ($values) must have the same number of elements".len();
 
 /// Emits `__rt_array_combine_refcounted`, creating an associative array from string keys
 /// and refcounted values.
@@ -53,6 +59,19 @@ pub fn emit_array_combine_refcounted(emitter: &mut Emitter) {
     emitter.instruction("str x0, [sp, #0]");                                    // save keys array pointer
     emitter.instruction("str x1, [sp, #8]");                                    // save values array pointer
     emitter.instruction("str x2, [sp, #32]");                                   // save result value_type tag
+
+    // -- length precondition: PHP raises ValueError before allocating or retaining
+    //    anything when the key and value arrays differ in length. x0=keys, x1=values. --
+    emitter.instruction("ldr x9, [x0]");                                        // x9 = keys array length
+    emitter.instruction("ldr x10, [x1]");                                       // x10 = values array length
+    emitter.instruction("cmp x9, x10");                                         // compare lengths before any allocation or retain
+    emitter.instruction("b.eq __rt_array_combine_ref_lengths_ok");              // equal lengths proceed to the hash build
+    value_error::emit_throw_value_error_aarch64(
+        emitter,
+        "_array_combine_length_msg",
+        ARRAY_COMBINE_LENGTH_MSG_LEN,
+    );
+    emitter.label("__rt_array_combine_ref_lengths_ok");
 
     // -- create hash table with capacity = max(length * 2, 16) --
     emitter.instruction("ldr x0, [x0]");                                        // load keys array length
@@ -135,6 +154,19 @@ fn emit_array_combine_refcounted_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov QWORD PTR [rbp - 8], rdi");                        // preserve the string-key indexed array across nested hash-constructor and insertion helper calls
     emitter.instruction("mov QWORD PTR [rbp - 16], rsi");                       // preserve the refcounted-values indexed array across nested hash-constructor and insertion helper calls
     emitter.instruction("mov QWORD PTR [rbp - 24], rdx");                       // preserve the requested hash value_type tag across nested hash-constructor and insertion helper calls
+
+    // -- length precondition: PHP raises ValueError before allocating or retaining
+    //    anything when the key and value arrays differ in length. rdi=keys, rsi=values. --
+    emitter.instruction("mov r10, QWORD PTR [rdi]");                            // r10 = keys array length
+    emitter.instruction("cmp r10, QWORD PTR [rsi]");                            // compare against values array length before any allocation or retain
+    emitter.instruction("je __rt_array_combine_ref_lengths_ok_x86");            // equal lengths proceed to the hash build
+    value_error::emit_throw_value_error_x86_64(
+        emitter,
+        "_array_combine_length_msg",
+        ARRAY_COMBINE_LENGTH_MSG_LEN,
+    );
+    emitter.label("__rt_array_combine_ref_lengths_ok_x86");
+
     emitter.instruction("mov rdi, QWORD PTR [rdi]");                            // load the string-key indexed-array logical length before deriving the destination hash capacity
     emitter.instruction("shl rdi, 1");                                          // double the string-key count to give the destination hash some insertion headroom
     emitter.instruction("cmp rdi, 16");                                         // clamp the destination hash capacity to the minimum bucket count expected by the runtime

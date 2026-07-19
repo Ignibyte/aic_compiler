@@ -80,6 +80,30 @@ echo count($m);
     assert_eq!(out, "2");
 }
 
+/// Tests that a key/value length mismatch raises a catchable `\ValueError`, even when
+/// the combined result is discarded (AIC's `ForeignKeyNode` cardinality-check shape).
+/// Pre-fix `array_combine` was classified pure-non-throwing, so the optimizer DCE-d the
+/// discarded call and pruned the enclosing try — the mismatch branch was unreachable and
+/// this returned `"ok|ok"`. The runtime helper now compares lengths and throws before
+/// allocating, and the effects change keeps the handler live.
+#[test]
+fn test_array_combine_length_mismatch_throws_value_error() {
+    let out = compile_and_run(
+        r#"<?php
+function cardinality(array $keys, array $vals): string {
+    try {
+        array_combine($keys, $vals);
+        return "ok";
+    } catch (\ValueError $e) {
+        return "mismatch";
+    }
+}
+echo cardinality(["a", "b"], [1, 2]) . "|" . cardinality(["a", "b", "c"], [1, 2]);
+"#,
+    );
+    assert_eq!(out, "ok|mismatch");
+}
+
 /// Tests `array_flip($array)` — inverts values-to-keys on `[10, 20, 30]`, producing a map
 /// with 3 entries. Verifies count only.
 #[test]

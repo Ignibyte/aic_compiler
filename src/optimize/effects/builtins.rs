@@ -143,7 +143,6 @@ pub(in crate::optimize) fn is_pure_non_throwing_builtin(name: &str) -> bool {
             | "array_values"
             | "array_merge"
             | "array_slice"
-            | "array_combine"
             | "array_flip"
             | "array_reverse"
             | "array_unique"
@@ -176,6 +175,10 @@ pub(in crate::optimize) fn is_pure_non_throwing_builtin(name: &str) -> bool {
     // Pointer memory helpers such as ptr_read16(), ptr_write16(),
     // ptr_read_string(), and ptr_write_string() are also intentionally absent:
     // raw memory reads/writes and null/length fatals must remain observable.
+    // array_combine() is intentionally NOT listed: a key/value length mismatch
+    // throws a catchable \ValueError, so DCE must not eliminate an unused
+    // array_combine() call and try-pruning must not drop the enclosing handler
+    // (AIC's ForeignKeyNode cardinality check relies on exactly that throw).
     // hash() is intentionally NOT listed: an unknown algorithm name throws a
     // catchable \ValueError, so DCE must not eliminate an unused hash() call.
     // hash_hmac() is likewise NOT listed: an unknown algorithm or a non-crypto

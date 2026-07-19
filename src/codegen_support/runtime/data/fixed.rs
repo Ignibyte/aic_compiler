@@ -238,6 +238,10 @@ pub(crate) fn emit_runtime_data_fixed(heap_size: usize, target: Target) -> Strin
             "array_filter(): Argument #3 ($mode) must be one of ARRAY_FILTER_USE_VALUE, ARRAY_FILTER_USE_KEY, or ARRAY_FILTER_USE_BOTH.",
         ),
         (
+            "_array_combine_length_msg",
+            "array_combine(): Argument #1 ($keys) and argument #2 ($values) must have the same number of elements",
+        ),
+        (
             "_iterator_iterator_downcast_msg",
             "Class to downcast to not found or not base class or does not implement Traversable",
         ),
