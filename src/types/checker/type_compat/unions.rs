@@ -273,6 +273,28 @@ impl Checker {
         matches!(ty, PhpType::Array(inner) if matches!(inner.as_ref(), PhpType::Mixed))
     }
 
+    /// Enforces the storage invariant that a Mixed-keyed associative array is filled by
+    /// `Op::ArraySetMixedKey`, which boxes every value into a Mixed cell. A type that
+    /// claims a `Mixed` key but a concrete value therefore lies about the slot layout:
+    /// across a boundary (e.g. a specialized `: array` return), a by-key `HashGet` read
+    /// would extract the concrete value directly from a slot that actually holds a boxed
+    /// cell pointer, yielding garbage (#649). Degrading the value to `Mixed` makes the
+    /// read unbox, matching the runtime storage.
+    ///
+    /// Only `AssocArray { key: Mixed, value: <concrete> }` is degraded; an indexed
+    /// `Array(Mixed)` (int keys) and a concrete-keyed assoc array are unaffected.
+    pub(crate) fn degrade_mixed_keyed_array_value(ty: PhpType) -> PhpType {
+        if let PhpType::AssocArray { key, value } = &ty {
+            if key.codegen_repr() == PhpType::Mixed && value.codegen_repr() != PhpType::Mixed {
+                return PhpType::AssocArray {
+                    key: key.clone(),
+                    value: Box::new(PhpType::Mixed),
+                };
+            }
+        }
+        ty
+    }
+
     /// If `declared_ty` is a generic array hint and `actual_ty` is a concrete array or
     /// assoc-array, returns `actual_ty` (specialization). Otherwise returns `declared_ty`.
     /// Used to sharpen untyped `array` parameters when the actual argument type is known.
@@ -296,5 +318,50 @@ impl Checker {
         } else {
             declared_ty.clone()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::checker::Checker;
+
+    fn assoc(key: PhpType, value: PhpType) -> PhpType {
+        PhpType::AssocArray {
+            key: Box::new(key),
+            value: Box::new(value),
+        }
+    }
+
+    /// The #649 invariant: a Mixed-keyed assoc array (whose values are boxed by
+    /// `Op::ArraySetMixedKey`) must never carry a concrete value type.
+    #[test]
+    fn mixed_keyed_assoc_value_is_degraded_to_mixed() {
+        assert_eq!(
+            Checker::degrade_mixed_keyed_array_value(assoc(PhpType::Mixed, PhpType::Str)),
+            assoc(PhpType::Mixed, PhpType::Mixed)
+        );
+        assert_eq!(
+            Checker::degrade_mixed_keyed_array_value(assoc(PhpType::Mixed, PhpType::Int)),
+            assoc(PhpType::Mixed, PhpType::Mixed)
+        );
+    }
+
+    /// Concrete-keyed assoc arrays and indexed arrays keep their precise value type —
+    /// their storage is not boxed by the Mixed-key write path.
+    #[test]
+    fn non_mixed_keyed_arrays_keep_their_value_type() {
+        assert_eq!(
+            Checker::degrade_mixed_keyed_array_value(assoc(PhpType::Str, PhpType::Str)),
+            assoc(PhpType::Str, PhpType::Str)
+        );
+        assert_eq!(
+            Checker::degrade_mixed_keyed_array_value(assoc(PhpType::Mixed, PhpType::Mixed)),
+            assoc(PhpType::Mixed, PhpType::Mixed)
+        );
+        assert_eq!(
+            Checker::degrade_mixed_keyed_array_value(PhpType::Array(Box::new(PhpType::Str))),
+            PhpType::Array(Box::new(PhpType::Str))
+        );
     }
 }

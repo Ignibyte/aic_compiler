@@ -225,7 +225,9 @@ impl Checker {
             return_type = if Self::is_generic_array_hint(&declared_ret)
                 && matches!(inferred_specific_array_type_from_infos(&all_return_infos), Some(_))
             {
-                inferred_specific_array_type_from_infos(&all_return_infos).unwrap()
+                Self::degrade_mixed_keyed_array_value(
+                    inferred_specific_array_type_from_infos(&all_return_infos).unwrap(),
+                )
             } else {
                 declared_ret
             };

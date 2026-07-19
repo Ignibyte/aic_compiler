@@ -328,7 +328,7 @@ impl Checker {
                     if Self::is_generic_array_hint(&declared)
                         && matches!(inferred_return, PhpType::Array(_) | PhpType::AssocArray { .. })
                     {
-                        inferred_return
+                        Self::degrade_mixed_keyed_array_value(inferred_return)
                     } else {
                         declared
                     }

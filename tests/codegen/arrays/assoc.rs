@@ -827,6 +827,32 @@ echo readBack(["a", "b"], "b");
     assert_eq!(out, "V:a|V:b|V:a,V:b,|a=V:a;b=V:b;|2");
 }
 
+/// Regression (#649): a Mixed-keyed map built in one function and RETURNED must read back
+/// correctly by key in the caller. `array_set_mixed_key` boxes every value, but a bare
+/// `array` return hint was specialized to `array<mixed, string>` — a concrete value type
+/// over boxed storage — so the caller's `HashGet` extracted a string ptr/len from a boxed
+/// cell and every by-key read came back empty (`||2`). The return type now degrades to
+/// `array<mixed, mixed>`, so the caller unboxes. Iteration/count were always correct; the
+/// by-key reads are the regression.
+#[test]
+fn test_mixed_key_map_returned_reads_back_by_key() {
+    let out = compile_and_run(
+        r#"<?php
+function build(array $in): array {
+    $m = [];
+    foreach ($in as $r) { $m[$r] = "V:" . $r; }
+    return $m;
+}
+function readBack(array $in, string $key): string {
+    $m = build($in);
+    return $m["a"] . "|" . $m[$key] . "|" . count($m);
+}
+echo readBack(["a", "b"], "b");
+"#,
+    );
+    assert_eq!(out, "V:a|V:b|2");
+}
+
 /// Regression (#640): `isset()` on a hash-promoted `array<Mixed>` must answer correctly and
 /// must never warn.
 ///
