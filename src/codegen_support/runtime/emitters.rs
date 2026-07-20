@@ -300,6 +300,7 @@ pub(crate) fn emit_runtime(emitter: &mut Emitter, features: RuntimeFeatures) {
     arrays::emit_array_map_str_owned(emitter);
     arrays::emit_array_filter(emitter);
     arrays::emit_array_filter_refcounted(emitter);
+    arrays::emit_hash_filter(emitter);
     arrays::emit_array_find_any_all(emitter);
     arrays::emit_array_reduce(emitter);
     arrays::emit_array_walk(emitter);

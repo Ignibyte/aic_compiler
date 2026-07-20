@@ -31,6 +31,7 @@ pub(crate) use callables::{
     check_callback_builtin_call, check_function_exists,
     check_preg_replace_callback_first_class_call,
     comparator_dummy_arg_for_elem, dummy_arg_for_array_scalar_elem, runtime_callable_array_type,
+    static_array_filter_mode_value,
 };
 
 impl Checker {

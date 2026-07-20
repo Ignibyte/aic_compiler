@@ -128,6 +128,80 @@ echo $s . ':' . count($kept);
     assert_eq!(out, "58:2");
 }
 
+/// #648: `array_filter()` over an associative-array (hash) source walks `__rt_hash_filter`,
+/// preserving keys. Value mode with an `is_string(...)` first-class-callable predicate over
+/// heterogeneous values.
+#[test]
+fn test_array_filter_hash_value_mode() {
+    let out = compile_and_run(
+        r#"<?php
+function keep_strings(array $xs): array {
+    return array_filter($xs, is_string(...));
+}
+$kept = keep_strings(['a' => 'x', 'b' => 1, 'c' => 'yy', 'd' => 2, 'e' => 'zzz']);
+$s = '';
+foreach ($kept as $k => $v) { $s .= "$k=$v;"; }
+echo $s . count($kept);
+"#,
+    );
+    assert_eq!(out, "a=x;c=yy;e=zzz;3");
+}
+
+/// #648: `ARRAY_FILTER_USE_KEY` over a hash source, with a capturing closure predicate on the key.
+/// The key is boxed as a Mixed cell for the predicate; kept entries keep their keys.
+#[test]
+fn test_array_filter_hash_use_key_closure() {
+    let out = compile_and_run(
+        r#"<?php
+function pick(array $src, string $prefix): array {
+    return array_filter($src, static fn (string $k): bool => str_starts_with($k, $prefix), ARRAY_FILTER_USE_KEY);
+}
+$r = pick(['alpha' => 1, 'beta' => 2, 'apex' => 3, 'gamma' => 4], 'a');
+$s = '';
+foreach ($r as $k => $v) { $s .= "$k=$v;"; }
+echo $s . count($r);
+"#,
+    );
+    assert_eq!(out, "alpha=1;apex=3;2");
+}
+
+/// #648: `ARRAY_FILTER_USE_BOTH` over a hash source — the predicate receives (value, key), both
+/// boxed as Mixed cells.
+#[test]
+fn test_array_filter_hash_use_both() {
+    let out = compile_and_run(
+        r#"<?php
+function pick(array $src): array {
+    return array_filter($src, static fn (int $v, string $k): bool => $v > 1 && $k !== 'd', ARRAY_FILTER_USE_BOTH);
+}
+$r = pick(['a' => 1, 'b' => 2, 'c' => 3, 'd' => 4]);
+$s = '';
+foreach ($r as $k => $v) { $s .= "$k=$v;"; }
+echo $s . count($r);
+"#,
+    );
+    assert_eq!(out, "b=2;c=3;2");
+}
+
+/// #648: kept string values from a hash `array_filter` are retained (`__rt_incref` before
+/// `__rt_hash_set`), so they outlive the temporary source hash — the double-free / use-after-free
+/// proof the load-only survey structurally cannot see.
+#[test]
+fn test_array_filter_hash_refcount_survives() {
+    let out = compile_and_run(
+        r#"<?php
+function keep_strings(array $xs): array {
+    return array_filter($xs, is_string(...));
+}
+$kept = keep_strings(['k1' => 'aaa', 'k2' => 7, 'k3' => 'bbb', 'k4' => 9, 'k5' => 'ccc']);
+$s = '';
+foreach ($kept as $k => $v) { $s .= $v; }
+echo $s . ':' . count($kept);
+"#,
+    );
+    assert_eq!(out, "aaabbbccc:3");
+}
+
 // Tests `array_map` on a single-element array with a user-defined increment callback.
 /// Verifies that array map single.
 #[test]

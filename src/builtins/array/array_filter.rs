@@ -45,14 +45,17 @@ fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     }
     let arr_ty = cx.checker.infer_type(&cx.args[0], cx.env)?;
     match arr_ty {
+        // A concrete indexed array. Its keys are genuinely integer, so validate the callback with
+        // the strict positional-key dummies — a `fn (string $key)` USE_KEY predicate really is a
+        // mismatch here, and (crucially) the indexed filter runtime cannot walk a hash, so this arm
+        // must not be relaxed to admit possibly-hash sources.
         PhpType::Array(elem_ty) => {
             let arr_ty = PhpType::Array(elem_ty.clone());
-            let dummy_args =
-                crate::types::checker::builtins::array_filter_callback_dummy_args(
-                    &arr_ty,
-                    cx.args.get(2),
-                    cx.span,
-                );
+            let dummy_args = crate::types::checker::builtins::array_filter_callback_dummy_args(
+                &arr_ty,
+                cx.args.get(2),
+                cx.span,
+            );
             crate::types::checker::builtins::check_callback_builtin_call(
                 cx.checker,
                 &cx.args[1],
@@ -63,12 +66,11 @@ fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
             )?;
             Ok(PhpType::Array(elem_ty))
         }
+        // A Mixed/Union source (a bare `array` value the checker could not type as a concrete
+        // array). The filtered result is Array(Mixed); the backend routes it through the Mixed-source
+        // unbox path (which loudly aborts on a runtime hash rather than mis-filtering). Validate the
+        // value-mode callback against a Mixed element via the object-aware synthetic binding.
         PhpType::Mixed | PhpType::Union(_) => {
-            // A Mixed/Union source (an indexed read on a bare `array` property) is coerced/enforced
-            // at runtime; the filtered result is Array(Mixed). Validate the value-mode callback with
-            // a Mixed element via the object-aware dummy (synthetic var + binding) so a typed
-            // predicate checks against Mixed, not a fabricated Int. Same trust posture as array_merge
-            // (R9); key-mode over a Mixed source is rare and not modelled here.
             let (dummy_arg, elem_binding) =
                 crate::types::checker::builtins::comparator_dummy_arg_for_elem(
                     &PhpType::Mixed,
@@ -94,11 +96,71 @@ fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
             )?;
             Ok(PhpType::Array(Box::new(PhpType::Mixed)))
         }
+        // An associative-array (hash) source — a bare `array` with possibly-string keys. Preserve
+        // the associative result type; the backend walks it via `__rt_hash_filter`, which handles
+        // the hash layout and preserves keys.
+        PhpType::AssocArray { key, value } => {
+            validate_filter_callback(cx, value.as_ref())?;
+            Ok(PhpType::AssocArray { key, value })
+        }
         _ => Err(CompileError::new(
             cx.span,
             "array_filter() first argument must be array",
         )),
     }
+}
+
+/// Validates an `array_filter` predicate against mode-aware dummy arguments. The value (USE_VALUE /
+/// USE_BOTH) argument uses the source's element/value type; the key (USE_KEY / USE_BOTH) argument
+/// uses `Mixed`, because a PHP array key is int-or-string at the runtime boundary — a typed
+/// `fn (string $key)` must not be rejected "got Int" on an array the compiler could only type as
+/// `array<int, …>` (phpdoc generics are discarded). Synthetic-variable bindings (from
+/// `comparator_dummy_arg_for_elem`) let a typed parameter validate against these non-literal types.
+fn validate_filter_callback(
+    cx: &mut BuiltinCheckCtx,
+    value_ty: &PhpType,
+) -> Result<(), CompileError> {
+    use crate::types::checker::builtins::{
+        comparator_dummy_arg_for_elem, static_array_filter_mode_value,
+    };
+    let mode = cx.args.get(2).and_then(static_array_filter_mode_value);
+    let (dummy_args, bindings) = match mode {
+        // ARRAY_FILTER_USE_KEY: the predicate receives only the (Mixed) key.
+        Some(2) => {
+            let (arg, bind) = comparator_dummy_arg_for_elem(&PhpType::Mixed, cx.span);
+            (vec![arg], vec![bind])
+        }
+        // ARRAY_FILTER_USE_BOTH: the predicate receives (value, Mixed key).
+        Some(1) => {
+            let (value_arg, value_bind) = comparator_dummy_arg_for_elem(value_ty, cx.span);
+            let (key_arg, key_bind) = comparator_dummy_arg_for_elem(&PhpType::Mixed, cx.span);
+            (vec![value_arg, key_arg], vec![value_bind, key_bind])
+        }
+        // ARRAY_FILTER_USE_VALUE (default): the predicate receives only the value.
+        _ => {
+            let (arg, bind) = comparator_dummy_arg_for_elem(value_ty, cx.span);
+            (vec![arg], vec![bind])
+        }
+    };
+    let mut env_with_bindings;
+    let cb_env: &crate::types::TypeEnv = if bindings.iter().any(Option::is_some) {
+        env_with_bindings = cx.env.clone();
+        for (binding_name, binding_ty) in bindings.iter().flatten() {
+            env_with_bindings.insert(binding_name.clone(), binding_ty.clone());
+        }
+        &env_with_bindings
+    } else {
+        cx.env
+    };
+    crate::types::checker::builtins::check_callback_builtin_call(
+        cx.checker,
+        &cx.args[1],
+        &dummy_args,
+        cx.span,
+        cb_env,
+        "array_filter() callback",
+    )?;
+    Ok(())
 }
 
 /// Lowers an `array_filter` call by dispatching to the shared array emitter.

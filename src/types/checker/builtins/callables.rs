@@ -1237,7 +1237,7 @@ pub(crate) fn array_filter_callback_dummy_args(
 }
 
 /// Returns a compile-time `array_filter()` mode value for integer literals and predefined constants.
-fn static_array_filter_mode_value(expr: &Expr) -> Option<i64> {
+pub(crate) fn static_array_filter_mode_value(expr: &Expr) -> Option<i64> {
     match &expr.kind {
         ExprKind::IntLiteral(value) => Some(*value),
         ExprKind::ConstRef(name) => ARRAY_INT_CONSTANTS

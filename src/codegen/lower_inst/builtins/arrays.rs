@@ -236,6 +236,16 @@ pub(crate) fn lower_array_filter(ctx: &mut FunctionContext<'_>, inst: &Instructi
     {
         return lower_array_filter_over_mixed(ctx, inst, array, callback, mode);
     }
+    // An associative-array (hash) source — a bare-`array` value with possibly-string keys (e.g.
+    // `array_filter($regionContent, fn (string $key) => ..., ARRAY_FILTER_USE_KEY)`). Walk the hash
+    // through the dedicated `__rt_hash_filter`, which preserves keys. Scoped to a first-class-callable
+    // predicate, matching the boxed-Mixed argument path. #648.
+    if matches!(
+        ctx.value_php_type(array)?.codegen_repr(),
+        PhpType::AssocArray { .. }
+    ) {
+        return lower_array_filter_over_hash(ctx, inst, array, callback, mode);
+    }
     let elem_ty = array_filter_source_element_type(ctx.value_php_type(array)?)?;
     require_array_filter_result_type(&elem_ty, &inst.result_php_type.codegen_repr())?;
     let runtime_label = if array_filter_uses_refcounted_runtime(&elem_ty) {
@@ -379,6 +389,74 @@ fn lower_array_filter_over_mixed(
             other
         ))),
     }
+}
+
+/// Lowers `array_filter($assoc, $cb [, $mode])` where the source is an associative array (hash).
+/// Walks the source hash through `__rt_hash_filter`, which boxes each value (and, for the key modes,
+/// key) as a Mixed cell for the predicate and re-inserts kept entries with their keys preserved.
+/// Scoped to a first-class-callable predicate (like the Mixed-source path).
+fn lower_array_filter_over_hash(
+    ctx: &mut FunctionContext<'_>,
+    inst: &Instruction,
+    array: ValueId,
+    callback: ValueId,
+    mode: Option<ValueId>,
+) -> Result<()> {
+    // Every callback argument (value and key) is boxed as a Mixed cell by `__rt_hash_filter`, so the
+    // descriptor invoker sees uniformly Mixed argument types regardless of the source's key type.
+    let visible_arg_types = hash_filter_callback_arg_types(ctx, mode)?;
+    match (ctx.value_php_type(callback)?.codegen_repr(), visible_arg_types) {
+        (PhpType::Callable, Some(visible_arg_types)) => {
+            lower_descriptor_callback_runtime(
+                ctx,
+                callback,
+                visible_arg_types,
+                PhpType::Bool,
+                |ctx, wrapper_label, env_bytes| {
+                    emit_hash_filter_dispatch(ctx, array, mode, wrapper_label, env_bytes)
+                },
+            )?;
+            store_if_result(ctx, inst)
+        }
+        (other, _) => Err(CodegenIrError::unsupported(format!(
+            "array_filter over a hash source with callback PHP type {:?}",
+            other
+        ))),
+    }
+}
+
+/// Returns the boxed-Mixed callback argument types for a hash `array_filter` by mode: one Mixed for
+/// USE_VALUE / USE_KEY, two for USE_BOTH. `None` when the mode is not a compile-time constant.
+fn hash_filter_callback_arg_types(
+    ctx: &FunctionContext<'_>,
+    mode: Option<ValueId>,
+) -> Result<Option<Vec<PhpType>>> {
+    match static_array_filter_mode(ctx, mode)? {
+        Some(1) => Ok(Some(vec![PhpType::Mixed, PhpType::Mixed])),
+        Some(_) => Ok(Some(vec![PhpType::Mixed])),
+        None => Ok(None),
+    }
+}
+
+/// Emits the `__rt_hash_filter(callback, source_hash, env, mode)` call for a hash `array_filter`.
+/// The source hash pointer is loaded into arg1 before arg0 (the callback address) is materialized.
+fn emit_hash_filter_dispatch(
+    ctx: &mut FunctionContext<'_>,
+    array: ValueId,
+    mode: Option<ValueId>,
+    wrapper_label: &str,
+    env_bytes: usize,
+) -> Result<()> {
+    let source_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 1);
+    ctx.load_value_to_reg(array, source_arg_reg)?;
+    let callback_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 0);
+    abi::emit_symbol_address(ctx.emitter, callback_arg_reg, wrapper_label);
+    let env_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 2);
+    load_static_callback_env_arg(ctx, env_arg_reg, env_bytes);
+    let mode_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 3);
+    load_array_filter_mode(ctx, mode, mode_arg_reg)?;
+    abi::emit_call_label(ctx.emitter, "__rt_hash_filter");
+    Ok(())
 }
 
 /// Returns true when the callback operand is a first-class-callable predicate (`is_string(...)`,

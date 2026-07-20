@@ -116,6 +116,7 @@ mod hash_key_hash;
 mod hash_normalize_key;
 mod hash_may_have_cyclic_values;
 mod hash_ensure_unique;
+mod hash_filter;
 mod hash_insert_owned;
 mod hash_iter;
 mod hash_new;
@@ -210,6 +211,8 @@ pub use array_filter::emit_array_filter;
 pub use array_filter_refcounted::emit_array_filter_refcounted;
 /// Emit refcounted array filter helper.
 pub use array_find_any_all::emit_array_find_any_all;
+/// Emit associative-array (hash) filter helper.
+pub use hash_filter::emit_hash_filter;
 /// Emit array find/any/all predicate helper.
 pub use array_flip::emit_array_flip;
 /// Emit array flip helper.
