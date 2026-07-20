@@ -965,3 +965,19 @@ echo $a[0], ":", $b[0];
     );
     assert_eq!(out, "5:6");
 }
+
+/// Regression for issue #581: `var_dump()` on an Array-typed local carrying the in-band
+/// null-container representation (the value a missed indexed read materializes) must print
+/// `NULL` rather than walking the sentinel as an array header and segfaulting.
+#[test]
+fn test_var_dump_missing_array_element_prints_null() {
+    let out = compile_and_run(
+        r#"<?php
+$a = [['x', 'y']];
+$arr = $a[7];
+var_dump($arr);
+echo "done\n";
+"#,
+    );
+    assert_eq!(out, "NULL\ndone\n");
+}

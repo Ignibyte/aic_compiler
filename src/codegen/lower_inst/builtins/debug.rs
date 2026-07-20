@@ -493,8 +493,21 @@ fn emit_var_dump_null(ctx: &mut FunctionContext<'_>) {
 }
 
 /// Emits `var_dump` output for an array/hash payload in the integer result register.
+///
+/// A missed container read (`var_dump($a[$absent])`) materializes the in-band null-container
+/// representation (zero or the null sentinel) in an Array-typed slot; guard it and print
+/// `NULL` rather than walking a bogus array header, matching PHP (#581).
 fn emit_var_dump_array(ctx: &mut FunctionContext<'_>, ty: &PhpType) -> Result<()> {
     let result_reg = abi::int_result_reg(ctx.emitter);
+    let scratch_reg = abi::symbol_scratch_reg(ctx.emitter);
+    let null_label = ctx.next_label("var_dump_array_null");
+    let done_label = ctx.next_label("var_dump_array_done");
+    crate::codegen::sentinels::emit_branch_if_null_container(
+        ctx.emitter,
+        result_reg,
+        scratch_reg,
+        &null_label,
+    );
     abi::emit_push_reg(ctx.emitter, result_reg);
     emit_write_literal(ctx, b"array(");
     abi::emit_pop_reg(ctx.emitter, result_reg);
@@ -518,6 +531,10 @@ fn emit_var_dump_array(ctx: &mut FunctionContext<'_>, ty: &PhpType) -> Result<()
         abi::emit_call_label(ctx.emitter, walker);
     }
     emit_write_literal(ctx, b"}\n");
+    abi::emit_jump(ctx.emitter, &done_label);
+    ctx.emitter.label(&null_label);
+    emit_var_dump_null(ctx);
+    ctx.emitter.label(&done_label);
     Ok(())
 }
 
