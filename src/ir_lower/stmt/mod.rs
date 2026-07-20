@@ -809,6 +809,35 @@ fn promoted_assoc_array_type(current_ty: PhpType, value_ty: PhpType) -> PhpType 
 
 /// Lowers a nested array assignment that already carries an expression target.
 fn lower_nested_array_assign(ctx: &mut LoweringContext<'_, '_>, target: &Expr, value: &Expr, span: Span) {
+    // Lowering the FULL target as an expression routes the write through the
+    // read helper (`__rt_mixed_array_get`), which returns a detached fresh box
+    // whenever the slot storage is not already a boxed Mixed cell; the
+    // two-operand cell replacement then mutated a temporary and the write was
+    // silently lost (#529). Splitting off the innermost key writes through the
+    // parent cell instead (`__rt_mixed_array_set` for Mixed parents,
+    // `offsetSet` for ArrayAccess objects), which mutates the aliased
+    // container for every slot representation.
+    if let ExprKind::ArrayAccess { array, index } = &target.kind {
+        let parent = lower_expr(ctx, array);
+        let key = lower_expr(ctx, index);
+        let value = lower_expr(ctx, value);
+        ctx.emit_void(
+            Op::RuntimeCall,
+            vec![parent.value, key.value, value.value],
+            None,
+            effects_lookup::runtime_effects(),
+            Some(span),
+        );
+        release_persisted_string_operand(ctx, key, span);
+        release_persisted_string_operand(ctx, value, span);
+        // Intermediate reads of a deeper chain return an owned box (fresh or
+        // retained); the borrowed `ArrayGet` parent of the two-level form is
+        // not an owning temporary and stays untouched.
+        if ctx.value_is_owning_temporary(parent) {
+            crate::ir_lower::ownership::release_if_owned(ctx, parent, Some(span));
+        }
+        return;
+    }
     let target = lower_expr(ctx, target);
     let value = lower_expr(ctx, value);
     ctx.emit_void(
