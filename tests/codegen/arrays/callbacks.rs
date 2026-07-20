@@ -84,6 +84,50 @@ echo $s;
     assert_eq!(out, "1258");
 }
 
+/// #648: `array_filter()` over a boxed-`Mixed` source (a value the checker could not type as a
+/// concrete array — here laundered through a `mixed` boundary) unboxes the Mixed to its underlying
+/// indexed array and filters it through the refcounted helper. Mirrors the real AIC roots'
+/// `array_filter(json_decode(...), is_string(...))` shape over heterogeneous elements.
+#[test]
+fn test_array_filter_over_boxed_mixed_source() {
+    let out = compile_and_run(
+        r#"<?php
+function opaque(mixed $x): mixed { return $x; }
+function keep_strings(mixed $xs): array {
+    return array_filter($xs, is_string(...));
+}
+$kept = keep_strings(opaque(['a', 1, 'bb', 2, 'ccc', 3]));
+$s = '';
+foreach ($kept as $v) { $s .= $v; }
+echo $s . ':' . count($kept);
+"#,
+    );
+    assert_eq!(out, "abbccc:3");
+}
+
+/// #648: kept object elements from an `array_filter` over a boxed-`Mixed` source outlive the
+/// temporary source array (the refcounted filter retains each kept boxed-Mixed cell via
+/// `__rt_array_push_refcounted`), so reading their fields after the source is gone is safe — the
+/// double-free / use-after-free proof the load-only survey structurally cannot see. Uses the
+/// `is_object(...)` first-class-callable predicate over heterogeneous elements.
+#[test]
+fn test_array_filter_over_boxed_mixed_object_refcount_survives() {
+    let out = compile_and_run(
+        r#"<?php
+final class Item { public function __construct(public int $w) {} }
+function opaque(mixed $x): mixed { return $x; }
+function keepers(mixed $xs): array {
+    return array_filter($xs, is_object(...));
+}
+$kept = keepers(opaque([new Item(5), 'x', new Item(8), 42]));
+$s = '';
+foreach ($kept as $i) { $s .= $i->w; }
+echo $s . ':' . count($kept);
+"#,
+    );
+    assert_eq!(out, "58:2");
+}
+
 // Tests `array_map` on a single-element array with a user-defined increment callback.
 /// Verifies that array map single.
 #[test]

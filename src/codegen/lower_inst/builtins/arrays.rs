@@ -223,6 +223,19 @@ pub(crate) fn lower_array_filter(ctx: &mut FunctionContext<'_>, inst: &Instructi
     let array = expect_operand(inst, 0)?;
     let callback = expect_operand(inst, 1)?;
     let mode = inst.operands.get(2).copied();
+    // A boxed-`Mixed` source (a bare-`array` value the checker could not type concretely — e.g.
+    // `array_filter(json_decode($s, true), is_string(...))`) holds an indexed array at runtime.
+    // Unbox it to the underlying indexed array and filter that through the refcounted helper, whose
+    // 8-byte boxed-Mixed (value_type 7) element path retains kept cells via `__rt_array_push_refcounted`.
+    // A Mixed that does not hold an indexed array (e.g. an associative hash) aborts loudly rather
+    // than mis-filtering. Scoped to a first-class-callable predicate (the real AIC shape, e.g.
+    // `is_string(...)`); a user closure's typed-parameter invoker does not yet unpack a boxed-Mixed
+    // element, so those keep the clean `array_filter for PHP type Mixed` compile error. #648.
+    if ctx.value_php_type(array)?.codegen_repr() == PhpType::Mixed
+        && callback_is_first_class_callable(ctx, callback)
+    {
+        return lower_array_filter_over_mixed(ctx, inst, array, callback, mode);
+    }
     let elem_ty = array_filter_source_element_type(ctx.value_php_type(array)?)?;
     require_array_filter_result_type(&elem_ty, &inst.result_php_type.codegen_repr())?;
     let runtime_label = if array_filter_uses_refcounted_runtime(&elem_ty) {
@@ -320,6 +333,133 @@ pub(crate) fn lower_array_filter(ctx: &mut FunctionContext<'_>, inst: &Instructi
         abi::emit_release_temporary_stack(ctx.emitter, env_bytes);
     }
     store_if_result(ctx, inst)
+}
+
+/// Lowers `array_filter($mixed, $cb [, $mode])` where the source operand is a boxed-`Mixed` value
+/// that holds an indexed array at runtime (a bare-`array` value the checker could not type as a
+/// concrete array). Recovers the callback the same way the typed path does, but replaces the direct
+/// source load with an unbox that normalizes the Mixed to its underlying indexed-array pointer, then
+/// filters that pointer through `__rt_array_filter_refcounted` (its 8-byte element path retains kept
+/// boxed-Mixed cells). Result is `array<mixed>`. A Mixed holding a non-indexed value aborts loudly
+/// (never a silent mis-filter). #648.
+fn lower_array_filter_over_mixed(
+    ctx: &mut FunctionContext<'_>,
+    inst: &Instruction,
+    array: ValueId,
+    callback: ValueId,
+    mode: Option<ValueId>,
+) -> Result<()> {
+    // Boxed-Mixed cells are refcounted, so the retained-payload helper is always the correct one.
+    let runtime_label = "__rt_array_filter_refcounted";
+    // The dispatcher only routes a first-class-callable predicate here, and its descriptor invoker
+    // accepts a boxed Mixed element directly, so the callback element type is `Mixed`.
+    let visible_arg_types = array_filter_callback_arg_types(ctx, mode, &PhpType::Mixed)?;
+    match (ctx.value_php_type(callback)?.codegen_repr(), visible_arg_types) {
+        (PhpType::Callable, Some(visible_arg_types)) => {
+            lower_descriptor_callback_runtime(
+                ctx,
+                callback,
+                visible_arg_types,
+                PhpType::Bool,
+                |ctx, wrapper_label, env_bytes| {
+                    emit_mixed_indexed_filter_dispatch(
+                        ctx,
+                        array,
+                        mode,
+                        wrapper_label,
+                        env_bytes,
+                        runtime_label,
+                    )
+                },
+            )?;
+            store_if_result(ctx, inst)
+        }
+        (other, _) => Err(CodegenIrError::unsupported(format!(
+            "array_filter over a Mixed source with callback PHP type {:?}",
+            other
+        ))),
+    }
+}
+
+/// Returns true when the callback operand is a first-class-callable predicate (`is_string(...)`,
+/// `is_array(...)`, ...). The boxed-Mixed `array_filter` source path is scoped to these: the
+/// first-class-callable descriptor invoker accepts a boxed-Mixed element directly, whereas a user
+/// closure's typed-parameter invoker does not yet unpack one, so those keep the clean compile error.
+fn callback_is_first_class_callable(ctx: &FunctionContext<'_>, callback: ValueId) -> bool {
+    let Some(value_ref) = ctx.function.value(callback) else {
+        return false;
+    };
+    let ValueDef::Instruction { inst, .. } = value_ref.def else {
+        return false;
+    };
+    ctx.function
+        .instruction(inst)
+        .is_some_and(|inst| inst.op == Op::FirstClassCallableNew)
+}
+
+/// Normalizes the boxed-Mixed `array_filter` source to its underlying indexed-array pointer, then
+/// issues the refcounted filter call with the given callback wrapper label, reserved environment,
+/// and mode. The unboxed source pointer is placed in arg1 before arg0 (the callback address) is
+/// loaded, matching the runtime helper ABI (arg0 = callback, arg1 = source, arg2 = env, arg3 = mode).
+fn emit_mixed_indexed_filter_dispatch(
+    ctx: &mut FunctionContext<'_>,
+    array: ValueId,
+    mode: Option<ValueId>,
+    wrapper_label: &str,
+    env_bytes: usize,
+    runtime_label: &str,
+) -> Result<()> {
+    emit_mixed_indexed_filter_source(ctx, array)?;
+    let callback_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 0);
+    abi::emit_symbol_address(ctx.emitter, callback_arg_reg, wrapper_label);
+    let env_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 2);
+    load_static_callback_env_arg(ctx, env_arg_reg, env_bytes);
+    let mode_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 3);
+    load_array_filter_mode(ctx, mode, mode_arg_reg)?;
+    abi::emit_call_label(ctx.emitter, runtime_label);
+    Ok(())
+}
+
+/// Unboxes a boxed-`Mixed` `array_filter` source into its underlying indexed array and leaves that
+/// pointer in the filter helper's source argument register (arg1). Unlike the by-reference usort
+/// path there is no COW-separate or publish-back — `array_filter` reads the source and builds a
+/// fresh array, so the borrowed indexed pointer is passed straight through. A Mixed holding a
+/// non-indexed value (tag != 4, e.g. an associative hash or a scalar) aborts loudly via
+/// `__rt_iterable_unsupported_kind` rather than reading a hash header as an indexed array.
+fn emit_mixed_indexed_filter_source(ctx: &mut FunctionContext<'_>, array: ValueId) -> Result<()> {
+    let indexed = ctx.next_label("array_filter_mixed_indexed");
+    let unsupported = ctx.next_label("array_filter_mixed_unsupported");
+    let done = ctx.next_label("array_filter_mixed_done");
+    let source_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 1);
+    ctx.load_value_to_result(array)?;
+    abi::emit_call_label(ctx.emitter, "__rt_mixed_unbox");
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.emitter.instruction("cmp x0, #4"); // mixed tag 4 = indexed array
+            ctx.emitter.instruction(&format!("b.eq {}", indexed));
+            ctx.emitter.instruction(&format!("b {}", unsupported));
+        }
+        Arch::X86_64 => {
+            ctx.emitter.instruction("cmp rax, 4"); // mixed tag 4 = indexed array
+            ctx.emitter.instruction(&format!("je {}", indexed));
+            ctx.emitter.instruction(&format!("jmp {}", unsupported));
+        }
+    }
+    ctx.emitter.label(&unsupported);
+    abi::emit_call_label(ctx.emitter, "__rt_iterable_unsupported_kind"); // loud abort, not a silent mis-filter
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => ctx.emitter.instruction(&format!("b {}", done)),
+        Arch::X86_64 => ctx.emitter.instruction(&format!("jmp {}", done)),
+    }
+    ctx.emitter.label(&indexed);
+    // `__rt_mixed_unbox` returns the indexed-array payload in the low word: x1 (already arg1) on
+    // AArch64, rdi on x86_64 (move it into arg1/rsi).
+    if ctx.emitter.target.arch == Arch::X86_64 {
+        ctx.emitter
+            .instruction(&format!("mov {}, rdi", source_arg_reg));
+    }
+    ctx.emitter.label(&done);
+    Ok(())
 }
 
 /// Lowers `array_map()` through the callback runtime helper matching the callback result type.

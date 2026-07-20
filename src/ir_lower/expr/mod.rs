@@ -6622,7 +6622,15 @@ fn array_preserve_first_builtin_return_type(
     operands: &[crate::ir::ValueId],
 ) -> Option<PhpType> {
     let first = operands.first()?;
-    Some(ctx.builder.value_php_type(*first).codegen_repr())
+    match ctx.builder.value_php_type(*first).codegen_repr() {
+        // A boxed-`Mixed` source (a bare-`array` value the checker could not type as a concrete
+        // array — e.g. `array_filter(json_decode(...), ...)`) still yields an *array* from these
+        // builtins. Type the result `array<mixed>` so a consumer treats it as an array rather than a
+        // boxed Mixed that must be unboxed (a raw-array-through-`__rt_mixed_unbox` crash). This
+        // matches the checker's `array_filter` Mixed arm and the backend Mixed-source unbox. #648.
+        PhpType::Mixed => Some(PhpType::Array(Box::new(PhpType::Mixed))),
+        other => Some(other),
+    }
 }
 
 /// Returns precise return metadata for `array_fill_keys(keys, value)`.
