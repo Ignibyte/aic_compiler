@@ -3992,6 +3992,7 @@ fn unset_target_supported(ctx: &LoweringContext<'_, '_>, arg: &Expr) -> bool {
         ExprKind::ArrayAccess { array, .. } => {
             unset_array_access_has_object_receiver(ctx, array)
                 || unset_array_access_has_local_array_receiver(ctx, array)
+                || unset_array_access_has_property_array_receiver(ctx, array)
         }
         ExprKind::PropertyAccess { object, property }
         | ExprKind::NullsafePropertyAccess { object, property } => {
@@ -4040,6 +4041,38 @@ fn unset_array_access_has_object_receiver(
     type_satisfies_array_access_for_ir(ctx, &ty)
 }
 
+/// Returns true when an array-access unset receiver is an object-property associative array whose
+/// element the backend can remove and publish back — `unset($obj->prop[$key])`.
+///
+/// Scoped to `AssocArray` properties. A packed `Array` property is excluded: PHP `unset` leaves a
+/// sparse array (a hash), but a packed-typed property slot cannot hold one — the write-back would be
+/// a `prop_set` representation mismatch — so those keep the existing loud rejection rather than a
+/// miscompile. The property must also NOT be reference-promoted: a ref-cell property's storage is
+/// aliased to another binding, so a copy-on-write split would corrupt the aliased view (mirroring
+/// the by-reference exclusion on the local path).
+fn unset_array_access_has_property_array_receiver(
+    ctx: &LoweringContext<'_, '_>,
+    array: &Expr,
+) -> bool {
+    let ExprKind::PropertyAccess { object, property } = &array.kind else {
+        return false;
+    };
+    let Some(class_name) = instance_callable_object_class(ctx, object) else {
+        return false;
+    };
+    let Some(class_info) = ctx.classes.get(&class_name) else {
+        return false;
+    };
+    if class_info.reference_properties.contains(property) {
+        return false;
+    }
+    class_info
+        .properties
+        .iter()
+        .find(|(name, _)| name == property)
+        .is_some_and(|(_, ty)| matches!(ty.codegen_repr(), PhpType::AssocArray { .. }))
+}
+
 /// Lowers `unset($array[$key])`, dispatching on the receiver kind.
 ///
 /// An associative-array local removes the element in place through `Op::HashUnset`. A packed
@@ -4072,6 +4105,12 @@ fn lower_unset_array_access(
             }
         }
     }
+    if let ExprKind::PropertyAccess { object, property } = &array.kind {
+        if unset_array_access_has_property_array_receiver(ctx, array) {
+            lower_unset_property_array_element(ctx, object, property, array, index, expr);
+            return;
+        }
+    }
     let synthetic = Expr::new(
         ExprKind::MethodCall {
             object: Box::new(array.clone()),
@@ -4081,6 +4120,55 @@ fn lower_unset_array_access(
         expr.span,
     );
     lower_expr(ctx, &synthetic);
+}
+
+/// Lowers `unset($obj->prop[$key])` for an object-property array/hash.
+///
+/// The array lives in a property slot, not a local, so — unlike the local path where `HashUnset`
+/// stores the unique table straight back into the local slot — the mutated table must be published
+/// back explicitly. This mirrors an in-place property assignment of the removed-key table:
+///  1. read the property once (an owning reference, via the incref'ing property load);
+///  2. remove the element — `HashUnset` copy-on-write splits the shared table and removes the key;
+///  3. store the unique table back with the retaining property-store refcount discipline (`PropSet`
+///     retains into the slot and releases the old table; the source temporary is then released).
+///
+/// The receiver object is lowered exactly once and reused for the read and the write-back. Scoped to
+/// `AssocArray` properties by the gate, so no packed→hash conversion is needed (a hash cannot be
+/// published back into a packed-typed property slot).
+fn lower_unset_property_array_element(
+    ctx: &mut LoweringContext<'_, '_>,
+    object: &Expr,
+    property: &str,
+    array_expr: &Expr,
+    index: &Expr,
+    expr: &Expr,
+) {
+    let object = lower_expr(ctx, object);
+    let array = lower_property_get_from_value(ctx, object, property, Op::PropGet, array_expr);
+    let index_value = lower_expr(ctx, index);
+    ctx.emit_void(
+        Op::HashUnset,
+        vec![array.value, index_value.value],
+        None,
+        Op::HashUnset.default_effects(),
+        Some(expr.span),
+    );
+    let data = ctx.intern_string(property);
+    ctx.emit_void(
+        Op::PropSet,
+        vec![object.value, array.value],
+        Some(Immediate::Data(data)),
+        Op::PropSet.default_effects(),
+        Some(expr.span),
+    );
+    if let Some(property_ty) = super::stmt::object_property_type(ctx, object.value, property) {
+        super::stmt::release_property_assignment_source_after_retaining_store(
+            ctx,
+            &property_ty,
+            array,
+            expr.span,
+        );
+    }
 }
 
 /// Lowers `unset($hash[$key])` for an associative-array local as a `HashUnset` instruction.

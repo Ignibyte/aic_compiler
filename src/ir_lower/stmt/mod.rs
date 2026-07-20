@@ -2709,7 +2709,7 @@ fn lower_property_array_assign(
 }
 
 /// Releases a temporary assigned into an object property after `PropSet` retains or boxes it.
-fn release_property_assignment_source_after_retaining_store(
+pub(crate) fn release_property_assignment_source_after_retaining_store(
     ctx: &mut LoweringContext<'_, '_>,
     property_ty: &PhpType,
     value: LoweredValue,
@@ -3235,7 +3235,7 @@ fn static_receiver_class_name(
 }
 
 /// Resolves the declared PHP type of an object property for statement lowering.
-fn object_property_type(
+pub(crate) fn object_property_type(
     ctx: &LoweringContext<'_, '_>,
     object: crate::ir::ValueId,
     property: &str,

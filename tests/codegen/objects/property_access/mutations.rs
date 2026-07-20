@@ -474,3 +474,80 @@ echo $box->value;
     );
     assert_eq!(out, "7");
 }
+
+/// #655: `unset($this->prop[$key])` on an associative-array property removes the element and
+/// publishes the mutated table back into the slot. The removal is observed through SEPARATE method
+/// calls (count/isset/foreach), proving the write-back reaches the property — not a detached copy —
+/// and a missing key is a no-op.
+#[test]
+fn test_unset_object_property_hash_element_publishes_back() {
+    let out = compile_and_run(
+        r#"<?php
+final class Scope {
+    private array $store = [];
+    public function set(string $k, string $v): void { $this->store[$k] = $v; }
+    public function clear(string $k): void { unset($this->store[$k]); }
+    public function total(): int { return count($this->store); }
+    public function dump(): string { $o = ''; foreach ($this->store as $k => $v) { $o .= "$k=$v;"; } return $o; }
+    public function has(string $k): bool { return isset($this->store[$k]); }
+}
+$s = new Scope();
+$s->set('a', 'x'); $s->set('b', 'y'); $s->set('c', 'z');
+$s->clear('b');
+echo $s->dump(), '|', $s->total(), '|', ($s->has('b') ? 'Y' : 'N'), '|', ($s->has('a') ? 'Y' : 'N');
+$s->clear('missing');
+echo '|', $s->total();
+"#,
+    );
+    assert_eq!(out, "a=x;c=z;|2|N|Y|2");
+}
+
+/// #655: multi-target `unset($this->a[$k], $this->b[$k])` — the ward-http Message shape. Each target
+/// is an independent object-property hash removal.
+#[test]
+fn test_unset_object_property_two_targets() {
+    let out = compile_and_run(
+        r#"<?php
+final class Headers {
+    private array $headers = [];
+    private array $names = [];
+    public function add(string $n, string $v): void { $l = strtolower($n); $this->headers[$l] = $v; $this->names[$l] = $n; }
+    public function remove(string $n): void { $l = strtolower($n); unset($this->headers[$l], $this->names[$l]); }
+    public function dump(): string {
+        $o = '';
+        foreach ($this->headers as $k => $v) { $o .= "$k:$v;"; }
+        foreach ($this->names as $k => $v) { $o .= "$k>$v;"; }
+        return $o;
+    }
+}
+$h = new Headers();
+$h->add('Content-Type', 'text/html'); $h->add('X-Foo', 'bar');
+$h->remove('Content-Type');
+echo $h->dump();
+"#,
+    );
+    assert_eq!(out, "x-foo:bar;x-foo>X-Foo;");
+}
+
+/// #655: a value kept in the property hash outlives a removed sibling — the copy-on-write split
+/// inside `__rt_hash_unset` retains the survivors' payloads (refcount discipline; the load-only
+/// survey cannot see this, so it is an executed test).
+#[test]
+fn test_unset_object_property_kept_value_outlives_removed_sibling() {
+    let out = compile_and_run(
+        r#"<?php
+final class Registry {
+    private array $items = [];
+    public function put(string $k, string $v): void { $this->items[$k] = $v; }
+    public function drop(string $k): void { unset($this->items[$k]); }
+    public function get(string $k): string { return $this->items[$k]; }
+}
+$r = new Registry();
+$r->put('keep', str_repeat('a', 5));
+$r->put('drop', str_repeat('b', 5));
+$r->drop('drop');
+echo $r->get('keep');
+"#,
+    );
+    assert_eq!(out, "aaaaa");
+}
