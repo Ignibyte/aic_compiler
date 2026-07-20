@@ -559,3 +559,26 @@ echo bad(new RouteRule('/x'));
         "main.php",
     ));
 }
+
+/// #664: `instanceof Closure` matches by runtime shape. `Closure` is a final builtin held in neither
+/// the class nor interface tables, so `classify_named_target` returns `None` and the instanceof was
+/// previously constant-`false`. A closure reached via a `?Closure` property/return flows as a boxed
+/// `Mixed` cell tagged callable — `true`; a `null` `?Closure` — `false`. This guard is what gates the
+/// ward-dbal-file usort comparator (`if (!$compare instanceof Closure) { ... }`).
+#[test]
+fn test_instanceof_closure_on_nullable_closure() {
+    let out = compile_and_run(
+        r#"<?php
+final class Box {
+    public function __construct(public ?Closure $c) {}
+    public function c(): ?Closure { return $this->c; }
+}
+function tag(Box $b): string {
+    $c = $b->c();
+    return $c instanceof Closure ? "Y" : "N";
+}
+echo tag(new Box(static fn(): int => 1)), tag(new Box(null));
+"#,
+    );
+    assert_eq!(out, "YN");
+}

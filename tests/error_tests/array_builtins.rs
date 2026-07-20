@@ -432,6 +432,20 @@ usort($values, $bad->cmp(...));
     );
 }
 
+/// #664: accepting an opaque `Closure` comparator must NOT open a type-blind dispatch hole — a
+/// non-callable comparator (here a bare `int`, which can never be a `Closure`) stays loudly rejected
+/// at the checker rather than reaching the runtime descriptor path.
+#[test]
+fn test_error_usort_non_callable_int_comparator() {
+    expect_error(
+        r#"<?php
+$s = [3, 1, 2];
+usort($s, 42);
+"#,
+        "usort() callback must have a statically known callable signature",
+    );
+}
+
 /// Verifies that error list unpack non array.
 #[test]
 fn test_error_list_unpack_non_array() {

@@ -22,7 +22,9 @@ use crate::names::{function_symbol, method_symbol, php_symbol_key, static_method
 use crate::types::{array_key_type_from_value_type, PhpType};
 
 use super::super::super::context::FunctionContext;
-use super::super::callables::runtime_string_descriptor_cases;
+use super::super::callables::{
+    emit_mixed_callable_not_callable_fatal, runtime_string_descriptor_cases, MIXED_TAG_CALLABLE,
+};
 use super::super::{expect_operand, resolve_int_operand_to_result, store_if_result};
 
 mod column;
@@ -779,6 +781,70 @@ where
 {
     let wrapper_label = emit_descriptor_callback_wrapper(ctx, visible_arg_types, return_ty);
     let env_bytes = reserve_descriptor_callback_env(ctx, callback)?;
+    emit_call(ctx, &wrapper_label, env_bytes)?;
+    abi::emit_release_temporary_stack(ctx.emitter, env_bytes);
+    Ok(())
+}
+
+/// Reserves a descriptor-callback environment from a boxed-`Mixed` closure operand (#664).
+///
+/// A `?Closure` comparator that flows through a property or a method return is repr'd as a boxed
+/// `Mixed` cell, not a raw descriptor: a `public Closure $cmp` (or `?Closure` narrowed via
+/// `instanceof`) loads as the union's Mixed repr. `__rt_mixed_unbox` splits the cell into
+/// `(tag, payload)`; when the tag is `MIXED_TAG_CALLABLE` the payload is the raw closure descriptor
+/// the wrapper needs, stored into the reserved env exactly like `reserve_descriptor_callback_env`. A
+/// non-callable payload is a loud fatal (`mixed value is not callable`) — never a silent mis-sort,
+/// which the load-only survey cannot see. The descriptor is borrowed from the still-live Mixed box for
+/// the duration of the sort (the box owns the reference), matching the direct Mixed-callable invoke.
+fn reserve_descriptor_callback_env_from_mixed_closure(
+    ctx: &mut FunctionContext<'_>,
+    callback: ValueId,
+) -> Result<usize> {
+    let fatal_label = ctx.next_label("usort_mixed_callback_not_callable");
+    let unboxed_label = ctx.next_label("usort_mixed_callback_unboxed");
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.load_value_to_reg(callback, "x0")?;
+            abi::emit_call_label(ctx.emitter, "__rt_mixed_unbox");
+            ctx.emitter
+                .instruction(&format!("cmp x0, #{}", MIXED_TAG_CALLABLE)); // boxed Mixed payload must be a callable descriptor
+            ctx.emitter.instruction(&format!("b.ne {}", fatal_label)); // fatal when the comparator Mixed is not callable
+            abi::emit_reserve_temporary_stack(ctx.emitter, 16);
+            ctx.emitter.instruction("str x1, [sp]"); // store the unboxed closure descriptor for the wrapper
+            abi::emit_jump(ctx.emitter, &unboxed_label);
+        }
+        Arch::X86_64 => {
+            ctx.load_value_to_reg(callback, "rax")?;
+            abi::emit_call_label(ctx.emitter, "__rt_mixed_unbox");
+            ctx.emitter
+                .instruction(&format!("cmp rax, {}", MIXED_TAG_CALLABLE)); // boxed Mixed payload must be a callable descriptor
+            ctx.emitter.instruction(&format!("jne {}", fatal_label)); // fatal when the comparator Mixed is not callable
+            abi::emit_reserve_temporary_stack(ctx.emitter, 16);
+            ctx.emitter.instruction("mov QWORD PTR [rsp], rdi"); // store the unboxed closure descriptor for the wrapper
+            abi::emit_jump(ctx.emitter, &unboxed_label);
+        }
+    }
+    ctx.emitter.label(&fatal_label);
+    emit_mixed_callable_not_callable_fatal(ctx, "usort() callback");
+    ctx.emitter.label(&unboxed_label);
+    Ok(16)
+}
+
+/// Like `lower_descriptor_callback_runtime`, but the comparator arrives as a boxed-`Mixed` closure (a
+/// `?Closure` property/return narrowed via `instanceof Closure`, #664) — unboxed to its raw closure
+/// descriptor before the descriptor-callback wrapper is invoked.
+fn lower_mixed_closure_descriptor_callback_runtime<F>(
+    ctx: &mut FunctionContext<'_>,
+    callback: ValueId,
+    visible_arg_types: Vec<PhpType>,
+    return_ty: PhpType,
+    mut emit_call: F,
+) -> Result<()>
+where
+    F: FnMut(&mut FunctionContext<'_>, &str, usize) -> Result<()>,
+{
+    let wrapper_label = emit_descriptor_callback_wrapper(ctx, visible_arg_types, return_ty);
+    let env_bytes = reserve_descriptor_callback_env_from_mixed_closure(ctx, callback)?;
     emit_call(ctx, &wrapper_label, env_bytes)?;
     abi::emit_release_temporary_stack(ctx.emitter, env_bytes);
     Ok(())
@@ -2298,8 +2364,41 @@ fn lower_user_sort_static_callback(
         return lower_user_sort_with_static_callback_binding(ctx, inst, array, callback_binding);
     }
     match callback_ty {
+        // An inline `static fn` comparator: a raw runtime closure descriptor, dispatched through the
+        // descriptor-callback runtime. `static_callback_operand_is_recoverable` above already claimed
+        // the statically-bindable `Callable` operands, so anything reaching here is runtime-selected.
         PhpType::Callable => {
             lower_descriptor_callback_runtime(
+                ctx,
+                callback,
+                vec![PhpType::Int, PhpType::Int],
+                PhpType::Int,
+                |ctx, wrapper_label, env_bytes| {
+                    let callback_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 0);
+                    let array_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 1);
+                    let env_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 2);
+                    abi::emit_symbol_address(ctx.emitter, callback_arg_reg, wrapper_label);
+                    ctx.load_value_to_reg(array, array_arg_reg)?;
+                    load_static_callback_env_arg(ctx, env_arg_reg, env_bytes);
+                    abi::emit_call_label(ctx.emitter, "__rt_usort");
+                    Ok(())
+                },
+            )?;
+            abi::emit_load_int_immediate(
+                ctx.emitter,
+                abi::int_result_reg(ctx.emitter),
+                0x7fff_ffff_ffff_fffe,
+            );
+            store_if_result(ctx, inst)?;
+            return Ok(());
+        }
+        // An opaque runtime `Closure` comparator — a `?Closure` property/return narrowed to `Closure`
+        // via `instanceof` (ward-dbal-file FileQueryPlan, #664). The checker accepts it for `usort`,
+        // but the value flows as a boxed `Mixed` cell (the `?Closure` union repr), NOT a raw descriptor.
+        // Unbox the tag-10 closure descriptor, then dispatch through the same wrapper + `__rt_usort` as
+        // the `Callable` arm; a non-callable Mixed is a loud runtime fatal, never a silent mis-sort.
+        PhpType::Mixed => {
+            lower_mixed_closure_descriptor_callback_runtime(
                 ctx,
                 callback,
                 vec![PhpType::Int, PhpType::Int],

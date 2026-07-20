@@ -46,7 +46,7 @@ const MIXED_TAG_OBJECT: i64 = 6;
 const STRING_METHOD_OFFSET: usize = 0;
 const STRING_CLASS_OFFSET: usize = 16;
 const STRING_SELECTOR_BYTES: usize = 32;
-const MIXED_TAG_CALLABLE: i64 = 10;
+pub(crate) const MIXED_TAG_CALLABLE: i64 = 10;
 
 /// Resolved user function candidate for a runtime string callable.
 struct RuntimeStringFunctionTarget {
@@ -210,7 +210,7 @@ fn lower_mixed_callable_descriptor_invoke(
 }
 
 /// Emits a fatal diagnostic for a boxed Mixed value that is called but is not callable.
-fn emit_mixed_callable_not_callable_fatal(ctx: &mut FunctionContext<'_>, op_name: &str) {
+pub(crate) fn emit_mixed_callable_not_callable_fatal(ctx: &mut FunctionContext<'_>, op_name: &str) {
     let message = format!(
         "Fatal error: Unsupported EIR {} mixed value is not callable\n",
         op_name

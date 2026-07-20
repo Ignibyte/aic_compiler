@@ -1477,3 +1477,63 @@ echo $a[0]->w, ',', $a[1]->w;
     );
     assert_eq!(out, "10,12");
 }
+
+/// #664: a `usort()` comparator held as an opaque `?Closure` — a property narrowed to `Closure` via
+/// `instanceof` (the ward-dbal-file FileQueryPlan shape) — carries no recoverable signature, yet
+/// dispatches correctly. The checker accepts it for the sort family and the backend unboxes the
+/// boxed-`Mixed` closure (the `?Closure` union repr) to its raw descriptor. Sorts associative-array
+/// rows (8-byte handles) ascending, byte-identical to PHP.
+#[test]
+fn test_usort_opaque_closure_property_comparator() {
+    let out = compile_and_run(
+        r#"<?php
+final class Plan {
+    public function __construct(public ?Closure $compare) {}
+    public function compare(): ?Closure { return $this->compare; }
+}
+final class Sorter {
+    public function __construct(private Plan $plan) {}
+    /** @param list<array<string, int>> $rows @return list<array<string, int>> */
+    public function run(array $rows): array {
+        $c = $this->plan->compare();
+        if (!$c instanceof Closure) { return $rows; }
+        $s = $rows;
+        usort($s, $c);
+        return $s;
+    }
+}
+$sorter = new Sorter(new Plan(static fn(array $a, array $b): int => $a['k'] <=> $b['k']));
+$sorted = $sorter->run([['k' => 3], ['k' => 1], ['k' => 2], ['k' => 5], ['k' => 4]]);
+foreach ($sorted as $r) { echo $r['k']; }
+"#,
+    );
+    assert_eq!(out, "12345");
+}
+
+/// #664: an opaque `?Closure` `usort()` comparator sorts descending, is STABLE (PHP 8.0+ — equal
+/// keys keep their original order), and short-circuits on the `?Closure` → `null` branch (the guard
+/// `!$compare instanceof Closure` returns unsorted, exercising the null closure repr).
+#[test]
+fn test_usort_opaque_closure_descending_stable_and_null() {
+    let out = compile_and_run(
+        r#"<?php
+final class Plan {
+    public function __construct(public ?Closure $compare) {}
+    public function compare(): ?Closure { return $this->compare; }
+}
+function sortRows(Plan $plan, array $rows): string {
+    $c = $plan->compare();
+    if (!$c instanceof Closure) { return "unsorted"; }
+    $s = $rows;
+    usort($s, $c);
+    $o = [];
+    foreach ($s as $r) { $o[] = $r['k'] . $r['t']; }
+    return implode(",", $o);
+}
+echo sortRows(new Plan(static fn(array $a, array $b): int => $b['k'] <=> $a['k']), [['k'=>1,'t'=>0],['k'=>3,'t'=>0],['k'=>2,'t'=>0]]), "|";
+echo sortRows(new Plan(static fn(array $a, array $b): int => $a['k'] <=> $b['k']), [['k'=>1,'t'=>0],['k'=>1,'t'=>1],['k'=>0,'t'=>9],['k'=>1,'t'=>2]]), "|";
+echo sortRows(new Plan(null), [['k'=>1,'t'=>0]]);
+"#,
+    );
+    assert_eq!(out, "30,20,10|09,10,11,12|unsorted");
+}

@@ -3851,11 +3851,24 @@ fn emit_property_assign_on_null_fatal(ctx: &mut FunctionContext<'_>, property: &
 pub(super) fn lower_instanceof(ctx: &mut FunctionContext<'_>, inst: &Instruction) -> Result<()> {
     let value = expect_operand(inst, 0)?;
     let value_ty = ctx.value_php_type(value)?;
-    if !matches!(value_ty, PhpType::Object(_) | PhpType::Mixed | PhpType::Union(_)) {
+    if !matches!(
+        value_ty,
+        PhpType::Object(_) | PhpType::Mixed | PhpType::Union(_) | PhpType::Callable
+    ) {
         emit_false(ctx);
         return store_if_result(ctx, inst);
     }
     let class_name = class_name_immediate(ctx, inst)?;
+    // `instanceof Closure`: `Closure` is a final builtin held in neither `class_infos` nor
+    // `interface_infos`, so `classify_named_target` returns `None` and the generic path below would
+    // emit constant `false` — i.e. `instanceof Closure` was unimplemented. A closure/first-class
+    // callable value is repr'd either as a raw `Callable` descriptor (always a closure) or a boxed
+    // `Mixed` cell tagged `MIXED_TAG_CALLABLE` (a `?Closure` property/return). Match it by runtime
+    // shape (#664 — the ward-dbal-file usort comparator guard depends on this).
+    if class_name.trim_start_matches('\\') == "Closure" {
+        emit_closure_instanceof(ctx, value, &value_ty)?;
+        return store_if_result(ctx, inst);
+    }
     let Some((target_id, target_kind)) = classify_named_target(ctx, class_name) else {
         emit_false(ctx);
         return store_if_result(ctx, inst);
@@ -3872,6 +3885,51 @@ pub(super) fn lower_instanceof(ctx: &mut FunctionContext<'_>, inst: &Instruction
         _ => emit_false(ctx),
     }
     store_if_result(ctx, inst)
+}
+
+/// Emits `$value instanceof Closure` by runtime shape, leaving `1`/`0` in the int result register.
+///
+/// A raw `Callable` descriptor is always a closure/first-class-callable → `true`. A boxed `Mixed`
+/// cell is a closure iff its tag is `MIXED_TAG_CALLABLE` (`__rt_mixed_unbox` yields the tag) — so a
+/// `?Closure` that is `null`, or any non-callable Mixed, is `false`. No other repr can hold a closure.
+fn emit_closure_instanceof(
+    ctx: &mut FunctionContext<'_>,
+    value: ValueId,
+    value_ty: &PhpType,
+) -> Result<()> {
+    let result_reg = abi::int_result_reg(ctx.emitter);
+    match value_ty.codegen_repr() {
+        PhpType::Callable => {
+            abi::emit_load_int_immediate(ctx.emitter, result_reg, 1);
+        }
+        PhpType::Mixed => {
+            let yes = ctx.next_label("closure_instanceof_yes");
+            let done = ctx.next_label("closure_instanceof_done");
+            match ctx.emitter.target.arch {
+                Arch::AArch64 => {
+                    ctx.load_value_to_reg(value, "x0")?;
+                    abi::emit_call_label(ctx.emitter, "__rt_mixed_unbox");
+                    ctx.emitter
+                        .instruction(&format!("cmp x0, #{}", callables::MIXED_TAG_CALLABLE)); // boxed payload is a callable/closure descriptor
+                    ctx.emitter.instruction(&format!("b.eq {}", yes));
+                }
+                Arch::X86_64 => {
+                    ctx.load_value_to_reg(value, "rax")?;
+                    abi::emit_call_label(ctx.emitter, "__rt_mixed_unbox");
+                    ctx.emitter
+                        .instruction(&format!("cmp rax, {}", callables::MIXED_TAG_CALLABLE)); // boxed payload is a callable/closure descriptor
+                    ctx.emitter.instruction(&format!("je {}", yes));
+                }
+            }
+            abi::emit_load_int_immediate(ctx.emitter, result_reg, 0);
+            abi::emit_jump(ctx.emitter, &done);
+            ctx.emitter.label(&yes);
+            abi::emit_load_int_immediate(ctx.emitter, result_reg, 1);
+            ctx.emitter.label(&done);
+        }
+        _ => emit_false(ctx),
+    }
+    Ok(())
 }
 
 /// Lowers dynamic `instanceof` where the target is resolved from a runtime string or object.

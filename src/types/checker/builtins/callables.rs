@@ -796,6 +796,22 @@ pub(crate) fn check_callback_builtin_call(
         return Ok(PhpType::Mixed);
     }
 
+    // An opaque `Closure`-typed comparator — a `public Closure $cmp` property, or a `?Closure`
+    // property/return narrowed to `Closure` via `instanceof` (ward-dbal-file FileQueryPlan) — carries
+    // no recoverable signature: elephc discards the phpdoc `Closure(array, array): int` generics, so
+    // the static type is the bare `Closure` object with no param/return payload. It is nonetheless a
+    // first-class runtime closure descriptor, strictly richer than the runtime *string* comparator
+    // accepted directly above. Accept it for the sort family, dispatched by descriptor at the runtime
+    // boundary; the comparator's params/return are enforced there, exactly like the string case.
+    if callback_builtin_allows_runtime_closure_descriptor(label)
+        && matches!(&callback_ty, PhpType::Object(name) if name.trim_start_matches('\\') == "Closure")
+    {
+        for arg in callback_args {
+            checker.infer_type(arg, env)?;
+        }
+        return Ok(PhpType::Mixed);
+    }
+
     Err(CompileError::new(
         callback.span,
         &format!("{} must have a statically known callable signature", label),
@@ -815,6 +831,17 @@ fn callback_builtin_allows_runtime_string_descriptor(label: &str) -> bool {
             | "uksort() callback"
             | "uasort() callback"
     )
+}
+
+/// Returns true when a callback builtin can dispatch an opaque runtime `Closure` value by descriptor.
+///
+/// Only `usort` is enabled: its backend descriptor path (`lower_user_sort_static_callback`) routes a
+/// runtime closure through `__rt_usort`, the value-permuting sorter. `uasort`/`uksort` share that
+/// lowering but need the key/assoc-preserving semantics the shared `__rt_usort` does not provide, so
+/// they stay rejected here rather than silently value-sort an opaque comparator (a mis-sort the
+/// load-only survey cannot see). Widen per-builtin only with its own byte-parity coverage.
+fn callback_builtin_allows_runtime_closure_descriptor(label: &str) -> bool {
+    matches!(label, "usort() callback")
 }
 
 /// Returns true when a callback builtin has codegen support for runtime-selected callable arrays.
