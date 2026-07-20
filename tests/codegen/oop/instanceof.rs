@@ -447,3 +447,115 @@ echo sc(Leaf::class, 'NoSuchTgt');   // unknown target
     );
     assert_eq!(out, "11110000");
 }
+
+/// #654: property access on an interface-typed receiver narrowed by an `if ($x instanceof C)` guard.
+/// The receiver's declared type is the marker interface (no property slots); the checker narrows it
+/// to the concrete class, and ir_lower must retype the receiver so codegen resolves the slot rather
+/// than failing "unknown class <Interface>". Two concrete arms exercise distinct property slots.
+#[test]
+fn test_interface_receiver_property_via_if_narrowing() {
+    let out = compile_and_run(
+        r#"<?php
+interface Rule {}
+final readonly class RouteRule implements Rule {
+    public function __construct(public string $pattern) {}
+}
+final readonly class HostRule implements Rule {
+    public function __construct(public string $host) {}
+}
+function evaluate(Rule $rule): string {
+    if ($rule instanceof RouteRule) {
+        return 'route:' . $rule->pattern;
+    }
+    if ($rule instanceof HostRule) {
+        return 'host:' . $rule->host;
+    }
+    return 'other';
+}
+echo evaluate(new RouteRule('/admin')), '|';
+echo evaluate(new HostRule('example.com')), '|';
+"#,
+    );
+    assert_eq!(out, "route:/admin|host:example.com|");
+}
+
+/// #654: the `match (true) { $rule instanceof C => ... $rule->prop ... }` shape — verbatim the
+/// ward-blocks BlockRegistry introspection pattern (the 14 native-survey roots). Each arm reads a
+/// property off the concrete class it narrowed to.
+#[test]
+fn test_interface_receiver_property_via_match_true_narrowing() {
+    let out = compile_and_run(
+        r#"<?php
+interface Rule {}
+final readonly class RouteRule implements Rule {
+    public function __construct(public string $pattern) {}
+}
+final readonly class HostRule implements Rule {
+    public function __construct(public string $host) {}
+}
+function describe(Rule $rule): string {
+    return match (true) {
+        $rule instanceof RouteRule => 'route:' . $rule->pattern,
+        $rule instanceof HostRule => 'host:' . $rule->host,
+        default => 'other',
+    };
+}
+echo describe(new RouteRule('/admin')), '|';
+echo describe(new HostRule('example.com')), '|';
+"#,
+    );
+    assert_eq!(out, "route:/admin|host:example.com|");
+}
+
+/// #654: the narrowed property must carry its DECLARED type, not the syntactic-Int default — a
+/// string property reads as a string and an int property supports arithmetic. Guards against the
+/// latent `$rule->pattern` typed `php=int` the survey IR exposed.
+#[test]
+fn test_interface_receiver_narrowed_property_types() {
+    let out = compile_and_run(
+        r#"<?php
+interface Node {}
+final readonly class TextNode implements Node {
+    public function __construct(public string $text) {}
+}
+final readonly class CountNode implements Node {
+    public function __construct(public int $count) {}
+}
+function render(Node $n): string {
+    if ($n instanceof TextNode) {
+        return 't=' . $n->text;
+    }
+    if ($n instanceof CountNode) {
+        return 'c=' . ($n->count * 2);
+    }
+    return '?';
+}
+echo render(new TextNode('hi')), '|';
+echo render(new CountNode(21)), '|';
+"#,
+    );
+    assert_eq!(out, "t=hi|c=42|");
+}
+
+/// #654 AC2: property access on an interface receiver WITHOUT an instanceof guard must stay rejected
+/// loudly — the bridge only retypes a receiver the checker narrowed to a concrete class, so an
+/// un-narrowed interface access never silently guesses a slot.
+#[test]
+fn test_unguarded_interface_property_access_rejected() {
+    assert!(compile_files_fails(
+        &[(
+            "main.php",
+            r#"<?php
+interface Rule {}
+final readonly class RouteRule implements Rule {
+    public function __construct(public string $pattern) {}
+}
+function bad(Rule $rule): string {
+    return $rule->pattern;
+}
+echo bad(new RouteRule('/x'));
+"#
+        )],
+        "main.php",
+    ));
+}

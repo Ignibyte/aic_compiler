@@ -9044,6 +9044,20 @@ fn lower_property_get(
     expr: &Expr,
 ) -> LoweredValue {
     let object = lower_expr(ctx, object);
+    // Apply the checker's instanceof-narrowed receiver type (recorded by property-access span in
+    // inference/objects/access.rs). The gap is specific: an INTERFACE-typed receiver carries no
+    // property slots, so codegen cannot resolve `->prop` on it ("unknown class <Interface>"). Retype
+    // the operand to the recorded concrete class ONLY when its current type is an interface. A
+    // concrete receiver already resolves its own slot (including inherited and special catalog
+    // properties); retyping it to a narrowed subclass would point slot resolution at a class whose
+    // codegen class_infos may lack that property. Object-to-object — a pure pointer reinterpretation.
+    if let Some(narrowed) = ctx.narrowed_call_receivers.get(&expr.span).cloned() {
+        if let PhpType::Object(current_class) = ctx.builder.value_php_type(object.value) {
+            if ctx.interfaces.contains_key(current_class.trim_start_matches('\\')) {
+                ctx.builder.set_value_php_type(object.value, narrowed);
+            }
+        }
+    }
     lower_property_get_from_value(ctx, object, property, op, expr)
 }
 

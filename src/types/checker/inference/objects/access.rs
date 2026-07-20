@@ -37,6 +37,19 @@ impl Checker {
         }
         let obj_ty = self.infer_type(object, env)?;
         if let PhpType::Object(class_name) = &obj_ty {
+            // Bridge instanceof-narrowing to property lowering. When the receiver narrowed (in this
+            // env — inline or boolean-carried) to a CONCRETE class, IR lowering would otherwise type
+            // the receiver from its DECLARED type, often an interface: interfaces carry no property
+            // slots, so codegen fails "unknown class <Interface>". Record the concrete narrowed type
+            // by this access's span so lowering can retype the receiver and resolve the slot — the
+            // same span-keyed bridge the method-call path uses (see the `narrowed_call_receivers`
+            // write in inference/objects/methods.rs and its ir_lower consumer). Only a concrete class
+            // is worth recording (an interface has no slots); the consumer applies it solely when it
+            // differs from the operand's own type, so a non-narrowed receiver is a harmless no-op.
+            // Method-call and property-access spans are disjoint, so the shared map never cross-applies.
+            if self.classes.contains_key(class_name.trim_start_matches('\\')) {
+                self.narrowed_call_receivers.insert(expr.span, obj_ty.clone());
+            }
             return self.infer_property_on_class_type(class_name, property, expr);
         }
         // Non-nullsafe property access on a nullable / union object type is
