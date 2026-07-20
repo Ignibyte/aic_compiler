@@ -131,6 +131,36 @@ pub(crate) fn emit_branch_if_tagged_scalar_null(emitter: &mut Emitter, label: &s
     }
 }
 
+/// Branches to `label` when the container pointer in `value_reg` is the in-band PHP-null
+/// container representation: either a zero pointer or the `NULL_SENTINEL` bit pattern a
+/// missed refcounted-element read materializes. `scratch_reg` is clobbered to hold the
+/// sentinel comparand. Consumers that would otherwise dereference the pointer as a live
+/// array/hash header — the var_dump walker, the foreach length snapshot, the by-reference
+/// iterator's live-length read, and the COW split helpers — use this to take a null/empty
+/// path instead of crashing (#526, #556, #581).
+pub(crate) fn emit_branch_if_null_container(
+    emitter: &mut Emitter,
+    value_reg: &str,
+    scratch_reg: &str,
+    label: &str,
+) {
+    match emitter.target.arch {
+        Arch::AArch64 => {
+            emitter.instruction(&format!("cbz {}, {}", value_reg, label));      // zero container pointers take the caller's null path
+            super::abi::emit_load_int_immediate(emitter, scratch_reg, NULL_SENTINEL);
+            emitter.instruction(&format!("cmp {}, {}", value_reg, scratch_reg)); // does the container carry the in-band null sentinel?
+            emitter.instruction(&format!("b.eq {}", label));                    // sentinel-null containers take the caller's null path
+        }
+        Arch::X86_64 => {
+            emitter.instruction(&format!("test {}, {}", value_reg, value_reg)); // is the container pointer zero (PHP null)?
+            emitter.instruction(&format!("jz {}", label));                      // zero container pointers take the caller's null path
+            super::abi::emit_load_int_immediate(emitter, scratch_reg, NULL_SENTINEL);
+            emitter.instruction(&format!("cmp {}, {}", value_reg, scratch_reg)); // does the container carry the in-band null sentinel?
+            emitter.instruction(&format!("je {}", label));                      // sentinel-null containers take the caller's null path
+        }
+    }
+}
+
 /// Narrows the tagged scalar in the result registers to a plain int, coercing null to zero
 /// (PHP `(int)null === 0`). Leaves the int payload in the integer result register.
 pub(crate) fn emit_tagged_scalar_to_int_null_as_zero(emitter: &mut Emitter) {
