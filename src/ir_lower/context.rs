@@ -1168,7 +1168,16 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
             || (php_type.is_refcounted() && php_type != PhpType::Str))
             && matches!(
                 op,
-                Some(Op::ArrayGet | Op::HashGet)
+                Some(
+                    Op::ArrayGet
+                        | Op::HashGet
+                        // Mixed-key reads on `array<mixed>` storage (the path a
+                        // closure/unspecialized-param `$a['k']` takes) box the read
+                        // value into an owned Mixed cell just like ArrayGet/HashGet,
+                        // so a discarded result must be released by its consumer.
+                        | Op::ArrayGetMixedKey
+                        | Op::ArrayGetMixedKeySilent
+                )
             )
     }
 

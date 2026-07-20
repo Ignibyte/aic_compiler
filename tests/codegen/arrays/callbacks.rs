@@ -1537,3 +1537,52 @@ echo sortRows(new Plan(null), [['k'=>1,'t'=>0]]);
     );
     assert_eq!(out, "30,20,10|09,10,11,12|unsorted");
 }
+
+/// #665 (Leak B): a closure indexing an `array<mixed>` parameter — the exact shape a
+/// `usort` comparator takes, since closure params are not call-site specialized so
+/// `$a['k']` lowers to `Op::ArrayGetMixedKey` and returns an OWNED boxed Mixed cell.
+/// That result was not recognized as an owning container read, so its consumer
+/// (`spaceship`) never released it, leaking one boxed cell per indexed read. Called
+/// directly (not through `usort`) to isolate the comparator's boxed-read leak from the
+/// separate descriptor-callback element-boxing leak (#666). Heap-clean is the assertion.
+#[test]
+fn test_closure_mixed_key_read_is_heap_clean() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+$cmp = static fn(array $a, array $b): int => $a['k'] <=> $b['k'];
+$x = ['k' => 3];
+$y = ['k' => 1];
+$sum = 0;
+for ($i = 0; $i < 50; $i++) { $sum += $cmp($x, $y); }
+echo $sum, "\n";
+"#,
+    );
+    assert_eq!(out.stdout, "50\n");
+    assert!(
+        out.stderr.contains("leak summary: clean"),
+        "closure mixed-key read leaked: {}",
+        out.stderr
+    );
+}
+
+/// #665 (Leak B), store path: `$v = $a['k']` on an `array<mixed>` inside a closure takes
+/// a retaining store whose source-release is gated on the same owning-container-read
+/// predicate; before the fix the boxed read source was never released, leaking per call.
+#[test]
+fn test_closure_mixed_key_read_store_is_heap_clean() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+$read = static function (array $a): int { $v = $a['k']; return $v; };
+$x = ['k' => 7];
+$sum = 0;
+for ($i = 0; $i < 50; $i++) { $sum += $read($x); }
+echo $sum, "\n";
+"#,
+    );
+    assert_eq!(out.stdout, "350\n");
+    assert!(
+        out.stderr.contains("leak summary: clean"),
+        "closure mixed-key read store leaked: {}",
+        out.stderr
+    );
+}
