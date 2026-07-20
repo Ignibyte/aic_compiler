@@ -1586,3 +1586,53 @@ echo $sum, "\n";
         out.stderr
     );
 }
+
+/// #666: a `usort` comparator over refcounted heap elements (associative arrays). The descriptor
+/// invoker handed each element to the callback with a by-value incref it never released — the callee
+/// borrows its params — leaking one reference per element on every comparison. An Int-return callback
+/// cannot transfer an argument out, so the invoker now borrows the element (the boxed-Mixed argument
+/// container keeps it alive for the call). Heap-clean over the sorted-then-indexed shape.
+#[test]
+fn test_usort_over_assoc_elements_is_heap_clean() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+$sum = 0;
+for ($i = 0; $i < 20; $i++) {
+    $s = [['k' => 3], ['k' => 1], ['k' => 2], ['k' => 5], ['k' => 4]];
+    usort($s, static fn(array $a, array $b): int => $a['k'] <=> $b['k']);
+    $sum += $s[0]['k'];
+}
+echo $sum, "\n";
+"#,
+    );
+    assert_eq!(out.stdout, "20\n");
+    assert!(
+        out.stderr.contains("leak summary: clean"),
+        "usort over assoc-array elements leaked: {}",
+        out.stderr
+    );
+}
+
+/// #666 (object elements): same borrow fix for a `usort` comparator over object elements — one
+/// reference per object leaked per comparison before the fix.
+#[test]
+fn test_usort_over_object_elements_is_heap_clean() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+final class Row { public function __construct(public int $k) {} }
+$sum = 0;
+for ($i = 0; $i < 20; $i++) {
+    $s = [new Row(3), new Row(1), new Row(2)];
+    usort($s, static fn(Row $a, Row $b): int => $a->k <=> $b->k);
+    $sum += $s[0]->k;
+}
+echo $sum, "\n";
+"#,
+    );
+    assert_eq!(out.stdout, "20\n");
+    assert!(
+        out.stderr.contains("leak summary: clean"),
+        "usort over object elements leaked: {}",
+        out.stderr
+    );
+}

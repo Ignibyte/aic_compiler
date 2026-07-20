@@ -313,6 +313,7 @@ fn emit_loaded_indexed_array_callback_call(
     abi::emit_load_from_address(emitter, len_reg, array_reg, 0);
     emit_indexed_required_arg_count_check(sig, regular_param_count, len_reg, emitter, ctx, data);
 
+    let borrow_value_args = callback_can_borrow_value_args(sig);
     let mut arg_types = Vec::new();
     for index in 0..regular_param_count {
         let has_default = sig.defaults.get(index).and_then(Option::as_ref).is_some();
@@ -348,11 +349,11 @@ fn emit_loaded_indexed_array_callback_call(
             abi::emit_jump(emitter, &done_label);
             emitter.label(&load_label);
             load_array_element_to_result(emitter, &elem_ty, array_reg, 24 + index * elem_size);
-            push_loaded_indexed_array_value_arg(&elem_ty, target_ty, emitter, ctx, data);
+            push_loaded_indexed_array_value_arg(&elem_ty, target_ty, borrow_value_args, emitter, ctx, data);
             emitter.label(&done_label);
         } else {
             load_array_element_to_result(emitter, &elem_ty, array_reg, 24 + index * elem_size);
-            push_loaded_indexed_array_value_arg(&elem_ty, target_ty, emitter, ctx, data);
+            push_loaded_indexed_array_value_arg(&elem_ty, target_ty, borrow_value_args, emitter, ctx, data);
         }
         arg_types.push(pushed_ty);
     }
@@ -459,6 +460,7 @@ fn emit_loaded_assoc_array_callback_call(
     } else {
         visible_param_count
     };
+    let borrow_value_args = callback_can_borrow_value_args(sig);
     let mut arg_types = Vec::new();
 
     for index in 0..regular_param_count {
@@ -497,7 +499,7 @@ fn emit_loaded_assoc_array_callback_call(
             let use_default = ctx.next_label("invoker_assoc_default");
             let done = ctx.next_label("invoker_assoc_done");
             abi::emit_branch_if_int_result_zero(emitter, &use_default);
-            let loaded_ty = push_loaded_hash_value_arg(&elem_ty, target_ty, emitter, ctx, data);
+            let loaded_ty = push_loaded_hash_value_arg(&elem_ty, target_ty, borrow_value_args, emitter, ctx, data);
             abi::emit_jump(emitter, &done);
             emitter.label(&use_default);
             let default_ty = push_default_value_arg(default_expr, target_ty, emitter, ctx, data);
@@ -507,7 +509,7 @@ fn emit_loaded_assoc_array_callback_call(
             let missing = ctx.next_label("invoker_assoc_missing");
             let done = ctx.next_label("invoker_assoc_done");
             abi::emit_branch_if_int_result_zero(emitter, &missing);
-            let loaded_ty = push_loaded_hash_value_arg(&elem_ty, target_ty, emitter, ctx, data);
+            let loaded_ty = push_loaded_hash_value_arg(&elem_ty, target_ty, borrow_value_args, emitter, ctx, data);
             abi::emit_jump(emitter, &done);
             emitter.label(&missing);
             emit_call_user_func_array_missing_arg_abort(emitter, data);
@@ -806,6 +808,7 @@ fn push_loaded_indexed_array_ref_arg(
 fn push_loaded_indexed_array_value_arg(
     source_elem_ty: &PhpType,
     target_ty: Option<&PhpType>,
+    borrow: bool,
     emitter: &mut Emitter,
     ctx: &mut InvokerEmitContext,
     data: &mut DataSection,
@@ -814,7 +817,7 @@ fn push_loaded_indexed_array_value_arg(
         source_elem_ty.codegen_repr(),
         PhpType::Mixed | PhpType::Union(_)
     ) {
-        return push_loaded_array_element_arg(source_elem_ty, target_ty, emitter, ctx, data);
+        return push_loaded_array_element_arg(source_elem_ty, target_ty, borrow, emitter, ctx, data);
     }
 
     let special_label = ctx.next_label("invoker_ref_value");
@@ -824,7 +827,8 @@ fn push_loaded_indexed_array_value_arg(
 
     abi::emit_load_from_address(emitter, tag_reg, result_reg, 0);
     emit_branch_if_invoker_ref_cell_tag(tag_reg, &special_label, emitter);
-    let ordinary_ty = push_loaded_array_element_arg(source_elem_ty, target_ty, emitter, ctx, data);
+    let ordinary_ty =
+        push_loaded_array_element_arg(source_elem_ty, target_ty, borrow, emitter, ctx, data);
     abi::emit_jump(emitter, &done_label);
 
     emitter.label(&special_label);
@@ -976,16 +980,34 @@ fn load_boxed_invoker_ref_cell_to_raw_regs(
 }
 
 /// Coerces and pushes a loaded indexed-array element as a call argument.
+/// Whether the invoker may pass array-element VALUE args borrowed — skipping the by-value incref
+/// `push_loaded_array_element_arg` normally emits (#666).
+///
+/// The boxed-`Mixed` argument container the invoker unpacks retains each element for the whole
+/// call, so the element is already kept alive across the callback. The extra by-value incref is only
+/// load-bearing when the callback can RETURN (transfer out) one of its arguments — otherwise it is
+/// never released and leaks one reference per element (every `usort` comparison / `array_filter`
+/// test over associative-array or object elements). A callback whose return type is a non-refcounted
+/// scalar (`int`/`bool`) cannot return a refcounted argument, so borrowing is safe there; callbacks
+/// with a refcounted return (a `call_user_func` closure that returns its string argument, an
+/// `array_map` mapper that returns `$x`) keep the incref so the returned value survives.
+fn callback_can_borrow_value_args(sig: &FunctionSig) -> bool {
+    matches!(sig.return_type.codegen_repr(), PhpType::Int | PhpType::Bool)
+}
+
 fn push_loaded_array_element_arg(
     source_elem_ty: &PhpType,
     target_ty: Option<&PhpType>,
+    borrow: bool,
     emitter: &mut Emitter,
     ctx: &mut InvokerEmitContext,
     data: &mut DataSection,
 ) -> PhpType {
     let (pushed_ty, boxed_to_mixed) =
         coerce_current_value_to_target(emitter, ctx, data, source_elem_ty, target_ty);
-    if !boxed_to_mixed {
+    // `borrow` (a non-refcounted-scalar-return callback) leaves the incref off: the argument
+    // container keeps the element alive for the call, and a scalar return can never transfer it out.
+    if !boxed_to_mixed && !borrow {
         abi::emit_incref_if_refcounted(emitter, &pushed_ty);
     }
     abi::emit_push_result_value(emitter, &pushed_ty);
@@ -1143,6 +1165,7 @@ fn emit_hash_lookup_for_param_or_index(
 fn push_loaded_hash_value_arg(
     source_elem_ty: &PhpType,
     target_ty: Option<&PhpType>,
+    borrow: bool,
     emitter: &mut Emitter,
     ctx: &mut InvokerEmitContext,
     data: &mut DataSection,
@@ -1154,7 +1177,7 @@ fn push_loaded_hash_value_arg(
         return push_loaded_mixed_hash_value_arg(target_ty, emitter, ctx, data);
     }
     materialize_hash_value_to_result(emitter, source_elem_ty);
-    push_loaded_array_element_arg(source_elem_ty, target_ty, emitter, ctx, data)
+    push_loaded_array_element_arg(source_elem_ty, target_ty, borrow, emitter, ctx, data)
 }
 
 /// Pushes a loaded hash value as a by-reference argument.
