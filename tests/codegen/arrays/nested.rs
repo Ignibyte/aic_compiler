@@ -171,3 +171,52 @@ echo $first[1] . "|" . $second[0];
     );
     assert_eq!(out, "5|6");
 }
+
+/// #667: a chained subscript `$x[i][j]` reads the intermediate `$x[i]` as a receiver — an
+/// owning container read (an owned boxed element). Before the fix `lower_array_access_from_value`
+/// returned the read without releasing that receiver, leaking the intermediate on every chained
+/// read. Two- and three-level chains must be heap-clean.
+#[test]
+fn test_chained_subscript_read_is_heap_clean() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+$sum = 0;
+for ($i = 0; $i < 50; $i++) {
+    $s = [['k' => 3], ['k' => 1]];
+    $d = [[['k' => 7]]];
+    $sum += $s[0]['k'] + $d[0][0]['k'];
+}
+echo $sum, "\n";
+"#,
+    );
+    assert_eq!(out.stdout, "500\n");
+    assert!(
+        out.stderr.contains("leak summary: clean"),
+        "chained subscript read leaked: {}",
+        out.stderr
+    );
+}
+
+/// #667: a chained array-then-property read `$x[i]->prop` yielding a NON-refcounted value.
+/// `$x[i]` is an owning container read used as the property receiver; the single-read property
+/// lowering must release it (the result is an independent int, so no borrow into the receiver).
+#[test]
+fn test_chained_array_then_int_property_read_is_heap_clean() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+final class Row { public function __construct(public int $k) {} }
+$sum = 0;
+for ($i = 0; $i < 50; $i++) {
+    $s = [new Row(3), new Row(1)];
+    $sum += $s[0]->k;
+}
+echo $sum, "\n";
+"#,
+    );
+    assert_eq!(out.stdout, "150\n");
+    assert!(
+        out.stderr.contains("leak summary: clean"),
+        "chained array-then-property read leaked: {}",
+        out.stderr
+    );
+}

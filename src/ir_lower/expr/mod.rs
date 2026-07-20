@@ -7794,14 +7794,22 @@ fn lower_array_access_from_value(
         _ => Op::RuntimeCall,
     };
     let result_type = array_access_result_type(ctx, array_value.value, op, expr);
-    ctx.emit_value(
+    let result = ctx.emit_value(
         op,
         vec![array_value.value, index_value.value],
         None,
         result_type,
         op.default_effects(),
         Some(expr.span),
-    )
+    );
+    // Chained access `$x[i][j]`: the receiver `$x[i]` is itself an owning container read
+    // (an owned boxed element). The read above has consumed it, so release it here or the
+    // intermediate leaks (#667). A plain `load_local` receiver is a borrow — not an owning
+    // temporary — so single-level reads and by-value param reads are unaffected.
+    if ctx.value_is_owning_temporary(array_value) {
+        crate::ir_lower::ownership::release_if_owned(ctx, array_value, Some(expr.span));
+    }
+    result
 }
 
 /// Lowers nullable receiver indexing without evaluating the index on a null receiver.
@@ -9146,7 +9154,25 @@ fn lower_property_get(
             }
         }
     }
-    lower_property_get_from_value(ctx, object, property, op, expr)
+    let result = lower_property_get_from_value(ctx, object, property, op, expr);
+    // Chained access `$x[i]->prop` / `$a->b->c`: the receiver is itself an owning temp (an
+    // owned boxed element/object). Release it once the read has consumed it, or the
+    // intermediate leaks (#667). Guards: (a) a hook-accessor / nullsafe read routes through
+    // `lower_method_call_with_receiver`, which ALREADY releases the receiver, so skip when the
+    // result is a (nullsafe) method call to avoid a double-free; (b) a refcounted result may
+    // borrow into the receiver's slot, so only release for a non-refcounted result that cannot
+    // alias the receiver. A plain `$this`/local receiver is a borrow (not an owning temp) and is
+    // left untouched by `release_owning_receiver_temporary`. The datetime instant-compare path
+    // calls `lower_property_get_from_value` directly (reading two properties off one receiver),
+    // so it never reaches this single-read release site.
+    let routed_through_receiver_call = matches!(
+        ctx.builder.value_defining_op(result.value),
+        Some(Op::MethodCall | Op::NullsafeMethodCall)
+    );
+    if !routed_through_receiver_call && !result.ir_type.is_refcounted_storage() {
+        release_owning_receiver_temporary(ctx, object, expr.span);
+    }
+    result
 }
 
 /// Lowers `$target = &$obj->prop`: binds the local `$target` to the reference cell
