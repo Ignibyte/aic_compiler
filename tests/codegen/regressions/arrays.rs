@@ -1049,3 +1049,29 @@ echo $a[7][1] . "\n";
     assert_eq!(out.stdout, "patched\n");
     assert!(!out.stderr.contains("Undefined array key"));
 }
+
+/// Regression for issue #580: a by-reference foreach over an array-element source must persist
+/// element mutations back into the parent array — for both indexed and hash element sources —
+/// exactly like the plain-variable form, instead of mutating a detached copy that is dropped.
+#[test]
+fn test_byref_foreach_over_array_element_source_persists_writes() {
+    let out = compile_and_run(
+        r#"<?php
+$a = [[1, 2]];
+foreach ($a[0] as &$v) { $v = $v * 2; }
+unset($v);
+echo implode(',', $a[0]), "\n";
+
+$h = ['a' => [1, 2]];
+foreach ($h['a'] as &$w) { $w = $w * 10; }
+unset($w);
+echo implode(',', $h['a']), "\n";
+
+$plain = [1, 2];
+foreach ($plain as &$p) { $p = $p * 3; }
+unset($p);
+echo implode(',', $plain), "\n";
+"#,
+    );
+    assert_eq!(out, "2,4\n10,20\n3,6\n");
+}
