@@ -11233,6 +11233,26 @@ fn nullable_aware_branch_merge_type(left: &PhpType, right: &PhpType) -> PhpType 
     wider_type_for_merge(&left.codegen_repr(), &right.codegen_repr())
 }
 
+/// Returns a call receiver's type for merge typing WITHOUT collapsing it to its storage
+/// representation.
+///
+/// `materialized_expr_type_for_merge` answers with `codegen_repr()`, which erases
+/// `Object(I)|null` to `Mixed` and `$this` to the syntactic `Object("")`. `singular_object_class`
+/// can then no longer name the class, so an `instanceof`-guarded `$obj->m()` ternary arm — or any
+/// `$this->m()` arm — falls back to the syntactic `Int` and poisons the merge (#648). The declared
+/// type still names the class; reading the callee's return type from it is sound because the call
+/// either happens on that class or does not happen at all (PHP fatals on a null receiver).
+fn merge_receiver_type(ctx: &LoweringContext<'_, '_>, expr: &Expr) -> PhpType {
+    match &expr.kind {
+        ExprKind::Variable(name) => ctx.local_type(name),
+        ExprKind::This => ctx
+            .current_class
+            .as_ref()
+            .map_or(PhpType::Mixed, |class| PhpType::Object(class.clone())),
+        _ => materialized_expr_type_for_merge(ctx, expr),
+    }
+}
+
 /// Returns true when a PHP type can materialize PHP null at runtime.
 fn php_type_allows_null(php_type: &PhpType) -> bool {
     match php_type {
@@ -11272,6 +11292,17 @@ fn materialized_expr_type_for_merge(ctx: &LoweringContext<'_, '_>, expr: &Expr) 
         }
         ExprKind::ArrayAccess { array, .. } => array_access_expr_value_type_for_ir(ctx, array)
             .unwrap_or_else(|| fallback_expr_type(expr)),
+        // A `??` arm yields its left operand or its default, so its merge type is those two
+        // merged — not the syntactic fallback `Int`. Without this, an arm like
+        // `is_array($d) ? ($d['k'] ?? null) : null` merges a FABRICATED Int with the null arm into
+        // `Union([Int, Void])` — the `?int` TaggedScalar repr — and every later use of the local
+        // then aborts the backend ("iter_start over PHP type TaggedScalar", "local store from Str
+        // to TaggedScalar"). Merging null-aware keeps a genuine `?int` precise while a Mixed
+        // operand stays Mixed. #648.
+        ExprKind::NullCoalesce { value, default } => nullable_aware_branch_merge_type(
+            &materialized_expr_type_for_merge(ctx, value),
+            &materialized_expr_type_for_merge(ctx, default),
+        ),
         ExprKind::PropertyAccess { object, property } => {
             property_access_expr_type_for_ir(ctx, object, property)
                 .unwrap_or_else(|| fallback_expr_type(expr))
@@ -11293,7 +11324,7 @@ fn materialized_expr_type_for_merge(ctx: &LoweringContext<'_, '_>, expr: &Expr) 
         ExprKind::MethodCall { object, method, .. }
         | ExprKind::NullsafeMethodCall { object, method, .. } => {
             let method_key = php_symbol_key(method);
-            let object_ty = materialized_expr_type_for_merge(ctx, object);
+            let object_ty = merge_receiver_type(ctx, object);
             singular_object_class(&object_ty)
                 .and_then(|(class, _)| {
                     class_method_return_type_for_ir(ctx, class, &method_key)

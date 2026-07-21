@@ -268,3 +268,87 @@ echo $r->go(new Widget())->s . "|" . $r->go(new Plain())->s;
     );
     assert_eq!(out, "tmpl:wnm|plain");
 }
+
+/// Regression (#648): a ternary arm that is a `??` expression must merge its operand types rather
+/// than fall to the syntactic `Int`. `is_array($d) ? ($d['k'] ?? null) : null` fabricated
+/// `Union([Int, Void])` — the `?int` TaggedScalar repr — for a value that is really a boxed Mixed,
+/// so iterating the result aborted the backend with "iter_start over PHP type TaggedScalar".
+/// This is `RequireCheckerAllowlist::parse`'s shape.
+#[test]
+fn test_ternary_arm_null_coalesce_over_mixed() {
+    let out = compile_and_run(
+        r#"<?php
+function parseit(string $raw): array
+{
+    $decoded = json_decode($raw, true);
+    $entries = is_array($decoded) ? ($decoded['symbol-whitelist'] ?? null) : null;
+    if (!is_array($entries)) { return []; }
+    $out = [];
+    foreach ($entries as $entry) {
+        if (!is_string($entry)) { continue; }
+        $out[] = $entry;
+    }
+    return $out;
+}
+$out = parseit('{"symbol-whitelist":["a","b"]}');
+echo count($out), ",", $out[0], "|", count(parseit('{}'));
+"#,
+    );
+    assert_eq!(out, "2,a|0");
+}
+
+/// Regression (#648): a ternary arm calling a method on an `instanceof`-narrowed receiver must
+/// resolve the callee's return type from the receiver's DECLARED type. Merge typing read the
+/// receiver through `codegen_repr()`, which erases `Ident|null` to `Mixed`, so the class could not
+/// be named and the arm fell to the syntactic `Int` — merging to TaggedScalar and rejecting the
+/// store ("local store from PHP type Str to PHP type TaggedScalar"). BufferingAuditRecorder's shape.
+#[test]
+fn test_ternary_arm_method_call_on_narrowed_nullable_receiver() {
+    let out = compile_and_run(
+        r#"<?php
+interface Ident { public function subjectId(): string; }
+final class U implements Ident { public function subjectId(): string { return 'u1'; } }
+interface Prov { public function current(): ?Ident; }
+final class P implements Prov { public function current(): ?Ident { return new U(); } }
+final class N implements Prov { public function current(): ?Ident { return null; } }
+function actor(Prov $p): string {
+    $identity = $p->current();
+    $actorId = $identity instanceof Ident ? $identity->subjectId() : null;
+    return $actorId ?? '(none)';
+}
+echo actor(new P()), "|", actor(new N());
+"#,
+    );
+    assert_eq!(out, "u1|(none)");
+}
+
+/// Regression (#648): the same erasure for a `$this->m()` arm — `$this` has no merge arm, so it
+/// fell to the syntactic `Object("")`, whose empty class name resolves no method and dropped the
+/// arm to `Int`. Merging with the null arm then rejected the store ("local store from PHP type
+/// AssocArray {...} to PHP type TaggedScalar"). ContainerRouteLayoutCatalog's shape.
+///
+/// The final case is the CONTROL: a genuine `?int` ternary must keep the precise TaggedScalar
+/// repr, so the honesty fix must not blanket-widen every merge to Mixed.
+#[test]
+fn test_ternary_arm_method_call_on_this_and_nullable_int_control() {
+    let out = compile_and_run(
+        r#"<?php
+final class C {
+    private function describe(string $route): array { return ['method' => 'GET', 'path' => $route]; }
+    public function layoutForRoute(?string $route): ?array
+    {
+        return $route === null ? null : $this->describe($route);
+    }
+}
+function pick(bool $c): ?int { return $c ? 7 : null; }
+$c = new C();
+$r = $c->layoutForRoute('/x');
+echo $r === null ? 'null' : $r['method'] . $r['path'], "|";
+echo $c->layoutForRoute(null) === null ? 'null' : 'arr', "|";
+var_dump(pick(true));
+var_dump(pick(false));
+echo pick(false) ?? 99;
+"#,
+    );
+    assert_eq!(out, "GET/x|null|int(7)\nNULL\n99");
+}
