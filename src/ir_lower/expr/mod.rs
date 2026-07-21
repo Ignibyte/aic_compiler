@@ -6633,16 +6633,13 @@ fn array_builtin_return_type(
         "array_fill_keys" => array_fill_keys_builtin_return_type(ctx, operands),
         "array_merge" => array_merge_builtin_return_type(ctx, operands),
         "array_splice" | "array_filter" | "array_diff" | "array_intersect" | "array_diff_key"
-        | "array_intersect_key" => array_preserve_first_builtin_return_type(ctx, operands),
+        | "array_intersect_key" | "array_slice" => {
+            array_preserve_first_builtin_return_type(ctx, operands)
+        }
         "in_array" => Some(PhpType::Bool),
         "array_is_list" => Some(PhpType::Bool),
         "array_key_first" | "array_key_last" => Some(PhpType::Mixed),
-        // `array_keys`/`array_slice` produce a fresh indexed array of boxed `Mixed`
-        // payloads (keys, or the sliced elements). These mirror the result type the
-        // first-class-callable fallback supplied before they were registered as
-        // builtins, so the EIR backend keeps receiving a concrete `Array` result
-        // type rather than the registry's `Mixed` return-type placeholder.
-        "array_keys" | "array_slice" => Some(PhpType::Array(Box::new(PhpType::Mixed))),
+        "array_keys" => array_keys_builtin_return_type(ctx, operands),
         "range" => Some(PhpType::Array(Box::new(PhpType::Int))),
         "array_values" => {
             let array = operands.first()?;
@@ -6761,6 +6758,37 @@ fn array_preserve_first_builtin_return_type(
         // matches the checker's `array_filter` Mixed arm and the backend Mixed-source unbox. #648.
         PhpType::Mixed => Some(PhpType::Array(Box::new(PhpType::Mixed))),
         other => Some(other),
+    }
+}
+
+/// Returns precise return metadata for `array_keys(array)`.
+///
+/// MUST agree with the `array_keys` check hook (`crate::builtins::array::array_keys`),
+/// which types an indexed source `Array<Int>` (positional keys) and an associative
+/// source `Array<key>`. A stamp that disagrees with the checker makes the producer box
+/// the result while consumers read it raw — a silent miscompile the load-only survey
+/// cannot see (#671).
+///
+/// A boxed-`Mixed` source keeps `array<mixed>` for the same reason
+/// `array_preserve_first_builtin_return_type` does: the result is still an array, so a
+/// consumer must not treat it as a boxed value needing an unbox.
+fn array_keys_builtin_return_type(
+    ctx: &LoweringContext<'_, '_>,
+    operands: &[crate::ir::ValueId],
+) -> Option<PhpType> {
+    let array = operands.first()?;
+    match ctx.builder.value_php_type(*array).codegen_repr() {
+        // `array<mixed>` is the compiler's "storage kind not known statically" array: the runtime
+        // value may be a hash, so a key can be a string. `lower_array_keys` dispatches this case on
+        // the runtime heap kind for that reason, and the keys must stay boxed `Mixed` to hold
+        // either. Claiming `Array<Int>` here aborts that lowering ("array_keys associative key PHP
+        // type Mixed into result PHP type Int").
+        PhpType::Array(elem) if elem.codegen_repr() == PhpType::Mixed => {
+            Some(PhpType::Array(Box::new(PhpType::Mixed)))
+        }
+        PhpType::Array(_) => Some(PhpType::Array(Box::new(PhpType::Int))),
+        PhpType::AssocArray { key, .. } => Some(PhpType::Array(key)),
+        _ => Some(PhpType::Array(Box::new(PhpType::Mixed))),
     }
 }
 

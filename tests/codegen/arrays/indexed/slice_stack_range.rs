@@ -193,18 +193,76 @@ final class Plan {
     public function __construct(private ?int $lim) {}
     public function limit(): ?int { return $this->lim; }
 }
+function take(array $rows, Plan $p): string {
+    return implode(",", array_slice($rows, 1, $p->limit()));
+}
 $rows = [1, 2, 3, 4, 5];
-$none = new Plan(null);
-$two = new Plan(2);
-$zero = new Plan(0);
-$back = new Plan(-1);
-echo implode(",", array_slice($rows, 1, $none->limit())), "|";
-echo implode(",", array_slice($rows, 1, $two->limit())), "|";
-echo implode(",", array_slice($rows, 1, $zero->limit())), "|";
-echo implode(",", array_slice($rows, 1, $back->limit()));
+echo take($rows, new Plan(null)), "|";
+echo take($rows, new Plan(2)), "|";
+echo take($rows, new Plan(0)), "|";
+echo take($rows, new Plan(-1));
 "#,
     );
     assert_eq!(out, "2,3,4,5|2,3||2,3,4");
+}
+
+/// Regression for #671: `array_slice` through a bare-`array` parameter must keep the source's
+/// element type. `array_builtin_return_type` used to stamp every `array_slice` result
+/// `array<mixed>` while the checker types it element-preserving, so the producer boxed each cell
+/// and consumers — typed from the checker — read the box POINTERS as values. It compiled, linked
+/// and ran, printing heap addresses. Every consumer is asserted (implode, subscript, foreach,
+/// count) because `implode` alone tolerated the boxed layout for string elements and hid the bug.
+#[test]
+fn test_array_slice_element_type_through_param() {
+    let out = compile_and_run(
+        r#"<?php
+function s(array $a): array { return array_slice($a, 0, 2); }
+function t(array $a): array { return array_slice($a, 1, 2); }
+$ints = [1, 2, 3, 4, 5];
+$r = s($ints);
+echo implode(",", $r), "|", $r[0], ",", $r[1], "|";
+foreach ($r as $v) { echo $v, ";"; }
+echo "|", count($r), "|", implode(",", $ints), "|";
+$strs = ["aa", "bb", "cc", "dd"];
+$q = t($strs);
+echo implode(",", $q), "|", $q[0], "|", count($q), "|", implode(",", $strs);
+"#,
+    );
+    assert_eq!(out, "1,2|1,2|1;2;|2|1,2,3,4,5|bb,cc|bb|2|aa,bb,cc,dd");
+}
+
+/// Regression for #671: the same producer/consumer type disagreement in `array_keys`. The stamp
+/// said `array<mixed>` while the checker types an indexed source `array<int>` and a string-keyed
+/// source `array<string>`. The hash case was the worse half — an 8-byte boxed-pointer result read
+/// as 16-byte string descriptors dumped raw memory rather than merely wrong integers.
+#[test]
+fn test_array_keys_element_type_through_param() {
+    let out = compile_and_run(
+        r#"<?php
+// Separate functions per source shape: a bare-`array` parameter mono-specializes to its first
+// call site's element type, so one `k()` taking both a list and a map would not type-check.
+function kl(array $a): array { return array_keys($a); }
+function km(array $a): array { return array_keys($a); }
+$list = [10, 20, 30];
+$ints = kl($list);
+echo implode(",", $ints), "|", $ints[0], ",", $ints[2], "|";
+foreach ($ints as $v) { echo $v, ";"; }
+echo "|", count($ints), "|";
+$map = ['x' => 1, 'y' => 2, 'z' => 3];
+$strs = km($map);
+echo implode(",", $strs), "|", $strs[0], ",", $strs[2], "|";
+foreach ($strs as $v) { echo $v, ";"; }
+echo "|", count($strs), "|";
+// `array<mixed>` is the "storage kind unknown" array — its keys must stay boxed, because the
+// runtime value may be a hash. Typing this source's keys `Array<Int>` aborts the dynamic
+// lowering, which is how the SPL container classes (ArrayIterator/ArrayObject) reach it.
+$het = [1, 'x', 3];
+echo implode(",", array_keys($het)), "|";
+$mixedmap = ['a' => 1, 'b' => 'two'];
+echo implode(",", array_keys($mixedmap));
+"#,
+    );
+    assert_eq!(out, "0,1,2|0,2|0;1;2;|3|x,y,z|x,z|x;y;z;|3|0,1,2|a,b");
 }
 
 /// Regression for #644: a NEGATIVE `array_slice` length stops that many elements short of the end
