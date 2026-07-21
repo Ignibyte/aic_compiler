@@ -404,6 +404,20 @@ pub(super) fn resolve_expr(
             receiver,
             args: resolve_exprs(args, base_dir, declared_once, include_chain, state, function_variants)?,
         },
+        // A value-include reaching expression resolution was NOT the whole right-hand side of a
+        // hoistable statement (see `try_expand_value_include`). Expansion inlines the included
+        // file's statements into the caller's scope, which needs a statement slot — an include
+        // nested in an argument, an array element, or an operand has none, so it cannot be AOT
+        // inlined. Reject it here with a located diagnostic rather than letting it reach codegen,
+        // where it hits an `unreachable!` (#613).
+        ExprKind::IncludeValue { .. } => {
+            return Err(CompileError::new(
+                span,
+                "include/require in this position is not supported: its value can only be taken \
+                 as the entire right-hand side of an assignment or a `return` (the included \
+                 file's statements are inlined into the caller, which needs a statement slot)",
+            ));
+        }
         other => other,
     };
     Ok(Expr::new(kind, span))

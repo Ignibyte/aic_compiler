@@ -33,6 +33,17 @@ pub(super) enum IncludeValueCapture {
     Assign(String),
     /// `return require X;` — return the include's value from the enclosing function.
     Return,
+    /// `self::$prop = require X;` — assign the include's value to a static property. The exact
+    /// shape of Composer's `InstalledVersions::$installed = include …` (#613).
+    AssignStaticProperty {
+        receiver: crate::parser::ast::StaticReceiver,
+        property: String,
+    },
+    /// `$this->prop = require X;` / `$obj->prop = require X;` — assign to an instance property.
+    AssignProperty {
+        object: Box<Expr>,
+        property: String,
+    },
 }
 
 /// Resolves a single include/require statement by parsing the target file,
@@ -230,6 +241,18 @@ pub(super) fn expand_value_include(
         }
         IncludeValueCapture::Return => {
             out.push(Stmt::new(StmtKind::Return(Some(value)), span));
+        }
+        IncludeValueCapture::AssignStaticProperty { receiver, property } => {
+            out.push(Stmt::new(
+                StmtKind::StaticPropertyAssign { receiver, property, value },
+                span,
+            ));
+        }
+        IncludeValueCapture::AssignProperty { object, property } => {
+            out.push(Stmt::new(
+                StmtKind::PropertyAssign { object, property, value },
+                span,
+            ));
         }
     }
     Ok(out)

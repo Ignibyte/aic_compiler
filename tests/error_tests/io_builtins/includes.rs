@@ -149,3 +149,25 @@ fn test_error_include_property_path_is_explicitly_rejected() {
 
 // --- INF/NAN function errors ---
 
+
+/// Verifies a value-include nested in a position that has no statement slot — here a function
+/// argument — is rejected with a located diagnostic rather than reaching codegen. Expanding a
+/// value-include inlines the included file's statements into the caller, so it is only valid as
+/// the whole right-hand side of an assignment or a `return` (#613).
+#[test]
+fn test_error_value_include_in_an_argument_is_rejected() {
+    // x.php exists so discovery passes; the rejection is about the POSITION, which resolution
+    // reaches only after discovery succeeds.
+    let err = resolve_files_error(
+        &[
+            ("main.php", "<?php function f(int $i): void {} f(require 'x.php');"),
+            ("x.php", "<?php return 1;"),
+        ],
+        "main.php",
+    );
+    assert!(
+        err.message.contains("include/require in this position is not supported"),
+        "message did not reject a value-include in argument position: {}",
+        err.message
+    );
+}

@@ -448,3 +448,39 @@ fn test_require_value_without_return_yields_one() {
     );
     assert_eq!(out, "1:H");
 }
+
+/// Verifies `self::$prop = require X;` — a value-include as the right-hand side of a STATIC
+/// property assignment. This is the exact Composer `InstalledVersions::$installed = include …`
+/// shape (#613): the include used to reach the parser only in a plain `$x =`/`return` position,
+/// so a static-property-assign RHS died with `Unexpected token: Include`.
+#[test]
+fn test_require_value_into_a_static_property() {
+    let out = compile_and_run_files(
+        &[
+            (
+                "main.php",
+                "<?php final class H { public static mixed $x = null; public static function boot(): void { self::$x = require 'num.php'; } } H::boot(); echo H::$x;",
+            ),
+            ("num.php", "<?php return 42;"),
+        ],
+        "main.php",
+    );
+    assert_eq!(out, "42");
+}
+
+/// Verifies `$this->prop = require X;` — a value-include as the right-hand side of an INSTANCE
+/// property assignment (the sibling shape to the static-property case, #613).
+#[test]
+fn test_require_value_into_an_instance_property() {
+    let out = compile_and_run_files(
+        &[
+            (
+                "main.php",
+                "<?php final class H { public mixed $x = null; public function boot(): void { $this->x = require 'num.php'; } } $h = new H(); $h->boot(); echo $h->x;",
+            ),
+            ("num.php", "<?php return 7;"),
+        ],
+        "main.php",
+    );
+    assert_eq!(out, "7");
+}

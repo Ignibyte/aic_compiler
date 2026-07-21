@@ -314,11 +314,62 @@ pub(super) fn parse_prefix(
         Token::New => parse_new_object(tokens, pos, span),
         Token::This => parse_simple(tokens, pos, span, ExprKind::This),
         Token::Yield => parse_yield(tokens, pos, span),
+        Token::Include | Token::IncludeOnce | Token::Require | Token::RequireOnce => {
+            parse_include_expr(tokens, pos, span)
+        }
         other => Err(CompileError::new(
             span,
             &format!("Unexpected token: {:?}", other),
         )),
     }
+}
+
+/// Parses `include`/`require`/`include_once`/`require_once` as an EXPRESSION, yielding the
+/// included file's return value.
+///
+/// The statement-level assign and return paths (`stmt::simple`, `stmt::assign::compound`)
+/// recognize these keywords earlier for the common `$x = include …;` and `return include …;`
+/// forms, so they never reach here. This arm covers every OTHER expression position — a
+/// static-property assign RHS (`self::$x = include …`, the #613 root), an argument, an array
+/// element — which all funnel through `parse_prefix`. The path is a full expression, matching
+/// PHP's low precedence for the construct (`include __DIR__ . '/f.php'` binds the whole
+/// concatenation), and an optional paren pair is consumed to mirror the statement-level parser.
+fn parse_include_expr(
+    tokens: &[(Token, Span)],
+    pos: &mut usize,
+    span: Span,
+) -> Result<Expr, CompileError> {
+    let (once, required) = match &tokens[*pos].0 {
+        Token::Include => (false, false),
+        Token::IncludeOnce => (true, false),
+        Token::Require => (false, true),
+        Token::RequireOnce => (true, true),
+        _ => unreachable!("caller matched an include/require token"),
+    };
+    *pos += 1; // consume the include/require keyword
+
+    let has_parens = *pos < tokens.len() && tokens[*pos].0 == Token::LParen;
+    if has_parens {
+        *pos += 1;
+    }
+    let path = parse_expr(tokens, pos)?;
+    if has_parens {
+        crate::parser::stmt::expect_token(
+            tokens,
+            pos,
+            &Token::RParen,
+            "Expected ')' after include path",
+        )?;
+    }
+
+    Ok(Expr::new(
+        ExprKind::IncludeValue {
+            path: Box::new(path),
+            once,
+            required,
+        },
+        span,
+    ))
 }
 
 /// Parses `yield` and `yield from` expressions. Consumes the `yield` token and optionally

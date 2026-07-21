@@ -46,6 +46,8 @@ fn try_expand_value_include(
     let value = match &stmt.kind {
         StmtKind::Assign { value, .. } => value,
         StmtKind::Return(Some(value)) => value,
+        StmtKind::StaticPropertyAssign { value, .. } => value,
+        StmtKind::PropertyAssign { value, .. } => value,
         _ => return Ok(None),
     };
     let ExprKind::IncludeValue {
@@ -56,8 +58,23 @@ fn try_expand_value_include(
     else {
         return Ok(None);
     };
+    // The value-include is hoisted only when it is the WHOLE right-hand side of one of these
+    // statements — the resolver inlines the included file's statements into the caller's scope and
+    // delivers the temp to the target, which needs a statement slot. An include nested deeper
+    // (a function argument, an array element, an operand) has no such slot and is rejected in
+    // `resolve_expr`.
     let capture = match &stmt.kind {
         StmtKind::Assign { name, .. } => IncludeValueCapture::Assign(name.clone()),
+        StmtKind::StaticPropertyAssign { receiver, property, .. } => {
+            IncludeValueCapture::AssignStaticProperty {
+                receiver: receiver.clone(),
+                property: property.clone(),
+            }
+        }
+        StmtKind::PropertyAssign { object, property, .. } => IncludeValueCapture::AssignProperty {
+            object: object.clone(),
+            property: property.clone(),
+        },
         _ => IncludeValueCapture::Return,
     };
     let expanded = expand_value_include(
