@@ -3899,9 +3899,8 @@ fn lower_throwable_get_previous(
                 ctx.emitter
                     .instruction(&format!("mov {}, x0", result_reg)); // restore result register
             }
-            if result_is_mixed {
-                emit_box_current_value_as_mixed(ctx.emitter, &object_ty);
-            }
+            // #628: the slot holds a Mixed cell, so it IS the `?Throwable` result — do not
+            // re-box it as `Mixed(Object)` (that would wrap the cell in a second cell).
             ctx.emitter
                 .instruction(&format!("b {}", done_label)); // skip null materialization
             ctx.emitter.label(&null_label);
@@ -3926,9 +3925,8 @@ fn lower_throwable_get_previous(
                 ctx.emitter
                     .instruction(&format!("mov {}, rax", result_reg)); // restore result register
             }
-            if result_is_mixed {
-                emit_box_current_value_as_mixed(ctx.emitter, &object_ty);
-            }
+            // #628: the slot holds a Mixed cell, so it IS the `?Throwable` result — do not
+            // re-box it as `Mixed(Object)` (that would wrap the cell in a second cell).
             ctx.emitter
                 .instruction(&format!("jmp {}", done_label)); // skip null materialization
             ctx.emitter.label(&null_label);

@@ -891,23 +891,20 @@ pub(super) fn try_inline_builtin_throwable_parent_construct(
         // erroring, so this interception is purely additive over the clean case.
         return Ok(false);
     }
-    // The IR pads the full `(message, code, previous)` signature. A genuinely chained
-    // (non-null) `$previous` needs the payload's `$previous` slot (deferred #628 part
-    // B). Fall through to the normal call path for it — identical to the pre-fix
-    // behavior, so an unreachable chained ctor still dead-strips to OK (no regression)
-    // and a reachable one link-fails exactly as before, rather than turning into a
-    // hard codegen error. Only the clean null-`$previous` case is inlined here.
-    if let Some(&previous) = inst.operands.get(2) {
-        if !throwable_previous_operand_is_const_null(ctx, previous)? {
-            return Ok(false);
-        }
-    }
     // Drive the same push -> init -> pop convention as the `new` path, but over the
-    // caller's `$this` rather than a freshly allocated object.
+    // caller's `$this` rather than a freshly allocated object. The inherited
+    // `message`/`code`/`previous` synthetic properties occupy the subclass's first three
+    // property slots (offsets 8/24/40 via `8 + index * 16`, parent properties first),
+    // ahead of any own properties, so these stores address `$this` correctly for
+    // pure-forwarder and property-carrying subclasses alike. Storing `$previous` (as an
+    // owned Mixed cell, offset 40) like the `new` path is what lets a genuinely chained
+    // `parent::__construct(...)` link and `getPrevious()` read it — replacing the former
+    // fall-through that emitted a call to the never-defined `_method_<parent>____construct`.
     ctx.load_local_to_result(this_slot)?;
     preserve_throwable_for_init(ctx);
     emit_throwable_message_fields(ctx, inst.operands.first().copied())?;
     emit_throwable_code_field(ctx, inst.operands.get(1).copied())?;
+    emit_throwable_previous_field(ctx, inst.operands.get(2).copied())?;
     restore_throwable_after_init(ctx);
     // `parent::__construct(...)` is a void call: stamp the void sentinel when the
     // result slot is void-typed, matching the static-call result convention.
@@ -922,24 +919,6 @@ pub(super) fn try_inline_builtin_throwable_parent_construct(
         ctx.store_result_value(result)?;
     }
     Ok(true)
-}
-
-/// Returns true when the `$previous` constructor operand is a literal PHP null
-/// (the padded default), recognized by its defining `const_null` instruction.
-fn throwable_previous_operand_is_const_null(
-    ctx: &FunctionContext<'_>,
-    value: ValueId,
-) -> Result<bool> {
-    let Some(value_ref) = ctx.function.value(value) else {
-        return Err(CodegenIrError::missing_entry("value", value.as_raw()));
-    };
-    let ValueDef::Instruction { inst, .. } = value_ref.def else {
-        return Ok(false);
-    };
-    let Some(inst_ref) = ctx.function.instruction(inst) else {
-        return Err(CodegenIrError::missing_entry("instruction", inst.as_raw()));
-    };
-    Ok(matches!(inst_ref.op, Op::ConstNull))
 }
 
 /// Returns true for builtin classes that share PHP's compact Throwable payload.
@@ -1157,12 +1136,29 @@ fn emit_throwable_previous_field(
     }
 }
 
-/// Writes the AArch64 Throwable previous field, retaining a non-null previous object.
+/// Leaves an OWNED Mixed cell for `$previous` in the result register.
+///
+/// The `previous` slot holds a Mixed cell UNIFORMLY (#628) so the three sites that touch it agree:
+/// the generic property release emits `__rt_decref_mixed` (the property is declared `?Throwable`,
+/// i.e. Mixed), and `getPrevious()` reads the slot as that cell. An `Object` operand is boxed into
+/// a fresh retaining cell (owned outright); an already-Mixed operand — what a
+/// `parent::__construct($m, $c, $previous)` forward of a `?Throwable` produces — is a SHARED cell
+/// that must be retained so the payload's release balances the caller's.
+fn emit_own_previous_as_mixed_cell(ctx: &mut FunctionContext<'_>, previous_ty: &PhpType) {
+    if matches!(previous_ty, PhpType::Object(_)) {
+        emit_box_current_value_as_mixed(ctx.emitter, previous_ty); // fresh cell retaining the object
+    } else {
+        abi::emit_call_label(ctx.emitter, "__rt_incref"); // co-own the shared Mixed cell
+    }
+}
+
+/// Writes the AArch64 Throwable previous field as an owned Mixed cell.
 fn emit_throwable_previous_field_aarch64(
     ctx: &mut FunctionContext<'_>,
     previous: Option<ValueId>,
 ) -> Result<()> {
     if let Some(previous) = previous {
+        let previous_ty = ctx.value_php_type(previous)?.codegen_repr();
         let store_label = ctx.next_label("throwable_previous_store");
         let null_label = ctx.next_label("throwable_previous_null");
         ctx.load_value_to_reg(previous, "x0")?;
@@ -1171,13 +1167,13 @@ fn emit_throwable_previous_field_aarch64(
         ctx.emitter.instruction("cmp x0, x9"); // is previous the in-band null sentinel?
         ctx.emitter
             .instruction(&format!("b.eq {}", null_label)); // treat sentinel as null payload
-        abi::emit_call_label(ctx.emitter, "__rt_incref"); // retain previous for the Throwable payload
-        ctx.emitter.instruction(&format!("b {}", store_label)); // keep the retained previous pointer
+        emit_own_previous_as_mixed_cell(ctx, &previous_ty);
+        ctx.emitter.instruction(&format!("b {}", store_label)); // keep the owned previous cell
         ctx.emitter.label(&null_label);
-        ctx.emitter.instruction("mov x0, xzr"); // compact payload stores raw null, not the in-band sentinel
+        ctx.emitter.instruction("mov x0, xzr"); // payload stores raw null, not the in-band sentinel
         ctx.emitter.label(&store_label);
         ctx.emitter.instruction("ldr x9, [sp]"); // reload the saved Throwable object for previous initialization
-        ctx.emitter.instruction("str x0, [x9, #40]"); // store Throwable previous pointer
+        ctx.emitter.instruction("str x0, [x9, #40]"); // store the Throwable previous Mixed cell
     } else {
         ctx.emitter.instruction("ldr x9, [sp]"); // reload the saved Throwable object for previous initialization
         ctx.emitter.instruction("str xzr, [x9, #40]"); // previous defaults to null
@@ -1193,19 +1189,20 @@ fn emit_throwable_previous_field_x86_64(
     if let Some(previous) = previous {
         let store_label = ctx.next_label("throwable_previous_store");
         let null_label = ctx.next_label("throwable_previous_null");
+        let previous_ty = ctx.value_php_type(previous)?.codegen_repr();
         ctx.load_value_to_reg(previous, "rax")?;
         ctx.emitter.instruction("test rax, rax"); // missing previous → store null
         ctx.emitter.instruction(&format!("jz {}", null_label));
         abi::emit_load_int_immediate(ctx.emitter, "r10", RUNTIME_NULL_SENTINEL);
         ctx.emitter.instruction("cmp rax, r10"); // is previous the in-band null sentinel?
         ctx.emitter.instruction(&format!("je {}", null_label)); // treat sentinel as null payload
-        abi::emit_call_label(ctx.emitter, "__rt_incref"); // retain previous for the Throwable payload
-        ctx.emitter.instruction(&format!("jmp {}", store_label)); // keep the retained previous pointer
+        emit_own_previous_as_mixed_cell(ctx, &previous_ty);
+        ctx.emitter.instruction(&format!("jmp {}", store_label)); // keep the owned previous cell
         ctx.emitter.label(&null_label);
-        ctx.emitter.instruction("xor rax, rax"); // compact payload stores raw null, not the in-band sentinel
+        ctx.emitter.instruction("xor rax, rax"); // payload stores raw null, not the in-band sentinel
         ctx.emitter.label(&store_label);
         ctx.emitter.instruction("mov r11, QWORD PTR [rsp]"); // reload the saved Throwable object for previous initialization
-        ctx.emitter.instruction("mov QWORD PTR [r11 + 40], rax"); // store Throwable previous pointer
+        ctx.emitter.instruction("mov QWORD PTR [r11 + 40], rax"); // store the Throwable previous Mixed cell
     } else {
         ctx.emitter.instruction("mov r11, QWORD PTR [rsp]"); // reload the saved Throwable object for previous initialization
         ctx.emitter.instruction("mov QWORD PTR [r11 + 40], 0"); // previous defaults to null

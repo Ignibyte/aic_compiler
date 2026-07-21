@@ -786,3 +786,64 @@ fn test_nullable_throwable_get_message_via_previous() {
     );
     assert_eq!(out, "inner");
 }
+
+/// Regression for #628: a user exception subclass forwarding a `?Throwable $previous` through
+/// `parent::__construct($m, $c, $previous)` links and round-trips the chain. Previously this
+/// fell through to a call on the never-emitted `_method_Exception____construct` symbol
+/// (`undefined reference` at link) — the largest native-survey cluster.
+#[test]
+fn test_subclass_parent_construct_forwards_previous_chain() {
+    let out = compile_and_run(
+        r#"<?php
+final class Wrapped628 extends RuntimeException {
+    public function __construct(string $m, ?Throwable $previous = null) {
+        parent::__construct($m, 0, $previous);
+    }
+}
+$inner = new LogicException("inner");
+try { throw new Wrapped628("outer", $inner); }
+catch (Wrapped628 $e) { echo $e->getMessage(), "|", $e->getPrevious()?->getMessage() ?? "null"; }
+"#,
+    );
+    assert_eq!(out, "outer|inner");
+}
+
+/// Regression for #628: the same forwarding subclass with NO previous reports a null chain
+/// (`getPrevious() === null`), rather than reading an uninitialized slot.
+#[test]
+fn test_subclass_parent_construct_null_previous_reads_null() {
+    let out = compile_and_run(
+        r#"<?php
+final class Solo628 extends RuntimeException {
+    public function __construct(string $m, ?Throwable $previous = null) {
+        parent::__construct($m, 0, $previous);
+    }
+}
+try { throw new Solo628("solo"); }
+catch (Solo628 $e) { echo $e->getMessage(), "|", ($e->getPrevious() === null ? "isnull" : "notnull"); }
+"#,
+    );
+    assert_eq!(out, "solo|isnull");
+}
+
+/// Regression for #628: a PROPERTY-CARRYING subclass (regular object layout, own promoted
+/// properties after the inherited message/code/previous slots) forwards a chained previous AND
+/// reads its own properties back — the offset-shift canary for the shared `previous` slot.
+#[test]
+fn test_property_carrying_subclass_forwards_previous_and_keeps_own_props() {
+    let out = compile_and_run(
+        r#"<?php
+final class AuditFail628 extends RuntimeException {
+    public function __construct(string $m, public readonly string $operation, ?Throwable $previous = null) {
+        parent::__construct($m, 0, $previous);
+    }
+}
+$root = new LogicException("root-cause");
+try { throw new AuditFail628("wrap", "audit", $root); }
+catch (AuditFail628 $e) {
+    echo $e->getMessage(), "|", $e->operation, "|", $e->getPrevious()?->getMessage() ?? "null";
+}
+"#,
+    );
+    assert_eq!(out, "wrap|audit|root-cause");
+}
