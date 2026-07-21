@@ -10251,7 +10251,9 @@ fn lower_static_method_call(
             return lower_expr(ctx, &args[0]);
         }
     }
-    let sig = static_method_implementation_signature(ctx, receiver, method)
+    let static_sig = static_method_implementation_signature(ctx, receiver, method);
+    let is_static_method = static_sig.is_some();
+    let sig = static_sig
         .or_else(|| lexical_instance_static_call_signature(ctx, receiver, method))
         .cloned();
     // PHP `__callStatic`: an undefined static method forwards to the class's
@@ -10263,7 +10265,29 @@ fn lower_static_method_call(
     }
     let operands = lower_args_with_signature(ctx, sig.as_ref(), args);
     let operands = coerce_int_backed_enum_string_argument(ctx, receiver, method, operands, expr);
-    let name = format!("{}::{}", receiver_name(receiver), method);
+    // Resolve a lexical `self::`/`parent::` STATIC-method receiver to its concrete
+    // enclosing class so the emitted target links inside a lowered closure body —
+    // whose synthetic `__eir_closure_*` name has no `Class::` prefix for codegen's
+    // `current_method_class` to recover (#657). Restricted to non-method scopes
+    // (closures / free functions): a real class-method call must keep the lexical
+    // `self`/`parent` spelling so its late-static-binding *forwarding* semantics survive
+    // (rewriting to a `Named` receiver would reset `static::` — a silent miscompile).
+    // Also gated on the static-method signature so an instance-method `self::`/`parent::`
+    // call keeps its `$this`-binding path; `static::` stays lexical-unresolved (LSB).
+    let resolved_receiver_class = if is_static_method && !ctx.in_class_method_scope() {
+        match receiver {
+            StaticReceiver::Self_ | StaticReceiver::Parent => {
+                static_receiver_class_name(ctx, receiver)
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let name = match resolved_receiver_class {
+        Some(class) => format!("{}::{}", class.trim_start_matches('\\'), method),
+        None => format!("{}::{}", receiver_name(receiver), method),
+    };
     let data = ctx.intern_string(&name);
     let result_type = sig
         .as_ref()
@@ -10516,7 +10540,7 @@ fn lower_first_class_callable(ctx: &mut LoweringContext<'_, '_>, target: &Callab
     } else {
         Vec::new()
     };
-    let data = ctx.intern_string(&callable_target_name(target));
+    let data = ctx.intern_string(&first_class_callable_name(ctx, target));
     ctx.emit_value(
         Op::FirstClassCallableNew,
         operands,
@@ -11389,6 +11413,24 @@ fn receiver_name(receiver: &StaticReceiver) -> String {
         StaticReceiver::Static => "static".to_string(),
         StaticReceiver::Parent => "parent".to_string(),
     }
+}
+
+/// Returns the interned descriptor name for a first-class callable, resolving a lexical
+/// `self::`/`parent::` STATIC-method receiver to its concrete enclosing class (#657) so a
+/// downstream callback classifier (e.g. usort's) sees a concrete callback rather than the
+/// lexical spelling it rejects. `static::` (late static binding) and instance/object
+/// receivers keep their lexical spelling.
+fn first_class_callable_name(ctx: &LoweringContext<'_, '_>, target: &CallableTarget) -> String {
+    if let CallableTarget::StaticMethod { receiver, method } = target {
+        if matches!(receiver, StaticReceiver::Self_ | StaticReceiver::Parent)
+            && static_method_implementation_signature(ctx, receiver, method).is_some()
+        {
+            if let Some(class) = static_receiver_class_name(ctx, receiver) {
+                return format!("{}::{}", class.trim_start_matches('\\'), method);
+            }
+        }
+    }
+    callable_target_name(target)
 }
 
 /// Returns a printable callable target name.

@@ -496,6 +496,14 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         method == property_hook_get_method(property) || method == property_hook_set_method(property)
     }
 
+    /// Returns true when the body being lowered is a class-method body — its `owner_name` is
+    /// `"Class::method"`. A closure or free function carries a synthetic `owner_name` with no
+    /// `Class::` prefix, which codegen's `current_method_class` cannot split to recover a lexical
+    /// `self::`/`parent::` class (#657); such scopes resolve the receiver at lowering instead.
+    pub(crate) fn in_class_method_scope(&self) -> bool {
+        self.owner_name.contains("::")
+    }
+
     /// Appends closure functions discovered while lowering expressions in this body.
     pub(crate) fn extend_closures(&mut self, closures: impl IntoIterator<Item = Function>) {
         self.closures.extend(closures);

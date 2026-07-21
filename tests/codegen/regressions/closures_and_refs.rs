@@ -227,3 +227,104 @@ echo $a["n"];
     );
     assert_eq!(out, "2");
 }
+
+/// Regression for #657: a `self::` static-method call inside a lowered closure body
+/// resolves to its concrete enclosing class. The closure's synthetic function name has
+/// no `Class::` prefix for codegen's `current_method_class` to recover, so the lexical
+/// receiver must be resolved to the concrete class at IR-lowering. Bit pre-fix with
+/// "lexical static method receiver outside class method __eir_closure_...".
+#[test]
+fn test_self_static_method_in_closure_body() {
+    let out = compile_and_run(
+        r#"<?php
+final class B657 {
+    private static function dbl(int $x): int { return $x * 2; }
+    public static function run(): string {
+        return implode(",", array_map(static fn (int $v): int => self::dbl($v), [1, 2, 3]));
+    }
+}
+echo B657::run();
+"#,
+    );
+    assert_eq!(out, "2,4,6");
+}
+
+/// Regression for #657: a `self::method(...)` first-class callable passed to `usort`
+/// resolves to a concrete-class callback so usort's classifier accepts it (it rejects
+/// a lexical `self`/`parent`/`static`/`object` receiver). Bit pre-fix with "usort
+/// callback with lexical or receiver-bound static method callback 'self::cmp'".
+#[test]
+fn test_self_static_first_class_callable_in_usort() {
+    let out = compile_and_run(
+        r#"<?php
+final class A657 {
+    private static function cmp(int $x, int $y): int { return $x <=> $y; }
+    public static function run(): string {
+        $a = [3, 1, 2];
+        usort($a, self::cmp(...));
+        return implode(",", $a);
+    }
+}
+echo A657::run();
+"#,
+    );
+    assert_eq!(out, "1,2,3");
+}
+
+/// Regression for #657: a `parent::` static-method call inside a closure body resolves
+/// to the concrete parent class.
+#[test]
+fn test_parent_static_method_in_closure_body() {
+    let out = compile_and_run(
+        r#"<?php
+abstract class Base657 { protected static function tag(string $s): string { return "[$s]"; } }
+final class D657 extends Base657 {
+    public static function run(): string {
+        return implode(",", array_map(static fn (string $s): string => parent::tag($s), ["a", "b"]));
+    }
+}
+echo D657::run();
+"#,
+    );
+    assert_eq!(out, "[a],[b]");
+}
+
+/// Guard for #657: a `self::` call to an INSTANCE method (not static) keeps its lexical
+/// `$this`-binding path — the resolution is gated on the static-method signature, so this
+/// unchanged case must still work.
+#[test]
+fn test_self_instance_method_static_call_still_binds() {
+    let out = compile_and_run(
+        r#"<?php
+final class I657 {
+    private function label(): string { return "inst"; }
+    public function run(): string { return self::label(); }
+}
+echo (new I657())->run();
+"#,
+    );
+    assert_eq!(out, "inst");
+}
+
+/// Guard for #657: `static::` (late static binding) inside a closure must stay rejected
+/// loudly — it is genuinely runtime-dependent and must NOT be silently bound to the
+/// lexical class. The resolution only touches `self`/`parent`, never `static`.
+#[test]
+fn test_static_late_bound_in_closure_still_rejected() {
+    let result = std::panic::catch_unwind(|| {
+        compile_and_run(
+            r#"<?php
+class P657 {
+    protected static function who(): string { return static::class; }
+    public static function run(): string { $f = static fn (): string => static::who(); return $f(); }
+}
+final class Q657 extends P657 {}
+echo Q657::run();
+"#,
+        )
+    });
+    assert!(
+        result.is_err(),
+        "static:: inside a closure must be rejected loudly, not silently bound to the lexical class",
+    );
+}
