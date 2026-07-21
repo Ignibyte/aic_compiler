@@ -16,11 +16,12 @@ use crate::codegen_support::platform::Arch;
 ///
 /// # ABI (ARM64)
 /// - Input: x0 = source array pointer, x1 = byte offset, x2 = slice length
-///   - x2 = -1 indicates "read to end of array"
+///   - x2 = `ARRAY_SLICE_LENGTH_TO_END` (`i64::MIN`) indicates "read to end of array"
 /// - Output: x0 = pointer to newly allocated sliced array
 ///
 /// # Behavior
 /// - Negative offset counts from end (e.g., -2 means length-2)
+/// - Negative length stops that many elements short of the end (e.g., -1 drops the last element)
 /// - Offset is clamped to [0, array_len]; if offset >= length, returns empty array
 /// - Length is clamped to [0, remaining_elements_from_offset]
 /// - Calls `__rt_array_new` to allocate the result array
@@ -54,10 +55,14 @@ pub fn emit_array_slice(emitter: &mut Emitter) {
     emitter.instruction("cmp x1, x9");                                          // check if offset >= array length
     emitter.instruction("b.ge __rt_array_slice_empty");                         // if so, result is empty array
     emitter.instruction("sub x3, x9, x1");                                      // x3 = max possible length = array_len - offset
-    emitter.instruction("cmn x2, #1");                                          // check if length == -1 (to end)
-    emitter.instruction("csel x2, x3, x2, eq");                                 // if length == -1, use remaining length
-    emitter.instruction("cmp x2, x3");                                          // clamp length to max possible
-    emitter.instruction("csel x2, x3, x2, gt");                                 // if length > remaining, use remaining
+    super::slice_length::emit_slice_length_normalization(
+        emitter,
+        "x2",
+        "x3",
+        "x4",
+        "x5",
+        "__rt_array_slice_len",
+    );
     emitter.instruction("str x1, [sp, #16]");                                   // save computed offset
     emitter.instruction("str x2, [sp, #24]");                                   // save computed slice length
 
@@ -126,16 +131,14 @@ fn emit_array_slice_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("jge __rt_array_slice_empty_x86");                      // return an empty indexed array when the requested slice offset starts beyond the source length
     emitter.instruction("mov rcx, r10");                                        // seed the maximum removable-length scratch register from the source indexed-array logical length
     emitter.instruction("sub rcx, rsi");                                        // compute the remaining scalar payload count from the normalized slice offset to the end of the source indexed array
-    emitter.instruction("cmp rdx, -1");                                         // detect the sentinel that means array_slice should run until the end of the source indexed array
-    emitter.instruction("jne __rt_array_slice_known_len_x86");                  // keep the explicit requested slice length when the caller did not use the until-end sentinel
-    emitter.instruction("mov rdx, rcx");                                        // replace the until-end sentinel with the remaining scalar payload count in the source indexed array
-
-    emitter.label("__rt_array_slice_known_len_x86");
-    emitter.instruction("cmp rdx, rcx");                                        // clamp the requested slice length so it cannot extend beyond the source indexed-array bounds
-    emitter.instruction("jle __rt_array_slice_len_ready_x86");                  // keep the explicit requested slice length when it already fits inside the remaining scalar payload window
-    emitter.instruction("mov rdx, rcx");                                        // clamp the requested slice length down to the remaining scalar payload count
-
-    emitter.label("__rt_array_slice_len_ready_x86");
+    super::slice_length::emit_slice_length_normalization(
+        emitter,
+        "rdx",
+        "rcx",
+        "r11",
+        "r11",
+        "__rt_array_slice_len_x86",
+    );
     emitter.instruction("mov QWORD PTR [rbp - 16], rsi");                       // preserve the normalized slice offset across the destination indexed-array constructor call
     emitter.instruction("mov QWORD PTR [rbp - 24], rdx");                       // preserve the clamped slice length across the destination indexed-array constructor call
     emitter.instruction("mov rdi, rdx");                                        // pass the clamped slice length as the destination indexed-array capacity to the shared constructor

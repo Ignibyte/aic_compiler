@@ -73,6 +73,14 @@ pub(crate) const TAGGED_SCALAR_TAG_NULL: i64 = 8;
 /// This is an internal array-storage tag, not a boxed Mixed runtime value tag.
 pub(crate) const TAGGED_SCALAR_ARRAY_VALUE_TYPE: i64 = 11;
 
+/// Length argument passed to the `array_slice`/`array_splice` runtime helpers to mean
+/// "run to the end of the source array" (PHP's omitted or null `$length`).
+///
+/// `i64::MIN` is the only value that cannot also be a meaningful PHP length: every other
+/// negative length counts back from the end of the array (`array_slice($a, 0, -1)` drops the
+/// last element), so the former `-1` marker silently swallowed a legal call.
+pub(crate) const ARRAY_SLICE_LENGTH_TO_END: i64 = i64::MIN;
+
 /// Returns the register holding a tagged scalar's tag word; the payload word lives in the
 /// integer result register. AArch64: `x1`. x86_64: `rdx` (mirrors the `Str` second word).
 pub(crate) fn tagged_scalar_tag_reg(emitter: &Emitter) -> &'static str {

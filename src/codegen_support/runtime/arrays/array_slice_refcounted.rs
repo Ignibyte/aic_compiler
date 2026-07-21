@@ -56,10 +56,14 @@ pub fn emit_array_slice_refcounted(emitter: &mut Emitter) {
     emitter.instruction("cmp x1, x9");                                          // compare offset with source length
     emitter.instruction("b.ge __rt_array_slice_ref_empty");                     // return empty array when offset is out of range
     emitter.instruction("sub x3, x9, x1");                                      // compute maximum possible slice length
-    emitter.instruction("cmn x2, #1");                                          // check whether requested length is -1
-    emitter.instruction("csel x2, x3, x2, eq");                                 // use remaining length when caller requested -1
-    emitter.instruction("cmp x2, x3");                                          // compare requested length with remaining length
-    emitter.instruction("csel x2, x3, x2, gt");                                 // clamp requested length to remaining length
+    super::slice_length::emit_slice_length_normalization(
+        emitter,
+        "x2",
+        "x3",
+        "x4",
+        "x5",
+        "__rt_array_slice_ref_len",
+    );
     emitter.instruction("str x1, [sp, #16]");                                   // save normalized offset
     emitter.instruction("str x2, [sp, #24]");                                   // save normalized slice length
 
@@ -127,16 +131,14 @@ fn emit_array_slice_refcounted_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("jge __rt_array_slice_ref_empty_x86");                  // return an empty indexed array when the requested slice offset starts beyond the source length
     emitter.instruction("mov rcx, r10");                                        // seed the remaining-window scratch register from the source indexed-array logical length
     emitter.instruction("sub rcx, rsi");                                        // compute the remaining refcounted payload count from the normalized slice offset to the end of the source indexed array
-    emitter.instruction("cmp rdx, -1");                                         // detect the sentinel that means array_slice should run until the end of the source indexed array
-    emitter.instruction("jne __rt_array_slice_ref_known_len_x86");              // keep the explicit requested slice length when the caller did not use the until-end sentinel
-    emitter.instruction("mov rdx, rcx");                                        // replace the until-end sentinel with the remaining refcounted payload count in the source indexed array
-
-    emitter.label("__rt_array_slice_ref_known_len_x86");
-    emitter.instruction("cmp rdx, rcx");                                        // clamp the requested slice length so it cannot extend beyond the source indexed-array bounds
-    emitter.instruction("jle __rt_array_slice_ref_len_ready_x86");              // keep the explicit requested slice length when it already fits inside the remaining refcounted payload window
-    emitter.instruction("mov rdx, rcx");                                        // clamp the requested slice length down to the remaining refcounted payload count
-
-    emitter.label("__rt_array_slice_ref_len_ready_x86");
+    super::slice_length::emit_slice_length_normalization(
+        emitter,
+        "rdx",
+        "rcx",
+        "r11",
+        "r11",
+        "__rt_array_slice_ref_len_x86",
+    );
     emitter.instruction("mov QWORD PTR [rbp - 16], rsi");                       // preserve the normalized slice offset across the destination indexed-array constructor call
     emitter.instruction("mov QWORD PTR [rbp - 24], rdx");                       // preserve the clamped slice length across the destination indexed-array constructor call
     emitter.instruction("mov rdi, rdx");                                        // pass the clamped slice length as the destination indexed-array capacity to the shared constructor

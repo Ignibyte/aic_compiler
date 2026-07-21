@@ -2408,7 +2408,7 @@ fn lower_user_sort_static_callback(
     if name == "usort" && ctx.value_php_type(array)?.codegen_repr() == PhpType::Mixed {
         return lower_user_sort_over_mixed(ctx, inst, array, callback, name);
     }
-    user_sort_element_type(ctx.value_php_type(array)?, name)?;
+    let element_ty = user_sort_element_type(ctx.value_php_type(array)?, name)?;
     let source_local = source_load_local_slot(ctx, array)?;
     ensure_unique_sort_source(ctx, array)?;
     if let Some(slot) = source_local {
@@ -2417,11 +2417,17 @@ fn lower_user_sort_static_callback(
     let callback_ty = ctx.value_php_type(callback)?.codegen_repr();
     let callback_owner = format!("{} callback", name);
     if callback_ty == PhpType::Callable && static_callback_operand_is_recoverable(ctx, callback) {
+        // The comparator sees the array's ELEMENT type, not a raw `Int` handle: every element type
+        // `user_sort_element_type` admits is a single 8-byte word that `__rt_usort` permutes by
+        // handle, so the wrapper ABI is identical either way — but a comparator declared
+        // `f(Desc $a, Desc $b)` only type-checks against `Object("Desc")`. Hardcoding `Int` here
+        // was #648's "usort callback ... for runtime arg type Int" rejection.
+        let visible_arg_types = [element_ty.clone(), element_ty.clone()];
         let callback_binding = static_sort_callback_binding(
             ctx,
             callback,
             &callback_owner,
-            Some(&[PhpType::Int, PhpType::Int]),
+            Some(&visible_arg_types),
         )?;
         return lower_user_sort_with_static_callback_binding(ctx, inst, array, callback_binding);
     }
@@ -4069,7 +4075,15 @@ fn require_static_method_callback_arg_types(
     for ty in visible_arg_types {
         if !matches!(
             ty.codegen_repr(),
-            PhpType::Int | PhpType::Bool | PhpType::Str | PhpType::Void | PhpType::Never
+            PhpType::Int
+                | PhpType::Bool
+                | PhpType::Str
+                | PhpType::Void
+                | PhpType::Never
+                // An object argument is a single-word heap pointer, so the wrapper forwards it in
+                // one register exactly like an `Int` — no boxing and no register-pair shuffle.
+                // Needed for a `usort` comparator declared over the array's element class (#648).
+                | PhpType::Object(_)
         ) {
             return Err(CodegenIrError::unsupported(format!(
                 "{} '{}' with unsupported callback arg type {:?}",
@@ -4102,6 +4116,12 @@ fn require_static_method_callback_param_types(
             continue;
         }
         if matches!((&param_ty, &visible_ty), (PhpType::Str, PhpType::Str)) {
+            continue;
+        }
+        // Identical codegen representations are trivially compatible — notably an
+        // `Object("Desc")` element feeding a `f(Desc $a, Desc $b)` comparator, where both sides
+        // are the same single-word handle. Anything unequal still falls through to the loud error.
+        if param_ty == visible_ty {
             continue;
         }
         // A `Mixed` callee param (unhinted after #621) consumes any raw
@@ -5589,8 +5609,9 @@ fn lower_slice_like_args(
 
 /// Resolves an optional `array_slice`/`array_splice` length into the integer result register.
 ///
-/// An absent or `Void` length becomes the runtime "until the end" sentinel; otherwise the length is
-/// resolved through the shared integer resolver, unboxing a `Mixed` value to a plain integer.
+/// An absent or `Void` length becomes the runtime "until the end" sentinel; a `?int` length picks
+/// between that sentinel and its payload at runtime; otherwise the length is resolved through the
+/// shared integer resolver, unboxing a `Mixed` value to a plain integer.
 fn resolve_slice_length_to_result(
     ctx: &mut FunctionContext<'_>,
     length: Option<ValueId>,
@@ -5605,11 +5626,35 @@ fn resolve_slice_length_to_result(
         emit_array_slice_until_end_sentinel(ctx, reg);
         return Ok(());
     }
-    resolve_int_operand_to_result(
-        ctx,
-        length.expect("length present"),
-        &format!("{} length", name),
-    )
+    let length = length.expect("length present");
+    if matches!(
+        ctx.value_php_type(length)?.codegen_repr(),
+        PhpType::TaggedScalar
+    ) {
+        return emit_tagged_scalar_slice_length_to_result(ctx, length);
+    }
+    resolve_int_operand_to_result(ctx, length, &format!("{} length", name))
+}
+
+/// Resolves a `?int` (tagged-scalar) `array_slice`/`array_splice` length into the integer result
+/// register: a null tag selects the "until the end" sentinel, an int tag keeps its payload word.
+///
+/// The tagged scalar arrives as `{payload in the int result register, tag in the tag register}`, so
+/// the payload is already in place for the non-null path and only the null path needs to write.
+fn emit_tagged_scalar_slice_length_to_result(
+    ctx: &mut FunctionContext<'_>,
+    length: ValueId,
+) -> Result<()> {
+    ctx.load_value_to_result(length)?;
+    let null_label = ctx.next_label("slice_len_tagged_null");
+    let done_label = ctx.next_label("slice_len_tagged_done");
+    crate::codegen_support::sentinels::emit_branch_if_tagged_scalar_null(ctx.emitter, &null_label);
+    abi::emit_jump(ctx.emitter, &done_label);
+    ctx.emitter.label(&null_label);
+    let reg = abi::int_result_reg(ctx.emitter);
+    emit_array_slice_until_end_sentinel(ctx, reg);
+    ctx.emitter.label(&done_label);
+    Ok(())
 }
 
 /// Resolves the offset/length arguments for a boxed-Mixed `array_slice`/`array_splice` into the
@@ -5865,16 +5910,14 @@ fn lower_array_pad_call(
     Ok(())
 }
 
-/// Emits the `-1` runtime sentinel used when slicing to the end of the source array.
+/// Emits the runtime sentinel used when slicing to the end of the source array. `i64::MIN` rather
+/// than `-1` because every other negative length is a legal PHP length counting back from the end.
 fn emit_array_slice_until_end_sentinel(ctx: &mut FunctionContext<'_>, reg: &str) {
-    match ctx.emitter.target.arch {
-        Arch::AArch64 => {
-            ctx.emitter.instruction(&format!("mov {}, #-1", reg));              // use -1 as the array_slice() runtime sentinel for length until the end
-        }
-        Arch::X86_64 => {
-            ctx.emitter.instruction(&format!("mov {}, -1", reg));               // use -1 as the x86_64 array_slice() runtime sentinel for length until the end
-        }
-    }
+    abi::emit_load_int_immediate(
+        ctx.emitter,
+        reg,
+        crate::codegen_support::sentinels::ARRAY_SLICE_LENGTH_TO_END,
+    );
 }
 
 /// Returns the helper that matches the chunk source element ownership representation.

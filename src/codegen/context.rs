@@ -259,6 +259,11 @@ impl<'a> FunctionContext<'a> {
     }
 
     /// Loads a string SSA value into a caller-selected register pair.
+    ///
+    /// A boxed `Mixed`/`Union` value is unboxed at runtime (see
+    /// `load_mixed_value_to_string_regs`), which emits a call — a caller that has already staged
+    /// other arguments in caller-saved registers must spill across this load. This mirrors the
+    /// documented contract of `resolve_int_operand_to_result`.
     pub(super) fn load_string_value_to_regs(
         &mut self,
         value: ValueId,
@@ -266,16 +271,96 @@ impl<'a> FunctionContext<'a> {
         len_reg: &str,
     ) -> Result<()> {
         let ty = self.value_php_type(value)?;
+        if matches!(ty, PhpType::Mixed | PhpType::Union(_)) {
+            return self.load_mixed_value_to_string_regs(value, ptr_reg, len_reg);
+        }
         if ty != PhpType::Str {
             return Err(CodegenIrError::unsupported(format!(
-                "string register materialization for PHP type {:?}",
-                ty
+                "string register materialization for PHP type {:?} in '{}'",
+                ty, self.function.name
             )));
         }
         let offset = self.value_offset(value)?;
         abi::load_at_offset(self.emitter, ptr_reg, offset);
         abi::load_at_offset(self.emitter, len_reg, offset - 8);
         Ok(())
+    }
+
+    /// Unboxes a `Mixed` cell into a caller-selected string register pair.
+    ///
+    /// A `?string` that the checker narrowed to `string` (`if ($s === null) { return; }`,
+    /// `is_string($s)`, `$s === null || f($s)`) keeps its boxed `Mixed` slot representation — the
+    /// narrowing lives in the type environment, not in the local's storage — so the value must be
+    /// unboxed where a string register pair is required. `__rt_mixed_unbox` yields
+    /// `{tag, value_lo, value_hi}`; for the string tag those payload words ARE the `{ptr, len}`
+    /// pair, so they move straight into place.
+    ///
+    /// A non-string tag means the narrowing that admitted this value did not actually hold, so the
+    /// program is already wrong: abort loudly rather than reinterpret an int or a heap pointer as
+    /// a string descriptor (which would read arbitrary memory as string bytes).
+    fn load_mixed_value_to_string_regs(
+        &mut self,
+        value: ValueId,
+        ptr_reg: &str,
+        len_reg: &str,
+    ) -> Result<()> {
+        let ok_label = self.next_label("mixed_str_ok");
+        let fail_label = self.next_label("mixed_str_not_string");
+        // `__rt_mixed_unbox` takes its boxed-cell operand in x0 (AArch64) / rax (x86_64) — the
+        // INT RESULT register, not the System V first-argument register its docstring implies.
+        // Verified against the emitter implementation.
+        let unbox_arg_reg = abi::int_result_reg(self.emitter);
+        self.load_value_to_reg(value, unbox_arg_reg)?;
+        abi::emit_call_label(self.emitter, "__rt_mixed_unbox");
+        let str_tag = crate::codegen::runtime_value_tag(&PhpType::Str);
+        // `__rt_mixed_unbox` returns {tag, lo, hi} in x0/x1/x2 (AArch64) and rax/rdi/rdx (x86_64).
+        // Verified against the emitter implementation, not its docstring.
+        match self.emitter.target.arch {
+            Arch::AArch64 => {
+                self.emitter.instruction(&format!("cmp x0, #{}", str_tag)); // did the boxed value carry a PHP string?
+                self.emitter
+                    .instruction(&format!("b.ne {}", fail_label)); // a non-string tag cannot be reinterpreted as a string descriptor
+                self.emitter.instruction(&format!("mov {}, x1", ptr_reg)); // value_lo holds the string byte pointer
+                self.emitter.instruction(&format!("mov {}, x2", len_reg)); // value_hi holds the string byte length
+            }
+            Arch::X86_64 => {
+                self.emitter.instruction(&format!("cmp rax, {}", str_tag)); // did the boxed value carry a PHP string?
+                self.emitter.instruction(&format!("jne {}", fail_label)); // a non-string tag cannot be reinterpreted as a string descriptor
+                self.emitter.instruction(&format!("mov {}, rdi", ptr_reg)); // value_lo holds the string byte pointer
+                self.emitter.instruction(&format!("mov {}, rdx", len_reg)); // value_hi holds the string byte length
+            }
+        }
+        abi::emit_jump(self.emitter, &ok_label);
+        self.emitter.label(&fail_label);
+        self.emit_non_string_mixed_fatal();
+        self.emitter.label(&ok_label);
+        Ok(())
+    }
+
+    /// Writes the non-string-tag diagnostic to stderr and exits, for a boxed value that reached a
+    /// string register pair without carrying a string.
+    fn emit_non_string_mixed_fatal(&mut self) {
+        let message = b"Fatal error: value used as a string is not a string\n";
+        let (message_label, message_len) = self.data.add_string(message);
+        match self.emitter.target.arch {
+            Arch::AArch64 => {
+                self.emitter.instruction("mov x0, #2"); // select stderr for the fatal diagnostic
+                self.emitter.adrp("x1", &message_label);
+                self.emitter.add_lo12("x1", "x1", &message_label);
+                self.emitter
+                    .instruction(&format!("mov x2, #{}", message_len)); // pass the diagnostic byte length to write()
+                self.emitter.syscall(4);
+            }
+            Arch::X86_64 => {
+                abi::emit_symbol_address(self.emitter, "rsi", &message_label);
+                self.emitter
+                    .instruction(&format!("mov edx, {}", message_len)); // pass the diagnostic byte length to write()
+                self.emitter.instruction("mov edi, 2"); // select stderr for the fatal diagnostic
+                self.emitter.instruction("mov eax, 1"); // select the Linux write syscall
+                self.emitter.instruction("syscall"); // write the diagnostic bytes
+            }
+        }
+        abi::emit_exit(self.emitter, 1);
     }
 
     /// Loads a local slot into the target's canonical result register(s).

@@ -49,10 +49,14 @@ pub fn emit_array_slice_str(emitter: &mut Emitter) {
     emitter.instruction("cmp x1, x9");
     emitter.instruction("b.ge __rt_array_slice_str_empty");                     // offset >= len -> empty
     emitter.instruction("sub x3, x9, x1");                                      // x3 = remaining
-    emitter.instruction("cmn x2, #1");                                          // length == -1 (to end)?
-    emitter.instruction("csel x2, x3, x2, eq");                                 // use remaining when -1
-    emitter.instruction("cmp x2, x3");
-    emitter.instruction("csel x2, x3, x2, gt");                                 // clamp to remaining
+    super::slice_length::emit_slice_length_normalization(
+        emitter,
+        "x2",
+        "x3",
+        "x4",
+        "x5",
+        "__rt_array_slice_str_len",
+    );
     emitter.instruction("str x1, [sp, #8]");                                    // save offset
     emitter.instruction("str x2, [sp, #16]");                                   // save length
 
@@ -126,16 +130,14 @@ fn emit_array_slice_str_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("jge __rt_array_slice_str_empty_x86");                  // offset >= len -> empty
     emitter.instruction("mov rcx, r10");
     emitter.instruction("sub rcx, rsi");                                        // remaining
-    emitter.instruction("cmp rdx, -1");
-    emitter.instruction("jne __rt_array_slice_str_known_len_x86");
-    emitter.instruction("mov rdx, rcx");                                        // to-end -> remaining
-
-    emitter.label("__rt_array_slice_str_known_len_x86");
-    emitter.instruction("cmp rdx, rcx");
-    emitter.instruction("jle __rt_array_slice_str_len_ready_x86");
-    emitter.instruction("mov rdx, rcx");                                        // clamp to remaining
-
-    emitter.label("__rt_array_slice_str_len_ready_x86");
+    super::slice_length::emit_slice_length_normalization(
+        emitter,
+        "rdx",
+        "rcx",
+        "r11",
+        "r11",
+        "__rt_array_slice_str_len_x86",
+    );
     emitter.instruction("mov QWORD PTR [rbp - 16], rsi");                       // offset
     emitter.instruction("mov QWORD PTR [rbp - 24], rdx");                       // length
     emitter.instruction("mov rdi, rdx");                                        // capacity

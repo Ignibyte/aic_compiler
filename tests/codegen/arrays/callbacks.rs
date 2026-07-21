@@ -1636,3 +1636,44 @@ echo $sum, "\n";
         out.stderr
     );
 }
+
+/// Regression for #648: a `usort` comparator declared over the array's ELEMENT CLASS must
+/// type-check. The static-callback path hardcoded the comparator's runtime argument types as
+/// `[Int, Int]` regardless of the source array, so `f(Desc $a, Desc $b)` over an `array<Desc>` was
+/// rejected with "usort callback ... with callback param type Object(\"Desc\") for runtime arg
+/// type Int" — the PluginManifestFactory::sortDecorators shape. Every element type `usort` admits
+/// is a single 8-byte handle, so the wrapper ABI is unchanged; only the declared type differs.
+///
+/// Asserts the SORTED ORDER (not merely that it compiles) — a comparator fed the wrong handles
+/// would still link but order arbitrarily.
+#[test]
+fn test_usort_comparator_declared_over_element_class() {
+    let out = compile_and_run(
+        r#"<?php
+final class Desc {
+    public function __construct(public int $weight, public string $id) {}
+}
+final class Factory {
+    public static function sortDecorators(array $decorators): array
+    {
+        $sorted = $decorators;
+        usort($sorted, self::compareDecorators(...));
+        return $sorted;
+    }
+    private static function compareDecorators(Desc $left, Desc $right): int
+    {
+        return $left->weight <=> $right->weight;
+    }
+}
+$in = [new Desc(3, 'c'), new Desc(1, 'a'), new Desc(2, 'b')];
+foreach (Factory::sortDecorators($in) as $d) { echo $d->id; }
+echo "|";
+$one = [new Desc(7, 'x')];
+foreach (Factory::sortDecorators($one) as $d) { echo $d->id; }
+echo "|";
+foreach (Factory::sortDecorators([]) as $d) { echo $d->id; }
+echo "empty";
+"#,
+    );
+    assert_eq!(out, "abc|x|empty");
+}

@@ -582,3 +582,75 @@ echo tag(new Box(static fn(): int => 1)), tag(new Box(null));
     );
     assert_eq!(out, "YN");
 }
+
+/// Regression for #669: a `?string` that the checker narrowed to `string` keeps its boxed `Mixed`
+/// slot representation, so materializing it into a string register pair must unbox it at runtime.
+/// Previously every one of these aborted codegen with
+/// "string register materialization for PHP type Mixed".
+///
+/// Covers all four narrowing shapes AIC actually writes: the early-return `if ($x === null)`
+/// (EntityTypeRegistry::guardOverrideFactory), the `||` short-circuit, the `&&` short-circuit, and
+/// the `is_string()` guard (LayoutTree::__construct).
+#[test]
+fn test_narrowed_nullable_string_reaches_string_register() {
+    let out = compile_and_run(
+        r#"<?php
+class Base {}
+class Child extends Base {}
+final class Reg {
+    public function m(string $c): ?string { return $c === 'Child' ? 'Base' : null; }
+}
+function early(Reg $r, string $o): bool {
+    $d = $r->m($o);
+    if ($d === null) { return true; }
+    return is_subclass_of($o, $d);
+}
+function orForm(Reg $r, string $o): bool {
+    $d = $r->m($o);
+    return $d === null || is_subclass_of($o, $d);
+}
+function andForm(Reg $r, string $o): bool {
+    $d = $r->m($o);
+    return $d !== null && is_subclass_of($o, $d);
+}
+function isStringForm(Reg $r, string $o): bool {
+    $d = $r->m($o);
+    if (!is_string($d)) { return true; }
+    return is_subclass_of($o, $d);
+}
+$r = new Reg();
+echo early($r, 'Child') ? 'T' : 'F', early($r, 'Base') ? 'T' : 'F', "|";
+echo orForm($r, 'Child') ? 'T' : 'F', orForm($r, 'Base') ? 'T' : 'F', "|";
+echo andForm($r, 'Child') ? 'T' : 'F', andForm($r, 'Base') ? 'T' : 'F', "|";
+echo isStringForm($r, 'Child') ? 'T' : 'F', isStringForm($r, 'Base') ? 'T' : 'F';
+"#,
+    );
+    assert_eq!(out, "TT|TT|TF|TT");
+}
+
+/// Regression for #669: the narrowed value must reach a plain `string` PARAMETER too, not just a
+/// class-name builtin — `LayoutTree::__construct` throws `new InvalidArgumentException($error)`
+/// with `$error` a `?string` narrowed by `is_string()`. Pins that the unboxed bytes are the real
+/// string (a length/pointer mix-up would print garbage or nothing).
+#[test]
+fn test_narrowed_nullable_string_reaches_string_parameter() {
+    let out = compile_and_run(
+        r#"<?php
+function describe(int $columns): ?string {
+    return $columns < 1 ? "needs a positive column count, got " . $columns : null;
+}
+function build(int $columns): string {
+    $error = describe($columns);
+    if (is_string($error)) {
+        return "ERR:" . $error;
+    }
+    return "OK";
+}
+echo build(3), "|", build(0), "|", build(-2);
+"#,
+    );
+    assert_eq!(
+        out,
+        "OK|ERR:needs a positive column count, got 0|ERR:needs a positive column count, got -2"
+    );
+}

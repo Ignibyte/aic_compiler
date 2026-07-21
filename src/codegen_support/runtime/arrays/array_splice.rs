@@ -53,8 +53,14 @@ pub fn emit_array_splice(emitter: &mut Emitter) {
     // -- clamp removal length to not exceed array bounds --
     emitter.instruction("ldr x3, [x0]");                                        // x3 = source array length
     emitter.instruction("sub x4, x3, x1");                                      // x4 = length - offset (max removable)
-    emitter.instruction("cmp x2, x4");                                          // compare requested length with max
-    emitter.instruction("csel x2, x4, x2, gt");                                 // clamp to max if too large
+    super::slice_length::emit_slice_length_normalization(
+        emitter,
+        "x2",
+        "x4",
+        "x5",
+        "x6",
+        "__rt_array_splice_len",
+    );
     emitter.instruction("str x2, [sp, #16]");                                   // save clamped removal length
 
     // -- create result array for removed elements --
@@ -140,16 +146,14 @@ fn emit_array_splice_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov r10, QWORD PTR [rdi]");                            // load the source indexed-array logical length before clamping the requested removal length
     emitter.instruction("mov rcx, r10");                                        // seed the remaining-window scratch register from the source indexed-array logical length
     emitter.instruction("sub rcx, rsi");                                        // compute the maximum removable scalar payload count from the requested splice offset
-    emitter.instruction("cmp rdx, -1");                                         // detect the sentinel that means array_splice should remove until the end of the source indexed array
-    emitter.instruction("jne __rt_array_splice_known_len_x86");                 // keep the explicit requested removal length when the caller did not use the until-end sentinel
-    emitter.instruction("mov rdx, rcx");                                        // replace the until-end sentinel with the remaining scalar payload count in the source indexed array
-
-    emitter.label("__rt_array_splice_known_len_x86");
-    emitter.instruction("cmp rdx, rcx");                                        // clamp the requested removal length so it never extends beyond the source indexed-array bounds
-    emitter.instruction("jle __rt_array_splice_len_ready_x86");                 // keep the explicit requested removal length when it already fits inside the remaining scalar payload window
-    emitter.instruction("mov rdx, rcx");                                        // clamp the requested removal length down to the maximum removable scalar payload count
-
-    emitter.label("__rt_array_splice_len_ready_x86");
+    super::slice_length::emit_slice_length_normalization(
+        emitter,
+        "rdx",
+        "rcx",
+        "r11",
+        "r11",
+        "__rt_array_splice_len_x86",
+    );
     emitter.instruction("mov QWORD PTR [rbp - 24], rdx");                       // preserve the clamped removal length across the result-array constructor call
     emitter.instruction("mov rdi, rdx");                                        // pass the clamped removal length as the result indexed-array capacity to the shared constructor
     emitter.instruction("mov rsi, 8");                                          // request 8-byte scalar payload slots for the result indexed array

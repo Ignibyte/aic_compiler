@@ -179,3 +179,67 @@ echo implode(",", $removed), "|", implode(",", $a3);
     );
     assert_eq!(out, "20,30|30,40,50|2,3|1,4,5");
 }
+
+/// Regression for #644: a `?int` (tagged-scalar) `$length` must pick between "run to the end"
+/// (null) and its payload word (int) at runtime. This is `FileStatement::applyLimitOffset`'s shape
+/// — `$plan->limit()` returns `?int` — which previously aborted codegen with
+/// "array_slice length for PHP type TaggedScalar". The last case pins that a NEGATIVE `?int`
+/// length still counts back from the end rather than being mistaken for the to-end marker.
+#[test]
+fn test_array_slice_nullable_int_length() {
+    let out = compile_and_run(
+        r#"<?php
+final class Plan {
+    public function __construct(private ?int $lim) {}
+    public function limit(): ?int { return $this->lim; }
+}
+$rows = [1, 2, 3, 4, 5];
+$none = new Plan(null);
+$two = new Plan(2);
+$zero = new Plan(0);
+$back = new Plan(-1);
+echo implode(",", array_slice($rows, 1, $none->limit())), "|";
+echo implode(",", array_slice($rows, 1, $two->limit())), "|";
+echo implode(",", array_slice($rows, 1, $zero->limit())), "|";
+echo implode(",", array_slice($rows, 1, $back->limit()));
+"#,
+    );
+    assert_eq!(out, "2,3,4,5|2,3||2,3,4");
+}
+
+/// Regression for #644: a NEGATIVE `array_slice` length stops that many elements short of the end
+/// (`array_slice([1..5], 0, -1) === [1,2,3,4]`). The helpers previously used `-1` as their
+/// "run to the end" marker, so a legal `-1` silently returned the whole remainder and `-2` built a
+/// negative-capacity array (heap exhaustion). The marker is now `i64::MIN`, which no PHP length
+/// can collide with. The final case pins that the to-end path still works.
+#[test]
+fn test_array_slice_negative_length() {
+    let out = compile_and_run(
+        r#"<?php
+$a = [1, 2, 3, 4, 5];
+echo implode(",", array_slice($a, 0, -1)), "|";
+echo implode(",", array_slice($a, 0, -2)), "|";
+echo implode(",", array_slice($a, 1, -1)), "|";
+echo implode(",", array_slice($a, 0, -9)), "|";
+echo implode(",", array_slice($a, 1));
+"#,
+    );
+    assert_eq!(out, "1,2,3,4|1,2,3|2,3,4||2,3,4,5");
+}
+
+/// Regression for #644: the same negative-length rule over `string` elements and through
+/// `array_splice`, whose removal length shares the normalization. Pins that a negative removal
+/// length leaves the correct remainder in the source array.
+#[test]
+fn test_array_slice_splice_negative_length_string_and_source() {
+    let out = compile_and_run(
+        r#"<?php
+$s = ["a", "b", "c", "d", "e"];
+echo implode(",", array_slice($s, 0, -2)), "|";
+$n = [1, 2, 3, 4, 5];
+$removed = array_splice($n, 1, -2);
+echo implode(",", $removed), "|", implode(",", $n);
+"#,
+    );
+    assert_eq!(out, "a,b,c|2,3|1,4,5");
+}
