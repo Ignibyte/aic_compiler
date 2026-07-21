@@ -376,6 +376,11 @@ fn iter_start_is_by_ref(inst: &Instruction) -> bool {
 }
 
 /// Splits statically typed array/hash sources before by-reference iteration.
+///
+/// A null/sentinel source (a missed outer read used as `foreach ($a[$absent] as &$v)`) has no
+/// storage to split: skip the COW helper, whose refcount load would dereference the sentinel,
+/// and leave the null-container in the result register so it is stored as the iterator source
+/// unchanged. The by-reference `IterNext` guard then treats it as length zero (#556).
 fn ensure_unique_static_iter_source(
     ctx: &mut FunctionContext<'_>,
     source: ValueId,
@@ -386,10 +391,20 @@ fn ensure_unique_static_iter_source(
         IteratorSourceKind::Hash => "__rt_hash_ensure_unique",
         _ => return Ok(()),
     };
+    let no_split_label = ctx.next_label("iter_ref_null_source");
+    let result_reg = abi::int_result_reg(ctx.emitter);
+    let scratch_reg = abi::secondary_scratch_reg(ctx.emitter);
+    crate::codegen::sentinels::emit_branch_if_null_container(
+        ctx.emitter,
+        result_reg,
+        scratch_reg,
+        &no_split_label,
+    );
     if ctx.emitter.target.arch == Arch::X86_64 {
         ctx.emitter.instruction("mov rdi, rax");                                // pass the foreach source pointer to the COW helper
     }
     abi::emit_call_label(ctx.emitter, helper);
+    ctx.emitter.label(&no_split_label);
     ctx.store_result_value(source)?;
     if let Some(slot) = source_load_local_slot(ctx, source)? {
         ctx.store_value_to_local(slot, source)?;
@@ -842,11 +857,26 @@ fn store_iterator_cursor(ctx: &mut FunctionContext<'_>, offset: usize, cursor: i
 /// Snapshots the indexed-array length into the iterator state so `IterNext` compares
 /// against the original length rather than re-reading it each iteration. PHP snapshots
 /// the array length at loop entry, so elements appended during iteration are not visited.
+/// A null/sentinel source (a missed outer read, e.g. `foreach ($a[$absent] as $v)`)
+/// snapshots length zero so the loop body never runs instead of dereferencing the sentinel
+/// as an array header (#556).
 fn snapshot_indexed_array_length(ctx: &mut FunctionContext<'_>, offset: usize) {
     let array_reg = abi::int_result_reg(ctx.emitter);
     let len_reg = abi::secondary_scratch_reg(ctx.emitter);
+    let null_label = ctx.next_label("iter_len_null_source");
+    let done_label = ctx.next_label("iter_len_done");
     abi::load_at_offset(ctx.emitter, array_reg, offset - ITER_SOURCE_OFFSET_DELTA);
+    crate::codegen::sentinels::emit_branch_if_null_container(
+        ctx.emitter,
+        array_reg,
+        len_reg,
+        &null_label,
+    );
     abi::emit_load_from_address(ctx.emitter, len_reg, array_reg, 0);
+    abi::emit_jump(ctx.emitter, &done_label);
+    ctx.emitter.label(&null_label);
+    abi::emit_load_int_immediate(ctx.emitter, len_reg, 0);
+    ctx.emitter.label(&done_label);
     abi::store_at_offset(ctx.emitter, len_reg, offset - ITER_SNAPSHOT_LEN_OFFSET_DELTA);
 }
 
@@ -1244,8 +1274,22 @@ fn lower_indexed_iter_next_aarch64(
     ctx.emitter.instruction(&format!("add {}, {}, #1", index_reg, index_reg));  // advance to the candidate indexed-array offset
     if by_ref {
         let array_reg = abi::int_result_reg(ctx.emitter);
+        let null_source = ctx.next_label("iter_next_ref_null_source");
+        let len_ready = ctx.next_label("iter_next_ref_len_ready");
         abi::load_at_offset(ctx.emitter, array_reg, offset - ITER_SOURCE_OFFSET_DELTA);
+        // A by-reference foreach over a missed outer read carries a null/sentinel source;
+        // treat its live length as zero so iteration ends instead of dereferencing it (#556).
+        crate::codegen::sentinels::emit_branch_if_null_container(
+            ctx.emitter,
+            array_reg,
+            len_reg,
+            &null_source,
+        );
         abi::emit_load_from_address(ctx.emitter, len_reg, array_reg, 0);
+        abi::emit_jump(ctx.emitter, &len_ready);
+        ctx.emitter.label(&null_source);
+        abi::emit_load_int_immediate(ctx.emitter, len_reg, 0);
+        ctx.emitter.label(&len_ready);
         ctx.emitter.instruction(&format!("cmp {}, {}", index_reg, len_reg));    // compare the candidate offset against the live array length
     } else {
         abi::load_at_offset(ctx.emitter, len_reg, offset - ITER_SNAPSHOT_LEN_OFFSET_DELTA);
@@ -1275,8 +1319,22 @@ fn lower_indexed_iter_next_x86_64(
     ctx.emitter.instruction(&format!("add {}, 1", index_reg));                  // advance to the candidate indexed-array offset
     if by_ref {
         let array_reg = abi::symbol_scratch_reg(ctx.emitter);
+        let null_source = ctx.next_label("iter_next_ref_null_source");
+        let len_ready = ctx.next_label("iter_next_ref_len_ready");
         abi::load_at_offset(ctx.emitter, array_reg, offset - ITER_SOURCE_OFFSET_DELTA);
+        // A by-reference foreach over a missed outer read carries a null/sentinel source;
+        // treat its live length as zero so iteration ends instead of dereferencing it (#556).
+        crate::codegen::sentinels::emit_branch_if_null_container(
+            ctx.emitter,
+            array_reg,
+            len_reg,
+            &null_source,
+        );
         abi::emit_load_from_address(ctx.emitter, len_reg, array_reg, 0);
+        abi::emit_jump(ctx.emitter, &len_ready);
+        ctx.emitter.label(&null_source);
+        abi::emit_load_int_immediate(ctx.emitter, len_reg, 0);
+        ctx.emitter.label(&len_ready);
         ctx.emitter.instruction(&format!("cmp {}, {}", index_reg, len_reg));    // compare the candidate offset against the live array length
     } else {
         abi::load_at_offset(ctx.emitter, len_reg, offset - ITER_SNAPSHOT_LEN_OFFSET_DELTA);

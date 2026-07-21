@@ -981,3 +981,53 @@ echo "done\n";
     );
     assert_eq!(out, "NULL\ndone\n");
 }
+
+/// Regression for issue #556: a by-reference foreach whose source is a missing array element
+/// (a null-container sentinel) must follow PHP's null-iteration — skip the body without a
+/// crash — instead of dereferencing the sentinel in the COW split or the live-length read.
+#[test]
+fn test_byref_foreach_over_missing_element_skips_without_crash() {
+    let out = compile_and_run(
+        r#"<?php
+$a = [['x', 'y']];
+foreach ($a[7] as &$v) {
+    $v = 'changed';
+}
+echo "done\n";
+"#,
+    );
+    assert_eq!(out, "done\n");
+}
+
+/// Regression for issue #556: `foreach ($a[$absent] ?? [] as &$v)` — the null-coalesced empty
+/// default must iterate zero times without crashing.
+#[test]
+fn test_byref_foreach_over_coalesced_empty_default_skips() {
+    let out = compile_and_run(
+        r#"<?php
+$a = [['x', 'y']];
+foreach ($a[7] ?? [] as &$v) {
+    $v = 'changed';
+}
+echo "done\n";
+"#,
+    );
+    assert_eq!(out, "done\n");
+}
+
+/// Regression companion for issue #556: a by-*value* foreach over a missing element must also
+/// skip its body without crashing. The null-container guard on the indexed length snapshot
+/// (regressed after #526) covers this path.
+#[test]
+fn test_byvalue_foreach_over_missing_element_skips_without_crash() {
+    let out = compile_and_run(
+        r#"<?php
+$a = [['x', 'y']];
+foreach ($a[7] as $v) {
+    echo "hit\n";
+}
+echo "done\n";
+"#,
+    );
+    assert_eq!(out, "done\n");
+}
