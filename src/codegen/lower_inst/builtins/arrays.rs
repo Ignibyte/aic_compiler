@@ -3084,6 +3084,12 @@ fn array_map_callback_array_element_type(ty: PhpType) -> Result<PhpType> {
                     | PhpType::Void
                     | PhpType::Never
                     | PhpType::Mixed
+                    // An object element is a single-word heap pointer, so the wrapper forwards it
+                    // in one register exactly like an `Int` — the same reasoning that admits
+                    // objects to the usort static-callback ABI. Unlike `Mixed`, a CONCRETE object
+                    // element type also pins the physical cell format, so there is no
+                    // raw-versus-boxed ambiguity here (contrast #678).
+                    | PhpType::Object(_)
             ) {
                 return Ok(elem);
             }

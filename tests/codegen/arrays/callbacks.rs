@@ -1677,3 +1677,41 @@ echo "empty";
     );
     assert_eq!(out, "abc|x|empty");
 }
+
+/// Regression (#674): `array_map()` accepts an indexed array of OBJECTS.
+///
+/// `array_map_callback_array_element_type` admitted only Int/Bool/Str/Void/Never/Mixed, so mapping
+/// over objects — including the very common `array_map(fn (E $e) => $e->value, E::cases())` — failed
+/// with "array_map indexed-array element PHP type Object(...)". An object element is a single-word
+/// heap pointer, so the callback wrapper forwards it in one register exactly like an `Int`; that is
+/// the same reasoning that already admits objects to the usort static-callback ABI.
+///
+/// Note this is sound precisely BECAUSE the element type is concrete: a concrete object element
+/// type pins the physical cell format, unlike `array<mixed>` whose cells may be raw or boxed
+/// depending on how the array was built.
+#[test]
+fn test_array_map_over_object_elements() {
+    let out = compile_and_run(
+        r#"<?php
+declare(strict_types=1);
+enum RegionName: string {
+    case Header = 'header';
+    case Main = 'main';
+    case Footer = 'footer';
+}
+final class P {
+    public function __construct(public string $n) {}
+}
+function regionValues(): array {
+    return array_map(static fn (RegionName $r): string => $r->value, RegionName::cases());
+}
+function names(array $ps): array {
+    return array_map(static fn (P $p): string => $p->n, $ps);
+}
+echo implode(",", regionValues());
+echo "|", implode(",", names([new P("a"), new P("b")]));
+echo "|", count(regionValues());
+"#,
+    );
+    assert_eq!(out, "header,main,footer|a,b|3");
+}
