@@ -18,10 +18,10 @@ use crate::ir::{
 use crate::ir_lower::context::{FinallyFrame, LoopCleanup, LoopFrame, LoweredValue, LoweringContext};
 use crate::ir_lower::effects_lookup;
 use crate::ir_lower::expr::{
-    array_access_element_result_type, coerce_to_int_at_span, lower_callable_array_for_assignment,
-    lower_array_literal_with_expected_type, lower_closure_for_assignment, lower_expr,
-    static_callable_binding_for_expr, string_op_uses_scratch_storage,
-    type_satisfies_array_access_for_ir,
+    array_access_element_result_type, autovivify_missing_nested_parent, coerce_to_int_at_span,
+    lower_array_literal_with_expected_type, lower_callable_array_for_assignment,
+    lower_closure_for_assignment, lower_expr, static_callable_binding_for_expr,
+    string_op_uses_scratch_storage, type_satisfies_array_access_for_ir,
 };
 use crate::names::{php_symbol_key, property_hook_set_method};
 use crate::parser::ast::{
@@ -818,6 +818,9 @@ fn lower_nested_array_assign(ctx: &mut LoweringContext<'_, '_>, target: &Expr, v
     // `offsetSet` for ArrayAccess objects), which mutates the aliased
     // container for every slot representation.
     if let ExprKind::ArrayAccess { array, index } = &target.kind {
+        // Autovivify a missing intermediate (`$a[$absent][$k] = v`) so the leaf write below
+        // installs into a real, aliased container instead of a detached temporary (#555).
+        autovivify_missing_nested_parent(ctx, array, span);
         let parent = lower_expr(ctx, array);
         let key = lower_expr(ctx, index);
         let value = lower_expr(ctx, value);
