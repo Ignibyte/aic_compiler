@@ -266,6 +266,32 @@ pub(crate) fn bake_debug_info(target: Target, bin_path: &Path) -> bool {
     matches!(status, Ok(status) if status.success())
 }
 
+/// Counts the bridge staticlibs that actually reach the link — the entries whose
+/// archive was located. Each one embeds its own copy of the Rust std/core/alloc
+/// objects, so two or more of them put duplicate members in front of the linker.
+fn located_bridge_count(needed_bridges: &[(&BridgeStaticlib, Option<String>)]) -> usize {
+    needed_bridges.iter().filter(|(_, dir)| dir.is_some()).count()
+}
+
+/// Whether this link needs the duplicate-member reconciliation described in
+/// [`link`], given how many bridge staticlibs were located and how many of those
+/// are force-loaded.
+///
+/// Linux keeps the first definition of each duplicate, so ANY two linked bridges
+/// are enough — including one whole-archived plus one plain `-l`, which is the
+/// shape that fails in #677. macOS instead strips duplicates against a symbol
+/// provider, and only a force-loaded archive is guaranteed to contribute every
+/// member it defines, so it still takes two whole-archive bridges to have a
+/// usable provider; the mixed whole-archive-plus-plain case stays a known macOS
+/// gap. Windows keeps the whole-archive condition so its unsupported-platform
+/// panic fires exactly where it did before.
+fn needs_duplicate_reconciliation(platform: Platform, located: usize, whole_archive: usize) -> bool {
+    match platform {
+        Platform::Linux => located >= 2,
+        Platform::MacOS | Platform::Windows => whole_archive >= 2,
+    }
+}
+
 /// Links object files and runtime objects into a final binary.
 /// - `target`: Compiler target (controls platform, linker command, and flags).
 /// - `emit`: Output kind. `Executable` produces a standalone binary; `Cdylib`
@@ -391,10 +417,20 @@ pub(crate) fn link(
     for path in extra_link_paths {
         ld_cmd.arg(format!("-L{}", path));
     }
-    // Two or more force-loaded (whole-archive) bridges each bundle their own
-    // identical copy of the Rust std/core/allocator objects, which collide at
-    // link time. Resolve it generally (any number of such bridges), per platform:
+    // Bridge staticlibs each bundle their own identical copy of the Rust
+    // std/core/allocator objects, which collide at link time. This is NOT
+    // confined to pairs of force-loaded bridges: a plain `-l` bridge earlier in
+    // the link contributes members to satisfy undefined symbols, and a
+    // whole-archive bridge later force-loads its own copies of those same
+    // members on top of them (#677 — libelephc_tls.a and libelephc_phar.a share
+    // 323 identically-named members, the whole of compiler_builtins among them).
+    // Resolve it per platform:
     //  - Linux: have the linker keep the first definition of each duplicate.
+    //    Sound here because every colliding member is either a bit-identical
+    //    upstream object or rustc's deterministic allocator shim — no bridge
+    //    defines `#[global_allocator]`, so "first wins" cannot select divergent
+    //    behavior. Re-examine if a bridge ever vendors a DIFFERENT version of a
+    //    shared crate, which would make the same-named members genuinely differ.
     //  - macOS (its ld has no equivalent flag): keep the first whole-archive
     //    bridge as the symbol provider and strip the already-provided members
     //    from the rest before force-loading them.
@@ -414,7 +450,11 @@ pub(crate) fn link(
         .collect();
     let mut deduped_archive: HashMap<&str, PathBuf> = HashMap::new();
     let mut dedup_scratch: Option<PathBuf> = None;
-    if whole_archive_order.len() >= 2 {
+    if needs_duplicate_reconciliation(
+        target.platform,
+        located_bridge_count(&needed_bridges),
+        whole_archive_order.len(),
+    ) {
         match target.platform {
             Platform::Linux => {
                 ld_cmd.arg("-Wl,--allow-multiple-definition");
@@ -796,6 +836,50 @@ mod tests {
         }
         assert_eq!(bridge_lib_for_flag("pdo"), Some("elephc_pdo"));
         assert_eq!(bridge_lib_for_flag("web"), Some("elephc_web"));
+    }
+
+    /// Verifies the #677 shape — one force-loaded bridge (elephc_tls) paired with
+    /// one plain `-l` bridge (elephc_phar) — is reconciled on Linux. The trigger
+    /// used to count only whole-archive bridges, so this pair scored 1, the
+    /// safety net never fired, and their 323 shared std/core/compiler_builtins
+    /// members reached the linker as `multiple definition` errors.
+    #[test]
+    fn linux_reconciles_a_whole_archive_bridge_paired_with_a_plain_one() {
+        assert!(needs_duplicate_reconciliation(Platform::Linux, 2, 1));
+    }
+
+    /// Verifies a link with a single bridge is left alone on every platform. This
+    /// is the containment guarantee for #677: widening the Linux trigger must not
+    /// alter the bundles that link fine today with one bridge.
+    #[test]
+    fn a_single_bridge_link_needs_no_reconciliation() {
+        for platform in [Platform::Linux, Platform::MacOS, Platform::Windows] {
+            assert!(!needs_duplicate_reconciliation(platform, 1, 1), "{platform:?}");
+            assert!(!needs_duplicate_reconciliation(platform, 1, 0), "{platform:?}");
+            assert!(!needs_duplicate_reconciliation(platform, 0, 0), "{platform:?}");
+        }
+    }
+
+    /// Verifies macOS still demands two force-loaded bridges. Its strip-based path
+    /// needs a provider that contributes every member it defines, which a plain
+    /// `-l` archive does not, so the mixed pair stays an explicit known gap rather
+    /// than silently stripping against an incomplete provider.
+    #[test]
+    fn macos_reconciliation_still_requires_two_whole_archive_bridges() {
+        assert!(!needs_duplicate_reconciliation(Platform::MacOS, 2, 1));
+        assert!(needs_duplicate_reconciliation(Platform::MacOS, 2, 2));
+    }
+
+    /// Verifies a bridge whose staticlib could not be located is not counted — an
+    /// unlocated bridge contributes no archive, so it cannot collide with one.
+    #[test]
+    fn located_bridge_count_skips_bridges_that_were_not_found() {
+        let tls = BRIDGES.iter().find(|b| b.lib_name == "elephc_tls").expect("tls bridge");
+        let phar = BRIDGES.iter().find(|b| b.lib_name == "elephc_phar").expect("phar bridge");
+        let both = [(tls, Some("/lib".to_string())), (phar, Some("/lib".to_string()))];
+        let one_missing = [(tls, Some("/lib".to_string())), (phar, None)];
+        assert_eq!(located_bridge_count(&both), 2);
+        assert_eq!(located_bridge_count(&one_missing), 1);
     }
 
     /// Verifies an unknown crate flag resolves to `None` so the CLI rejects
