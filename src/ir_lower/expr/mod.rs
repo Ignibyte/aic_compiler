@@ -1160,7 +1160,185 @@ fn lower_null_coalesce(
     default: &Expr,
     expr: &Expr,
 ) -> LoweredValue {
+    if let Some(result) = lower_null_coalesce_via_offset_probe(ctx, value, default, expr) {
+        return result;
+    }
     let value = lower_null_coalesce_value(ctx, value);
+    let is_null = ctx.emit_value(
+        Op::IsNull,
+        vec![value.value],
+        None,
+        PhpType::Bool,
+        Op::IsNull.default_effects(),
+        Some(expr.span),
+    );
+    let result_type = null_coalesce_result_type(ctx, value.value, default);
+    let temp_name = ctx.declare_owned_hidden_temp(result_type.clone());
+    let split_initialized = ctx.initialized_slots_snapshot();
+    let default_block = ctx.builder.create_named_block("coalesce.default", Vec::new());
+    let value_block = ctx.builder.create_named_block("coalesce.value", Vec::new());
+    let merge = ctx.builder.create_named_block("coalesce.merge", Vec::new());
+    ctx.builder.terminate(Terminator::CondBr {
+        cond: is_null.value,
+        then_target: default_block,
+        then_args: Vec::new(),
+        else_target: value_block,
+        else_args: Vec::new(),
+    });
+
+    ctx.builder.position_at_end(default_block);
+    ctx.restore_initialized_slots(split_initialized.clone());
+    store_expr_into_temp(ctx, &temp_name, result_type.clone(), default, expr.span);
+    release_discarded_branch_value(ctx, value, expr.span);
+    let default_reachable = !ctx.builder.insertion_block_is_terminated();
+    let default_initialized = ctx.initialized_slots_snapshot();
+    branch_to(ctx, merge);
+
+    ctx.builder.position_at_end(value_block);
+    ctx.restore_initialized_slots(split_initialized.clone());
+    store_value_into_temp(ctx, &temp_name, result_type, value, expr.span);
+    let value_reachable = !ctx.builder.insertion_block_is_terminated();
+    let value_initialized = ctx.initialized_slots_snapshot();
+    branch_to(ctx, merge);
+
+    ctx.builder.position_at_end(merge);
+    ctx.restore_initialized_slots(merge_initialized_slots_for_expr(
+        &split_initialized,
+        default_initialized,
+        default_reachable,
+        value_initialized,
+        value_reachable,
+    ));
+    take_owned_temp(ctx, &temp_name, expr.span)
+}
+
+/// Lowers `$array[$index] ?? $default` by testing PRESENCE instead of testing the read value.
+///
+/// PHP defines `a ?? b` as `isset(a) ? a : b`, and testing the read value cannot implement that
+/// for a native array: a miss materializes an IN-BAND value (a `Str` miss is ptr=0/len=0, a `Float`
+/// miss is 0.0, other scalars get a sentinel), so `is_null` on the result const-folds to false, the
+/// default branch is dead, and `$m['missing'] ?? 'D'` yields `""` instead of `'D'` (#672).
+///
+/// Branching on `isset` instead makes the miss branch reachable WITHOUT widening the element's
+/// representation: the hit branch reads the element at its concrete type exactly as before, and
+/// only the merge temp becomes nullable. It is also PHP-exact for a stored null, which `isset`
+/// reports as absent and which therefore must take the default.
+///
+/// Returns `None` for shapes this cannot handle, leaving the existing lowering untouched.
+fn lower_null_coalesce_via_offset_probe(
+    ctx: &mut LoweringContext<'_, '_>,
+    value: &Expr,
+    default: &Expr,
+    expr: &Expr,
+) -> Option<LoweredValue> {
+    let ExprKind::ArrayAccess { array, index } = &value.kind else {
+        return None;
+    };
+    // The index is lowered once for the probe and once for the read, so it must be repeatable.
+    // A side-effecting or expensive index keeps the existing single-read lowering.
+    if !expr_is_repeatable_offset(index) {
+        return None;
+    }
+    if !array_access_expr_supports_native_isset_probe(ctx, array) {
+        return None;
+    }
+    let array_value = lower_expr(ctx, array);
+    // A nullable receiver has its own null-propagating lowering; do not duplicate it here.
+    if value_is_nullable(ctx, array_value.value)
+        || !matches!(
+            array_value.ir_type,
+            IrType::Heap(IrHeapKind::Array) | IrType::Heap(IrHeapKind::Hash)
+        )
+    {
+        let element = lower_array_access_from_value(ctx, array_value, index, value, false);
+        return Some(finish_null_coalesce_from_value(ctx, element, default, expr));
+    }
+
+    let present = lower_native_isset_offset_probe_from_value(ctx, array_value, index, value);
+    let result_type = nullable_aware_branch_merge_type(
+        &array_access_element_result_type_for_probe(ctx, array_value, index, value),
+        &materialized_expr_type_for_merge(ctx, default),
+    );
+    let temp_name = ctx.declare_owned_hidden_temp(result_type.clone());
+    let split_initialized = ctx.initialized_slots_snapshot();
+    let hit_block = ctx.builder.create_named_block("coalesce.present", Vec::new());
+    let miss_block = ctx.builder.create_named_block("coalesce.absent", Vec::new());
+    let merge = ctx.builder.create_named_block("coalesce.merge", Vec::new());
+    ctx.builder.terminate(Terminator::CondBr {
+        cond: present.value,
+        then_target: hit_block,
+        then_args: Vec::new(),
+        else_target: miss_block,
+        else_args: Vec::new(),
+    });
+
+    ctx.builder.position_at_end(hit_block);
+    ctx.restore_initialized_slots(split_initialized.clone());
+    let element = lower_array_access_from_value(ctx, array_value, index, value, false);
+    store_value_into_temp(ctx, &temp_name, result_type.clone(), element, expr.span);
+    let hit_reachable = !ctx.builder.insertion_block_is_terminated();
+    let hit_initialized = ctx.initialized_slots_snapshot();
+    branch_to(ctx, merge);
+
+    ctx.builder.position_at_end(miss_block);
+    ctx.restore_initialized_slots(split_initialized.clone());
+    store_expr_into_temp(ctx, &temp_name, result_type, default, expr.span);
+    let miss_reachable = !ctx.builder.insertion_block_is_terminated();
+    let miss_initialized = ctx.initialized_slots_snapshot();
+    branch_to(ctx, merge);
+
+    ctx.builder.position_at_end(merge);
+    ctx.restore_initialized_slots(merge_initialized_slots_for_expr(
+        &split_initialized,
+        hit_initialized,
+        hit_reachable,
+        miss_initialized,
+        miss_reachable,
+    ));
+    // The receiver was evaluated once and read on the hit path only; an owning temporary
+    // (a call result, say) still needs its single release once both paths have merged.
+    if ctx.value_is_owning_temporary(array_value) {
+        crate::ir_lower::ownership::release_if_owned(ctx, array_value, Some(expr.span));
+    }
+    Some(take_owned_temp(ctx, &temp_name, expr.span))
+}
+
+/// Returns the element type a probed read yields, for merge typing.
+fn array_access_element_result_type_for_probe(
+    ctx: &LoweringContext<'_, '_>,
+    array_value: LoweredValue,
+    index: &Expr,
+    expr: &Expr,
+) -> PhpType {
+    let op = match array_value.ir_type {
+        IrType::Heap(IrHeapKind::Hash) => Op::HashGet,
+        _ => Op::ArrayGetSilent,
+    };
+    let _ = index;
+    array_access_result_type(ctx, array_value.value, op, expr)
+}
+
+/// Returns whether an offset expression can be lowered twice without changing behavior.
+///
+/// Only shapes with no side effects and no allocation qualify — a variable read or a literal.
+/// Anything else (a call, an increment, a concatenation) keeps the single-read lowering.
+fn expr_is_repeatable_offset(index: &Expr) -> bool {
+    matches!(
+        &index.kind,
+        ExprKind::Variable(_)
+            | ExprKind::IntLiteral(_)
+            | ExprKind::StringLiteral(_)
+            | ExprKind::BoolLiteral(_)
+    )
+}
+
+/// Completes a `??` whose value side was already lowered, using the shared merge shape.
+fn finish_null_coalesce_from_value(
+    ctx: &mut LoweringContext<'_, '_>,
+    value: LoweredValue,
+    default: &Expr,
+    expr: &Expr,
+) -> LoweredValue {
     let is_null = ctx.emit_value(
         Op::IsNull,
         vec![value.value],

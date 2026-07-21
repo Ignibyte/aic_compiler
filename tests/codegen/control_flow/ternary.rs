@@ -385,3 +385,100 @@ echo names(['a', 1, 'b']);
     );
     assert_eq!(out, "string(3) \"set\"\nNULL\nbool(true)\na,b/2");
 }
+
+/// Regression (#672): `$array[$key] ?? $default` must branch on PRESENCE, not on the read value.
+///
+/// `??` was lowered by reading the element and testing the result for null, which cannot work for
+/// a native array: a miss materializes an IN-BAND value (a `Str` miss is ptr=0/len=0, a `Float`
+/// miss is 0.0, other scalars a sentinel), so `is_null` const-folded to false, the default branch
+/// was dead code, and the merge temp typed `Str` even coerced the `null` default through
+/// `i_to_str` into `""`. A `?string` function returning null therefore yielded `""`, and the
+/// caller's own `?? 'WASNULL'` never fired.
+///
+/// The DISCRIMINATION case is the point of the fix: a stored empty string is PRESENT and must come
+/// back as `""`, while a missing key must take the default. Any scheme that recognises null by
+/// sniffing the payload conflates those two.
+#[test]
+fn test_null_coalesce_over_array_offset_distinguishes_missing_from_empty() {
+    let out = compile_and_run(
+        r#"<?php
+declare(strict_types=1);
+function nsf(array $m, string $k): ?string {
+    $value = $m[$k] ?? null;
+    return is_string($value) ? $value : null;
+}
+function pick(array $m, string $k): string {
+    return $m[$k] ?? 'DEF';
+}
+$a = ['a' => 'hello'];
+echo nsf($a, 'a') ?? 'NULL1';
+echo ";", nsf($a, 'zz') ?? 'WASNULL';
+$e = ['empty' => '', 'set' => 'x'];
+echo "|", pick($e, 'empty'), ";", pick($e, 'set'), ";", pick($e, 'missing');
+"#,
+    );
+    assert_eq!(out, "hello;WASNULL|;x;DEF");
+}
+
+/// Regression (#672): the miss branch must be reachable for EVERY element representation, and a
+/// STORED null must take the default because PHP defines `??` as isset-or-default.
+///
+/// `?float` previously yielded `float(0)` and `?bool` yielded `true` — the latter also leaking the
+/// raw sentinel `9223372036854775806` through `echo`. The `?int` case is the control: it is
+/// represented as a TaggedScalar and was already correct, so it must stay byte-identical.
+#[test]
+fn test_null_coalesce_over_array_offset_across_element_representations() {
+    let out = compile_and_run(
+        r#"<?php
+declare(strict_types=1);
+function nf(array $m, string $k): ?float {
+    $v = $m[$k] ?? null;
+    return is_float($v) ? $v : null;
+}
+function nb(array $m, string $k): ?bool {
+    $v = $m[$k] ?? null;
+    return is_bool($v) ? $v : null;
+}
+function ni(array $m, string $k): ?int {
+    $v = $m[$k] ?? null;
+    return is_int($v) ? $v : null;
+}
+function pick(array $m, string $k): string {
+    return $m[$k] ?? 'DEF';
+}
+echo nf(['a' => 1.5], 'zz') ?? 'FNULL';
+echo ";", nb(['a' => true], 'zz') ?? 'BNULL';
+echo ";", ni(['a' => 7], 'zz') ?? 'INULL';
+echo ";", ni(['a' => 7], 'a') ?? 'INULL';
+echo "|", pick(['a' => null, 'b' => 'x'], 'a');
+echo ";", pick(['a' => null, 'b' => 'x'], 'b');
+"#,
+    );
+    assert_eq!(out, "FNULL;BNULL;INULL;7|DEF;x");
+}
+
+/// Regression (#672): the offset is lowered twice by the presence-probing lowering — once for the
+/// probe and once for the read — so a NON-repeatable offset must keep the original single-read
+/// lowering, and integer/list offsets must keep working.
+///
+/// `$m[bump()]` must call `bump()` exactly once; the counter is the assertion.
+#[test]
+fn test_null_coalesce_offset_evaluated_once_and_int_offsets_work() {
+    let out = compile_and_run(
+        r#"<?php
+declare(strict_types=1);
+$calls = 0;
+function bump(): int { global $calls; $calls++; return 0; }
+function at(array $xs, int $i): string { return $xs[$i] ?? 'OOB'; }
+function chain(array $a, array $b, string $k): string { return $a[$k] ?? $b[$k] ?? 'FALLBACK'; }
+$m = [0 => 'zero'];
+echo $m[bump()] ?? 'D';
+echo ";", $calls;
+$xs = ['a', 'b', 'c'];
+echo "|", at($xs, 0), ";", at($xs, 2), ";", at($xs, 9);
+echo "|", chain(['x' => 'A'], ['x' => 'B', 'y' => 'BY'], 'y');
+echo ";", chain(['x' => 'A'], ['x' => 'B', 'y' => 'BY'], 'zz');
+"#,
+    );
+    assert_eq!(out, "zero;1|a;c;OOB|BY;FALLBACK");
+}
