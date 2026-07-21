@@ -685,3 +685,129 @@ echo $b->read(), "|", $b->keys();
     );
     assert_eq!(out, "x,y/2|0,1");
 }
+
+/// Regression (#676): a map built LOCALLY with keyed writes, then assigned whole to a property,
+/// must carry the same key type the checker inferred for it.
+///
+/// `promoted_assoc_array_type` hard-coded `key: Mixed` when a string-key write promoted an indexed
+/// local to a hash, while the checker typed the same local `AssocArray{Str, …}`. The two stamps
+/// disagreed and the store was rejected with "prop_set assigning AssocArray{Mixed,Str} … with
+/// AssocArray{Str,Str}" — the third instance of one value carrying two authorities' types (#671).
+/// The second class drops the `= []` default to pin that the bare HINT decides nothing here.
+#[test]
+fn test_locally_built_keyed_map_assigns_to_array_property() {
+    let out = compile_and_run(
+        r#"<?php
+class WithDefault {
+    protected array $options = [];
+    public function set(): void {
+        $m = [];
+        $m['k'] = 'v';
+        $m['k2'] = 'v2';
+        $this->options = $m;
+    }
+    public function read(string $k): string { return $this->options[$k]; }
+}
+class NoDefault {
+    protected array $options;
+    public function set(): void {
+        $m = [];
+        $m['a'] = 'b';
+        $this->options = $m;
+    }
+    public function read(): string { return $this->options['a']; }
+}
+$w = new WithDefault(); $w->set();
+$n = new NoDefault(); $n->set();
+echo $w->read('k'), ";", $w->read('k2'), "|", $n->read();
+"#,
+    );
+    assert_eq!(out, "v;v2|b");
+}
+
+/// Regression (#676): the key type a keyed write contributes uses PHP's own key normalization,
+/// not the operand's register type.
+///
+/// `$m['7']` is an INTEGER key in PHP (a numeric string normalizes to int), so the checker types
+/// the local `AssocArray{Int, …}`; a lowering that read "the index is a string register, so the key
+/// is Str" would disagree again. A key written under a plain string VARIABLE stays ambiguous
+/// (`Mixed`) precisely because it may hold a numeric string at runtime — the `build()` case pins
+/// that the two spellings do NOT collapse to the same key type.
+#[test]
+fn test_written_array_key_type_follows_php_key_normalization() {
+    let out = compile_and_run(
+        r#"<?php
+class NumericKey {
+    protected array $options = [];
+    public function set(): void {
+        $m = [];
+        $m['7'] = 'seven';
+        $this->options = $m;
+    }
+    public function read(): string {
+        $o = '';
+        foreach ($this->options as $k => $v) { $o .= $k . '=' . $v . ';'; }
+        return $o;
+    }
+}
+function build(string $k): string {
+    $m = [];
+    $m[$k] = 'v';
+    $m['lit'] = 'w';
+    $o = '';
+    foreach ($m as $kk => $vv) { $o .= $kk . '=' . $vv . ';'; }
+    return $o;
+}
+$c = new NumericKey(); $c->set();
+echo $c->read(), "|", build('dyn');
+"#,
+    );
+    assert_eq!(out, "7=seven;|dyn=v;lit=w;");
+}
+
+/// Regression (#676): keys written across MIXED shapes merge toward `Mixed`, matching the
+/// checker's own merge, and a map built across an if/else joins correctly.
+///
+/// The merge must happen on the in-place `HashSet` path too: `Op::HashSet` mutates through the
+/// existing pointer, so without an explicit refresh the local would keep the key type its first
+/// write established (`Str`) while the checker widened to `Mixed` on the integer write — the same
+/// disagreement in the opposite direction.
+#[test]
+fn test_keyed_writes_merge_key_types_and_join_across_branches() {
+    let out = compile_and_run(
+        r#"<?php
+class Mixedish {
+    protected array $options = [];
+    public function set(): void {
+        $m = [];
+        $m['k'] = 'v';
+        $m[5] = 'five';
+        $this->options = $m;
+    }
+    public function read(): string {
+        $o = '';
+        foreach ($this->options as $k => $v) { $o .= $k . '=' . $v . ';'; }
+        return $o;
+    }
+}
+class Branched {
+    protected array $options = [];
+    public function set(bool $flag): void {
+        $m = [];
+        if ($flag) { $m['a'] = 'x'; } else { $m['b'] = 'y'; }
+        $this->options = $m;
+    }
+    public function read(): string {
+        $o = '';
+        foreach ($this->options as $k => $v) { $o .= $k . '=' . $v . ';'; }
+        return $o;
+    }
+}
+$mixedish = new Mixedish(); $mixedish->set();
+$t = new Branched(); $t->set(true);
+$f = new Branched(); $f->set(false);
+echo $mixedish->read(), "|", $t->read(), $f->read();
+"#,
+    );
+    assert_eq!(out, "k=v;5=five;|a=x;b=y;");
+}

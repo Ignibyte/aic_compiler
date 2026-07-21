@@ -30,7 +30,9 @@ use crate::parser::ast::{
     is_compound_assignment_self_read, CatchClause, Expr, ExprKind, StaticReceiver, Stmt, StmtKind,
 };
 use crate::span::Span;
-use crate::types::{PhpType, ThrowAccessKind, TypeEnv};
+use crate::types::{
+    merge_array_key_types, normalized_array_key_type, PhpType, ThrowAccessKind, TypeEnv,
+};
 
 /// Lowers one AST statement into the current EIR insertion block.
 pub(crate) fn lower_stmt(ctx: &mut LoweringContext<'_, '_>, stmt: &Stmt) {
@@ -738,7 +740,10 @@ fn lower_array_assign(
     // known to be int-valued, so it is left on the coerce path to avoid
     // needlessly dispatching.
     if op == Op::ArraySet && index_value.ir_type == IrType::Str {
-        lower_string_key_array_promotion(ctx, array, array_value, index_value, value_value, span);
+        let key_ty = written_array_key_type(ctx, index, index_value);
+        lower_string_key_array_promotion(
+            ctx, array, array_value, index_value, key_ty, value_value, span,
+        );
         return;
     }
     if op == Op::ArraySet
@@ -773,9 +778,30 @@ fn lower_array_assign(
         release_indexed_array_write_operand(ctx, elem_ty.as_ref(), value_value, span);
         return;
     }
+    if op == Op::HashSet {
+        let key_ty = written_array_key_type(ctx, index, index_value);
+        refresh_assoc_local_key_type_after_hash_set(ctx, array, array_value, key_ty);
+    }
     ctx.emit_void(op, vec![array_value.value, index_value.value, value_value.value], None, op.default_effects(), Some(span));
     release_persisted_string_operand(ctx, index_value, span);
     release_persisted_string_operand(ctx, value_value, span);
+}
+
+/// Returns the array-key type a keyed write contributes to its destination's type.
+///
+/// Applies the same normalization the checker uses (`normalized_array_key_type`), which is
+/// what makes the two stamps agree: a numeric string literal (`$m['7']`) is an INTEGER key,
+/// a plain string variable is ambiguous (`Mixed`, since it may hold a numeric string), and
+/// only a non-numeric string literal is a genuine `Str` key.
+fn written_array_key_type(
+    ctx: &LoweringContext<'_, '_>,
+    index: &Expr,
+    index_value: LoweredValue,
+) -> PhpType {
+    normalized_array_key_type(
+        index,
+        ctx.builder.value_php_type(index_value.value).codegen_repr(),
+    )
 }
 
 /// Coerces a buffer element write value into the scalar storage accepted by `BufferSet`.
@@ -799,18 +825,19 @@ fn coerce_buffer_set_value(
     coerced
 }
 
-/// Promotes an indexed local array to a Mixed-valued associative array for string-key writes.
+/// Promotes an indexed local array to an associative array for string-key writes.
 fn lower_string_key_array_promotion(
     ctx: &mut LoweringContext<'_, '_>,
     array: &str,
     array_value: LoweredValue,
     index: LoweredValue,
+    key_ty: PhpType,
     value: LoweredValue,
     span: Span,
 ) {
     let current_ty = ctx.builder.value_php_type(array_value.value);
     let value_ty = ctx.builder.value_php_type(value.value);
-    let assoc_ty = promoted_assoc_array_type(current_ty, value_ty);
+    let assoc_ty = promoted_assoc_array_type(current_ty, value_ty, key_ty);
     let hash = ctx.emit_value(
         Op::ArrayToHash,
         vec![array_value.value],
@@ -860,26 +887,65 @@ fn lower_mixed_key_array_set(
 }
 
 /// Returns the associative type produced by a string-key write to an indexed array.
-fn promoted_assoc_array_type(current_ty: PhpType, value_ty: PhpType) -> PhpType {
+///
+/// Mirrors the checker's promotion rule (`check_array_index_assign`): an array that was
+/// still empty adopts the written key type outright, while an array that already held
+/// integer-keyed elements merges those integer keys with the new one. Computing the key
+/// here rather than defaulting to `Mixed` is what keeps this stamp in agreement with the
+/// checker's — a disagreement reaches `prop_set` as a shape mismatch (#676).
+fn promoted_assoc_array_type(current_ty: PhpType, value_ty: PhpType, key_ty: PhpType) -> PhpType {
     let value_ty = normalize_array_write_element_type(value_ty.codegen_repr());
-    let assoc_value_ty = match current_ty.codegen_repr() {
+    let (assoc_key_ty, assoc_value_ty) = match current_ty.codegen_repr() {
         PhpType::Array(elem_ty) if is_empty_indexed_array_element(elem_ty.as_ref()) => {
-            value_ty
+            (key_ty, value_ty)
         }
         PhpType::Array(elem_ty) => {
             let elem_ty = normalize_array_write_element_type(elem_ty.codegen_repr());
-            if elem_ty == value_ty {
+            let merged_value = if elem_ty == value_ty {
                 elem_ty
             } else {
                 PhpType::Mixed
-            }
+            };
+            (merge_array_key_types(PhpType::Int, key_ty), merged_value)
         }
-        _ => PhpType::Mixed,
+        _ => (PhpType::Mixed, PhpType::Mixed),
     };
     PhpType::AssocArray {
-        key: Box::new(PhpType::Mixed),
+        key: Box::new(assoc_key_ty),
         value: Box::new(assoc_value_ty),
     }
+}
+
+/// Refreshes a hash local's KEY type after an in-place `HashSet` write.
+///
+/// `Op::HashSet` mutates the hash through the existing pointer, so nothing else re-stamps
+/// the local — but the checker DOES merge each new key into the local's type on every keyed
+/// write. Mirroring that merge here keeps the two authorities in step once
+/// `promoted_assoc_array_type` stops defaulting the key to `Mixed` (#676). The merge only
+/// ever widens, so repeated writes converge.
+///
+/// Deliberately does NOT merge the VALUE type. Widening the value to `Mixed` would relabel
+/// a hash whose cells are physically concrete (`Str`) without reboxing them, so a later read
+/// would decode a raw cell as a boxed one — one slot, one representation (#628/#649). A
+/// heterogeneous value bag therefore stays an honest compile error until the cell-rebox
+/// conversion exists (#670's P1b).
+fn refresh_assoc_local_key_type_after_hash_set(
+    ctx: &mut LoweringContext<'_, '_>,
+    array: &str,
+    array_value: LoweredValue,
+    key_ty: PhpType,
+) {
+    let PhpType::AssocArray { key, value } = ctx.builder.value_php_type(array_value.value) else {
+        return;
+    };
+    let merged_key = merge_array_key_types(*key, key_ty);
+    ctx.set_local_type(
+        array,
+        PhpType::AssocArray {
+            key: Box::new(merged_key),
+            value,
+        },
+    );
 }
 
 /// Lowers a nested array assignment that already carries an expression target.
