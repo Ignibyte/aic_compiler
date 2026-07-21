@@ -20,6 +20,7 @@ use crate::ir_lower::effects_lookup;
 use crate::ir_lower::expr::{
     array_access_element_result_type, autovivify_missing_nested_parent, coerce_to_int_at_span,
     lower_array_literal_with_expected_type, lower_callable_array_for_assignment,
+    nullable_aware_branch_merge_type,
     lower_closure_for_assignment, lower_expr, lower_lazy_isset_operand,
     lower_non_local_assignment_write, static_callable_binding_for_expr,
     string_op_uses_scratch_storage, type_satisfies_array_access_for_ir,
@@ -29,7 +30,7 @@ use crate::parser::ast::{
     is_compound_assignment_self_read, CatchClause, Expr, ExprKind, StaticReceiver, Stmt, StmtKind,
 };
 use crate::span::Span;
-use crate::types::{PhpType, ThrowAccessKind};
+use crate::types::{PhpType, ThrowAccessKind, TypeEnv};
 
 /// Lowers one AST statement into the current EIR insertion block.
 pub(crate) fn lower_stmt(ctx: &mut LoweringContext<'_, '_>, stmt: &Stmt) {
@@ -387,9 +388,11 @@ fn lower_if_chain(
         else_args: Vec::new(),
     });
 
+    let split_types = ctx.local_types.clone();
     ctx.builder.position_at_end(then_block);
     ctx.restore_initialized_slots(split_initialized.clone());
     lower_block(ctx, then_body);
+    let then_types = ctx.local_types.clone();
     let then_initialized = ctx.initialized_slots_snapshot();
     let mut merge_reachable = false;
     let then_reachable = !ctx.builder.insertion_block_is_terminated();
@@ -401,6 +404,10 @@ fn lower_if_chain(
     ctx.clear_static_callable_locals();
     ctx.builder.position_at_end(else_block);
     ctx.restore_initialized_slots(split_initialized.clone());
+    // The else path must not inherit the then-branch's assignments: a `$x = 'set'` inside `if`
+    // otherwise makes the else path read `$x` as a plain string when it still holds the pre-`if`
+    // null (#672).
+    ctx.local_types = split_types.clone();
     let else_reachable = if let Some(((next_condition, next_body), rest)) = elseif_clauses.split_first() {
         lower_if_chain(ctx, next_condition, next_body, rest, else_body, merge, span)
     } else if let Some(else_body) = else_body {
@@ -422,6 +429,13 @@ fn lower_if_chain(
     };
     merge_reachable |= else_reachable;
     let else_initialized = ctx.initialized_slots_snapshot();
+    let else_types = std::mem::replace(&mut ctx.local_types, split_types.clone());
+    ctx.local_types = match (then_reachable, else_reachable) {
+        (true, false) => then_types,
+        (false, true) => else_types,
+        (false, false) => split_types,
+        (true, true) => join_local_types(then_types, else_types),
+    };
     ctx.restore_initialized_slots(merge_initialized_slots(
         &split_initialized,
         then_initialized,
@@ -430,6 +444,66 @@ fn lower_if_chain(
         else_reachable,
     ));
     merge_reachable
+}
+
+/// Joins the two branches' local type facts at an `if` merge.
+///
+/// `local_types` records what a local currently HOLDS and drives how later reads are materialized,
+/// yet only `initialized_slots` was reconciled across branches. So `$x = null; if ($c) { $x = 'set'; }`
+/// left `$x` recorded as a plain `Str` on the merge path, where it may still be null: the read used
+/// that concrete fact over the slot's boxed storage and cast the boxed null to `""`, making
+/// `return $x` yield the empty string and `=== null` answer false (#672).
+///
+/// `Never` is the BOTTOM element type, not a peer. An empty `$v = []` is `array<never>`, so a
+/// branch that pushed strings must win the join — treating the two as merely "different" collapses
+/// the accumulated `array<string>` back to `array<never>` and erases the element type of every
+/// conditionally-built array (which is how the stdlib prelude's `array_count_values` builds its
+/// list).
+fn join_local_types(then_types: TypeEnv, else_types: TypeEnv) -> TypeEnv {
+    let mut joined = then_types;
+    for (name, else_ty) in else_types {
+        match joined.remove(&name) {
+            Some(then_ty) => {
+                joined.insert(name, join_local_type(then_ty, else_ty));
+            }
+            None => {
+                joined.insert(name, else_ty);
+            }
+        }
+    }
+    joined
+}
+
+/// Joins one local's type across the two branches of an `if`.
+fn join_local_type(then_ty: PhpType, else_ty: PhpType) -> PhpType {
+    if then_ty == else_ty {
+        return then_ty;
+    }
+    match (&then_ty, &else_ty) {
+        (PhpType::Array(left), PhpType::Array(right)) => {
+            PhpType::Array(Box::new(join_element_type(left, right)))
+        }
+        (
+            PhpType::AssocArray { key: lk, value: lv },
+            PhpType::AssocArray { key: rk, value: rv },
+        ) => PhpType::AssocArray {
+            key: Box::new(join_element_type(lk, rk)),
+            value: Box::new(join_element_type(lv, rv)),
+        },
+        _ => nullable_aware_branch_merge_type(&then_ty, &else_ty),
+    }
+}
+
+/// Joins an array key/element type, treating `Never` as the bottom (an empty array constrains
+/// nothing, so the branch that actually stored elements decides).
+fn join_element_type(left: &PhpType, right: &PhpType) -> PhpType {
+    if left == right {
+        return left.clone();
+    }
+    match (left, right) {
+        (PhpType::Never, other) | (other, PhpType::Never) => other.clone(),
+        _ => PhpType::Mixed,
+    }
 }
 
 /// Merges definitely-initialized locals from the reachable branches of an `if`.

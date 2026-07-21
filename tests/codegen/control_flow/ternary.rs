@@ -352,3 +352,36 @@ echo pick(false) ?? 99;
     );
     assert_eq!(out, "GET/x|null|int(7)\nNULL\n99");
 }
+
+/// Regression (#672): a local assigned inside an `if` must not leak that type onto the paths where
+/// the branch did not run. `local_types` was never reconciled across branches, so
+/// `$x = null; if ($c) { $x = 'set'; }` recorded `$x` as a plain string for BOTH the else path and
+/// the merge — the read then used that concrete fact over the slot's boxed storage and cast the
+/// boxed null to `""`, so the function returned the empty string and `=== null` answered false.
+#[test]
+fn test_if_branch_assignment_does_not_leak_type_onto_other_paths() {
+    let out = compile_and_run(
+        r#"<?php
+function h(bool $b): ?string {
+    $x = null;
+    if ($b) { $x = 'set'; }
+    return $x;
+}
+// CONTROL: an array built conditionally must KEEP its accumulated element type. `[]` is
+// `array<never>`, and a join that treats `never` as a peer rather than the bottom collapses the
+// pushed element type back to it — which breaks any conditionally-built list.
+function names(array $in): string {
+    $out = [];
+    foreach ($in as $v) {
+        if (is_string($v)) { $out[] = $v; }
+    }
+    return implode(",", $out) . "/" . count($out);
+}
+var_dump(h(true));
+var_dump(h(false));
+var_dump(h(false) === null);
+echo names(['a', 1, 'b']);
+"#,
+    );
+    assert_eq!(out, "string(3) \"set\"\nNULL\nbool(true)\na,b/2");
+}

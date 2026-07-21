@@ -11223,7 +11223,7 @@ fn match_merged_arm_type(
 }
 
 /// Chooses a ternary branch merge type without erasing PHP null branches.
-fn nullable_aware_branch_merge_type(left: &PhpType, right: &PhpType) -> PhpType {
+pub(crate) fn nullable_aware_branch_merge_type(left: &PhpType, right: &PhpType) -> PhpType {
     if php_type_allows_null(left) || php_type_allows_null(right) {
         let left_non_null = strip_void_from_union(left.clone());
         let right_non_null = strip_void_from_union(right.clone());
@@ -11254,7 +11254,7 @@ fn merge_receiver_type(ctx: &LoweringContext<'_, '_>, expr: &Expr) -> PhpType {
 }
 
 /// Returns true when a PHP type can materialize PHP null at runtime.
-fn php_type_allows_null(php_type: &PhpType) -> bool {
+pub(crate) fn php_type_allows_null(php_type: &PhpType) -> bool {
     match php_type {
         PhpType::Void | PhpType::Never | PhpType::Mixed => true,
         PhpType::Union(members) => members
