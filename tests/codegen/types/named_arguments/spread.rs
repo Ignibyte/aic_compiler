@@ -384,8 +384,11 @@ function f($a, $b, ...$rest) {
     }
 }
 
-$arr1 = ["b" => 20, "x" => 30];
-$arr2 = [10, ...$arr1, "x" => 40, "y" => 50];
+// Written out rather than built with `[10, ...$arr1, "x" => 40, ...]`: a spread sharing an
+// array literal with keyed elements is rejected since #673 (it used to silently drop the
+// spread). This is the same array that expression produces in PHP, and the subject here is the
+// CALL spread `f(...$arr2, a: 5)`.
+$arr2 = [10, "b" => 20, "x" => 40, "y" => 50];
 f(...$arr2, a: 5);
 "#,
     );

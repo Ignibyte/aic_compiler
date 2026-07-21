@@ -579,8 +579,8 @@ fn parse_group_or_cast(
 ///
 /// Distinguishes indexed (`[a, b]`) and associative (`[key => value]`) forms while
 /// preserving leading positional elements that appear before the first keyed entry.
-/// Supports spread elements via `...`; spreads in keyed literals are parsed for
-/// source-order progress but remain limited by the associative-array representation.
+/// Supports spread elements via `...` in the indexed form. A spread that shares a literal with
+/// keyed elements is REJECTED rather than dropped — `ArrayLiteralAssoc` cannot represent it (#673).
 fn parse_array_literal(
     tokens: &[(Token, Span)],
     pos: &mut usize,
@@ -610,15 +610,19 @@ fn parse_array_literal(
             let spread_span = tokens[*pos].1;
             *pos += 1;
             let inner = parse_expr(tokens, pos)?;
-            if !is_assoc {
-                elems.push(Expr::new(ExprKind::Spread(Box::new(inner)), spread_span));
+            if is_assoc {
+                return Err(unsupported_keyed_spread_error(spread_span));
             }
+            elems.push(Expr::new(ExprKind::Spread(Box::new(inner)), spread_span));
             first = false;
             continue;
         }
         let expr = parse_expr(tokens, pos)?;
         if *pos < tokens.len() && tokens[*pos].0 == Token::DoubleArrow {
             if !is_assoc {
+                if let Some(spread_span) = first_spread_span(&elems) {
+                    return Err(unsupported_keyed_spread_error(spread_span));
+                }
                 promote_indexed_array_items_to_assoc(&mut elems, &mut assoc_elems);
             }
             is_assoc = true;
@@ -648,16 +652,39 @@ fn parse_array_literal(
     }
 }
 
+/// Returns the span of the first spread element, if the literal collected one.
+fn first_spread_span(elems: &[Expr]) -> Option<Span> {
+    elems
+        .iter()
+        .find(|elem| matches!(elem.kind, ExprKind::Spread(_)))
+        .map(|elem| elem.span)
+}
+
+/// Builds the diagnostic for a spread that shares an array literal with keyed elements.
+///
+/// `ExprKind::ArrayLiteralAssoc` carries key/value pairs only, so it cannot represent a keyless
+/// spread among them. Both the promotion path and the already-associative path used to DROP such a
+/// spread silently, so `[...$base, 'k' => 'v']` compiled, linked, ran, and returned an array
+/// missing every element of `$base` (#673). Rejecting is a stopgap until the AST can hold the
+/// mixed form, but a loud error beats losing the caller's data.
+fn unsupported_keyed_spread_error(spread_span: Span) -> CompileError {
+    CompileError::new(
+        spread_span,
+        "Array unpacking (`...`) combined with keyed elements is not yet supported; \
+         build the array with array_merge() instead",
+    )
+}
+
 /// Converts positional items parsed before a keyed array entry into integer-keyed pairs.
+///
+/// Callers must reject spread elements first (`first_spread_span`): an integer key cannot stand in
+/// for one, and dropping it loses the spread source entirely.
 fn promote_indexed_array_items_to_assoc(
     elems: &mut Vec<Expr>,
     assoc_elems: &mut Vec<(Expr, Expr)>,
 ) {
     let mut auto_key = 0i64;
     for elem in std::mem::take(elems) {
-        if matches!(elem.kind, ExprKind::Spread(_)) {
-            continue;
-        }
         let key = Expr::new(ExprKind::IntLiteral(auto_key), elem.span);
         assoc_elems.push((key, elem));
         auto_key += 1;

@@ -684,3 +684,34 @@ fn test_error_array_multisort_non_array() {
         "array_multisort() arguments must be indexed arrays",
     );
 }
+
+/// Regression (#673): a spread that shares an array literal with keyed elements must be REJECTED,
+/// not silently dropped. `ExprKind::ArrayLiteralAssoc` carries key/value pairs only and cannot
+/// represent a keyless spread among them, so the parser used to discard it — both when the spread
+/// came BEFORE the first `=>` (the promotion path) and when it came after (the already-associative
+/// path). `[...$base, 'k' => 'v']` therefore compiled, linked, ran, and returned an array missing
+/// every element of `$base`.
+///
+/// PHP 8.1+ permits string keys in unpacking, so these are valid PHP that elephc cannot yet
+/// represent. Replace these with parity assertions once the AST can hold the mixed form.
+#[test]
+fn test_error_array_literal_spread_mixed_with_keyed_elements() {
+    let message = "Array unpacking (`...`) combined with keyed elements is not yet supported";
+    // spread BEFORE the first keyed element (the promotion path)
+    expect_error(
+        "<?php $b = ['a' => 'x']; $r = [...$b, 'k' => 'v'];",
+        message,
+    );
+    // spread AFTER the literal has already turned associative
+    expect_error(
+        "<?php $b = ['a' => 'x']; $r = ['k' => 'v', ...$b];",
+        message,
+    );
+    // an int-keyed spread source is dropped by the same path
+    expect_error("<?php $b = [10, 20]; $r = [...$b, 'k' => 'v'];", message);
+    // multiple spreads
+    expect_error(
+        "<?php $a = ['a' => 1]; $b = ['b' => 2]; $r = [...$a, ...$b, 'k' => 3];",
+        message,
+    );
+}

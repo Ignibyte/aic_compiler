@@ -883,3 +883,21 @@ echo probe(["a", "b"], "b"), "|", nulls(["a"]);
     );
     assert_eq!(out, "ynyyy|ny");
 }
+
+/// Regression (#673): a spread WITHOUT keyed elements still splices a string-keyed source. The
+/// mixed form (`[...$b, 'k' => 'v']`) is rejected by the parser — see the error_tests sibling —
+/// because `ArrayLiteralAssoc` cannot represent a keyless spread among its pairs; this pins that
+/// the rejection did not disturb the form that does work.
+#[test]
+fn test_array_literal_spread_of_assoc_without_keyed_elements_still_works() {
+    let out = compile_and_run(
+        r#"<?php
+$b = ['a' => 'x', 'b' => 'y'];
+$r = [...$b];
+$o = '';
+foreach ($r as $k => $v) { $o .= $k . '=' . $v . ';'; }
+echo $o, count($r);
+"#,
+    );
+    assert_eq!(out, "a=x;b=y;2");
+}
