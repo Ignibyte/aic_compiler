@@ -1366,8 +1366,58 @@ pub(crate) fn lower_array_unshift(ctx: &mut FunctionContext<'_>, inst: &Instruct
 }
 
 /// Lowers `sort()` for indexed integer arrays by mutating the source array in place.
+/// PHP `SORT_REGULAR`/`SORT_NUMERIC`/`SORT_STRING` — the comparator-selecting flag subset
+/// that maps onto an existing runtime comparator. Other flags error loudly at lowering.
+const SORT_REGULAR: i64 = 0;
+const SORT_NUMERIC: i64 = 1;
+const SORT_STRING: i64 = 2;
+
+/// Lowers `sort($array [, $flags])`. `$flags` selects the comparator: `SORT_REGULAR` keeps the
+/// element-type dispatch (string arrays sort as strings, everything else numerically),
+/// `SORT_STRING` forces the string comparator, `SORT_NUMERIC` forces the numeric one. Flags
+/// with no existing runtime comparator (`SORT_LOCALE_STRING`/`NATURAL`/`FLAG_CASE`), a
+/// non-constant flag, or a comparator/element-type mismatch (e.g. `SORT_STRING` over an
+/// integer-element array — string-of-int comparison is not yet supported) error loudly rather
+/// than silently mis-sorting; the native survey is load-only and cannot see a mis-sort.
 pub(crate) fn lower_sort(ctx: &mut FunctionContext<'_>, inst: &Instruction) -> Result<()> {
-    lower_indexed_array_sort(ctx, inst, "sort", "__rt_sort_int", Some("__rt_sort_str"))
+    super::ensure_arg_count_between(inst, "sort", 1, 2)?;
+    let array = expect_operand(inst, 0)?;
+    let elem_ty = indexed_sort_element_type(ctx.value_php_type(array)?, "sort", true)?;
+    let flag = match inst.operands.get(1).copied() {
+        Some(flag_value) => const_i64_operand(ctx, flag_value)?,
+        None => Some(SORT_REGULAR),
+    };
+    let helper = match flag {
+        Some(SORT_REGULAR) => {
+            if elem_ty == PhpType::Str {
+                "__rt_sort_str"
+            } else {
+                "__rt_sort_int"
+            }
+        }
+        Some(SORT_STRING) => {
+            if elem_ty != PhpType::Str {
+                return Err(CodegenIrError::unsupported(
+                    "sort() with SORT_STRING over a non-string-element array",
+                ));
+            }
+            "__rt_sort_str"
+        }
+        Some(SORT_NUMERIC) => {
+            if elem_ty == PhpType::Str {
+                return Err(CodegenIrError::unsupported(
+                    "sort() with SORT_NUMERIC over a string-element array",
+                ));
+            }
+            "__rt_sort_int"
+        }
+        _ => {
+            return Err(CodegenIrError::unsupported(
+                "sort() with an unsupported or non-constant flags argument",
+            ));
+        }
+    };
+    emit_indexed_array_sort_call(ctx, inst, array, helper)
 }
 
 /// Lowers `rsort()` for indexed integer arrays by mutating the source array in place.
@@ -2275,6 +2325,23 @@ fn lower_indexed_array_sort(
     let array = expect_operand(inst, 0)?;
     let elem_ty =
         indexed_sort_element_type(ctx.value_php_type(array)?, name, str_helper.is_some())?;
+    let helper = if elem_ty == PhpType::Str {
+        str_helper.expect("string sort helper is required after validation")
+    } else {
+        int_helper
+    };
+    emit_indexed_array_sort_call(ctx, inst, array, helper)
+}
+
+/// Emits the in-place indexed-array sort tail shared by the fixed-comparator sort builtins and
+/// the flag-selecting `sort()`: COW-separates the source, loads it into the ABI argument
+/// register, calls `helper`, and stamps the void result sentinel.
+fn emit_indexed_array_sort_call(
+    ctx: &mut FunctionContext<'_>,
+    inst: &Instruction,
+    array: ValueId,
+    helper: &str,
+) -> Result<()> {
     let source_local = source_load_local_slot(ctx, array)?;
     ensure_unique_sort_source(ctx, array)?;
     if let Some(slot) = source_local {
@@ -2288,11 +2355,6 @@ fn lower_indexed_array_sort(
             ctx.load_value_to_reg(array, "rdi")?;
         }
     }
-    let helper = if elem_ty == PhpType::Str {
-        str_helper.expect("string sort helper is required after validation")
-    } else {
-        int_helper
-    };
     abi::emit_call_label(ctx.emitter, helper);
     abi::emit_load_int_immediate(
         ctx.emitter,
@@ -2909,11 +2971,13 @@ fn static_array_filter_mode(
     let Some(mode) = mode else {
         return Ok(Some(0));
     };
-    array_filter_mode_const_i64(ctx, mode)
+    const_i64_operand(ctx, mode)
 }
 
-/// Returns a visible integer mode from a direct constant or same-block local load.
-fn array_filter_mode_const_i64(ctx: &FunctionContext<'_>, value: ValueId) -> Result<Option<i64>> {
+/// Returns a visible integer value from a direct `ConstI64` operand or a same-block local
+/// load of one (e.g. an `array_filter()` mode or a `sort()` flags argument), or `None` when
+/// the operand is not a compile-time-visible integer constant.
+fn const_i64_operand(ctx: &FunctionContext<'_>, value: ValueId) -> Result<Option<i64>> {
     let Some(value_ref) = ctx.function.value(value) else {
         return Err(CodegenIrError::missing_entry("value", value.as_raw()));
     };

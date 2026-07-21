@@ -489,3 +489,65 @@ echo date_diff(1, 2), "|", timezone_name_get(5);
     );
     assert_eq!(out, "user:3|tz:5");
 }
+
+/// Regression for #668: `sort($a, SORT_STRING)` accepts the optional flags argument (the arity
+/// gate previously rejected it as "sort() takes exactly 1 argument") and sorts a string array
+/// through the string comparator.
+#[test]
+fn test_sort_with_sort_string_flag_over_string_array() {
+    let out = compile_and_run(
+        r#"<?php
+$a = ["banana", "apple", "cherry"];
+sort($a, SORT_STRING);
+echo implode(",", $a);
+"#,
+    );
+    assert_eq!(out, "apple,banana,cherry");
+}
+
+/// Regression for #668: `sort($a, SORT_NUMERIC)` accepts the flags argument and sorts an
+/// integer array numerically.
+#[test]
+fn test_sort_with_sort_numeric_flag_over_int_array() {
+    let out = compile_and_run(
+        r#"<?php
+$a = [3, 1, 2, 10];
+sort($a, SORT_NUMERIC);
+echo implode(",", $a);
+"#,
+    );
+    assert_eq!(out, "1,2,3,10");
+}
+
+/// Regression for #668: the unflagged `sort()` still works (default `SORT_REGULAR` keeps the
+/// element-type dispatch — a string array sorts as strings).
+#[test]
+fn test_sort_without_flag_unchanged() {
+    let out = compile_and_run(
+        r#"<?php
+$a = ["banana", "apple", "cherry"];
+sort($a);
+echo implode(",", $a);
+"#,
+    );
+    assert_eq!(out, "apple,banana,cherry");
+}
+
+/// Guard for #668: `SORT_STRING` over an integer-element array (string-of-int comparison) has
+/// no runtime comparator yet and must be rejected loudly — never silently sorted numerically.
+#[test]
+fn test_sort_string_flag_over_int_array_rejected() {
+    let result = std::panic::catch_unwind(|| {
+        compile_and_run(
+            r#"<?php
+$a = [10, 9, 2];
+sort($a, SORT_STRING);
+echo implode(",", $a);
+"#,
+        )
+    });
+    assert!(
+        result.is_err(),
+        "SORT_STRING over an integer array must be rejected loudly, not silently mis-sorted",
+    );
+}

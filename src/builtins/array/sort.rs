@@ -23,6 +23,8 @@ builtin! {
     name: "sort",
     area: Array,
     params: [ref array: Mixed],
+    min_args: 1,
+    max_args: 2,
     returns: Void,
     check: check,
     lower: lower,
@@ -30,14 +32,19 @@ builtin! {
     php_manual: "https://www.php.net/manual/en/function.sort.php",
 }
 
-/// Validates the argument type for a `sort` call.
+/// Validates the argument types for a `sort` call.
 ///
-/// Requires the argument be an indexed or associative array. Arity (exactly 1) is
+/// Requires the first argument be an indexed or associative array. The optional second
+/// `$flags` argument (a sort-comparator selector, default `SORT_REGULAR`) is pre-typed as
+/// `Int` by the registry; its supported values are enforced at lowering. Arity (1 or 2) is
 /// pre-validated by the registry. Returns `Ok(PhpType::Void)` on success.
 fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     let ty = cx.checker.infer_type(&cx.args[0], cx.env)?;
     if !matches!(ty, PhpType::Array(_) | PhpType::AssocArray { .. }) {
         return Err(CompileError::new(cx.span, &format!("{}() argument must be array", cx.name)));
+    }
+    if let Some(flags_arg) = cx.args.get(1) {
+        cx.checker.infer_type(flags_arg, cx.env)?;
     }
     Ok(PhpType::Void)
 }
