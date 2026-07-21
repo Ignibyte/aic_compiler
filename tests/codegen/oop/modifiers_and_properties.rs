@@ -629,3 +629,59 @@ echo "|", $b->all();
     );
     assert_eq!(out, "x,y2|0|z");
 }
+
+/// Regression (#670, direction 2): a property declared with the bare `array` hint must adopt
+/// associative storage from a whole-value assignment of a CONCRETELY-typed map.
+///
+/// `declared_generic_array_can_use_assoc_storage` additionally required the assigned value's own
+/// value type to be `Mixed`, so `$this->options = ['k' => 'v']` (an `AssocArray{Str, Str}`) never
+/// adopted: the slot stayed indexed and the backend rejected the store with
+/// "prop_set assigning AssocArray{Str,Str} … with Array(Mixed)". Only whole-value assignment was
+/// affected — the keyed-write path always adopted. The second case drops the `= []` default to pin
+/// that the bare HINT, not the default, is what decides the representation.
+#[test]
+fn test_declared_array_property_adopts_assoc_from_typed_assignment() {
+    let out = compile_and_run(
+        r#"<?php
+class WithDefault {
+    protected array $options = [];
+    public function set(): void { $this->options = ['k' => 'v', 'j' => 'w']; }
+    public function read(): string {
+        $o = '';
+        foreach ($this->options as $k => $v) { $o .= $k . '=' . $v . ';'; }
+        return $o . count($this->options);
+    }
+}
+class NoDefault {
+    protected array $options;
+    public function set(): void { $this->options = ['a' => 'b']; }
+    public function read(): string { return $this->options['a']; }
+}
+$w = new WithDefault(); $w->set();
+$n = new NoDefault(); $n->set();
+echo $w->read(), "|", $n->read();
+"#,
+    );
+    assert_eq!(out, "k=v;j=w;2|b");
+}
+
+/// CONTROL for the adoption above: a property whose writes are all INDEXED must stay indexed. The
+/// guard only lets a still-generic `array<mixed>` property adopt, so a list keeps list semantics
+/// (appends, integer keys, `implode` order) rather than being hash-ified wholesale.
+#[test]
+fn test_declared_array_property_with_indexed_writes_stays_indexed() {
+    let out = compile_and_run(
+        r#"<?php
+class Bag {
+    protected array $items = [];
+    public function add(string $s): void { $this->items[] = $s; }
+    public function read(): string { return implode(",", $this->items) . "/" . count($this->items); }
+    public function keys(): string { return implode(",", array_keys($this->items)); }
+}
+$b = new Bag();
+$b->add("x"); $b->add("y");
+echo $b->read(), "|", $b->keys();
+"#,
+    );
+    assert_eq!(out, "x,y/2|0,1");
+}

@@ -712,17 +712,21 @@ fn update_object_property_type(
 
 /// Returns true if a declared generic array property may be updated to `AssocArray` storage.
 ///
-/// Currently returns true only when the property is declared as `array<PhpType::Mixed>` and the
-/// updated type is an `AssocArray` with `PhpType::Mixed` values. This guards against widening
-/// a typed array to an associative storage with a narrower element type.
+/// The property must currently hold `array<Mixed>` — what the BARE `array` hint lowers to, PHP's
+/// untyped array — so adopting the assigned associative shape SPECIALIZES an unconstrained
+/// declaration rather than narrowing a typed one. A property already carrying a concrete element
+/// type never adopts, which is the widening this guard exists to prevent.
+///
+/// The candidate's own value type is deliberately unconstrained. Requiring it to be `Mixed` as well
+/// meant a plain `$this->options = ['k' => 'v']` — an `AssocArray{Str, Str}` — never adopted, so
+/// the slot stayed indexed and the backend rejected the store (#670). The keyed-write path
+/// (`$this->options['k'] = 'v'`) always adopted such writes, via
+/// `assoc_property_type_after_keyed_write`, which is why only whole-value assignment was affected.
 fn declared_generic_array_can_use_assoc_storage(current: &PhpType, updated: &PhpType) -> bool {
     matches!(
         (current, updated),
-        (
-            PhpType::Array(elem_ty),
-            PhpType::AssocArray { key: _, value }
-        ) if matches!(elem_ty.as_ref(), PhpType::Mixed)
-            && matches!(value.as_ref(), PhpType::Mixed)
+        (PhpType::Array(elem_ty), PhpType::AssocArray { .. })
+            if matches!(elem_ty.as_ref(), PhpType::Mixed)
     )
 }
 
