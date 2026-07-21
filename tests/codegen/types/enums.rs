@@ -909,3 +909,95 @@ echo Dir::Asc->opposite()->value, "|", Dir::Desc->opposite()->value;
     );
     assert_eq!(out, "desc|asc");
 }
+
+/// Regression (#675): an enum case is a legal property DEFAULT and must load the case singleton.
+///
+/// Property defaults are classified by `literal_default_value`, which handled only literal scalars
+/// and arrays — an enum-case default fell through to "object_new for default value of property
+/// $state with PHP type Object(...)". Expression-position uses of the very same case compiled fine,
+/// so this was purely a gap in the default classifier. Enum cases are pre-initialized global
+/// singletons, so the default LOADS and retains that object; constructing one per instance would
+/// compile and run while breaking every `===` against the case, which is what the identity
+/// assertions here pin. A pure (non-backed) enum takes the same path.
+#[test]
+fn test_enum_case_property_default_loads_the_case_singleton() {
+    let out = compile_and_run(
+        r#"<?php
+declare(strict_types=1);
+enum State: string {
+    case Pending = 'pending';
+    case Active = 'active';
+}
+enum Color { case Red; case Blue; }
+final class Backed {
+    private State $state = State::Pending;
+    public function state(): State { return $this->state; }
+    public function activate(): void { $this->state = State::Active; }
+}
+final class Pure {
+    private Color $color = Color::Red;
+    public function color(): Color { return $this->color; }
+}
+$a = new Backed();
+$b = new Backed();
+echo $a->state()->value;
+echo ($a->state() === State::Pending) ? ";lit-same" : ";lit-diff";
+echo ($a->state() === $b->state()) ? ";cross-same" : ";cross-diff";
+$a->activate();
+echo ";", $a->state()->value, ";", $b->state()->value;
+$p = new Pure();
+echo "|", $p->color()->name, ($p->color() === Color::Red) ? ";same" : ";diff";
+"#,
+    );
+    assert_eq!(
+        out,
+        "pending;lit-same;cross-same;active;pending|Red;same"
+    );
+}
+
+/// Regression (#675): the defaulted case drives `match` and comparison exactly like an assigned
+/// one, across a full state-machine lifecycle, and repeated construction keeps the singleton's
+/// refcount balanced.
+///
+/// The retain on the defaulted case balances the release the property slot performs when the
+/// object is destroyed. An unbalanced retain would drift the GLOBAL singleton's refcount and
+/// eventually free it — worse than a leak — so the loop constructs and drops many instances and
+/// then still compares the case, which would fail once the singleton had been freed.
+#[test]
+fn test_enum_case_default_survives_lifecycle_and_repeated_construction() {
+    let out = compile_and_run(
+        r#"<?php
+declare(strict_types=1);
+enum State: string {
+    case Pending = 'pending';
+    case Active = 'active';
+    case Committed = 'committed';
+}
+final class Tx {
+    private State $state = State::Pending;
+    public function begin(): void { $this->state = State::Active; }
+    public function commit(): void { $this->state = State::Committed; }
+    public function label(): string {
+        return match ($this->state) {
+            State::Pending => 'P',
+            State::Active => 'A',
+            State::Committed => 'C',
+        };
+    }
+}
+$t = new Tx();
+echo $t->label();
+$t->begin();
+echo $t->label();
+$t->commit();
+echo $t->label();
+$kept = 0;
+for ($i = 0; $i < 100; $i++) {
+    $each = new Tx();
+    if ($each->label() === 'P') { $kept++; }
+}
+echo "|", $kept, ";", State::Pending->value;
+"#,
+    );
+    assert_eq!(out, "PAC|100;pending");
+}

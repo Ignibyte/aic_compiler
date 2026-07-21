@@ -2308,7 +2308,55 @@ fn emit_property_default(
             abi::emit_store_to_address(ctx.emitter, int_reg, object_reg, default.offset);
             abi::emit_store_zero_to_address(ctx.emitter, object_reg, default.offset + 8);
         }
+        LiteralDefaultValue::EnumCase {
+            enum_name,
+            case_name,
+        } => {
+            emit_enum_case_default(ctx, object_reg, default.offset, enum_name, case_name)?;
+        }
     }
+    Ok(())
+}
+
+/// Writes an enum-case property default into its object slot.
+///
+/// Enum cases are pre-initialized global singletons, so this loads the case's symbol and
+/// retains it — it does NOT construct anything. Constructing per instance would give each
+/// object a distinct object for the same case and break `===` against the case literal and
+/// against other instances (#675). The retain balances the release the property slot performs
+/// when the object is destroyed; without it the singleton's refcount drifts down and the
+/// global case object is eventually freed (the same discipline `Enum::cases()` uses, #349).
+fn emit_enum_case_default(
+    ctx: &mut FunctionContext<'_>,
+    object_reg: &str,
+    offset: usize,
+    enum_name: &str,
+    case_name: &str,
+) -> Result<()> {
+    let known_case = ctx
+        .module
+        .enum_infos
+        .get(enum_name)
+        .is_some_and(|info| info.cases.iter().any(|case| case.name == *case_name));
+    if !known_case {
+        // Only reachable if a non-enum class constant somehow typed as an object reaches a
+        // property default; erroring keeps that a loud compile failure instead of a link error
+        // against a case symbol that was never emitted.
+        return Err(CodegenIrError::unsupported(format!(
+            "object_new for default value of property with unknown enum case {}::{}",
+            enum_name, case_name
+        )));
+    }
+    let case_label = crate::names::enum_case_symbol(enum_name, case_name);
+    let result_reg = abi::int_result_reg(ctx.emitter);
+    // The retain is a helper CALL, which clobbers the scratch register holding the object, so
+    // preserve it across the call exactly as the other calling arms do.
+    abi::emit_push_reg(ctx.emitter, object_reg);
+    abi::emit_load_symbol_to_reg(ctx.emitter, result_reg, &case_label, 0);
+    abi::emit_incref_if_refcounted(ctx.emitter, &PhpType::Object(enum_name.to_string()));
+    abi::emit_pop_reg(ctx.emitter, object_reg);
+    abi::emit_store_to_address(ctx.emitter, result_reg, object_reg, offset);
+    abi::emit_store_zero_to_address(ctx.emitter, object_reg, offset + 8);
     Ok(())
 }
 

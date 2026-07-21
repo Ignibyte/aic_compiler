@@ -17,7 +17,7 @@ use crate::codegen::{
     abi, emit_box_current_value_as_mixed, emit_release_pushed_refcounted_temp_after_array_push,
     runtime_value_tag,
 };
-use crate::parser::ast::ExprKind;
+use crate::parser::ast::{ExprKind, StaticReceiver};
 use crate::types::PhpType;
 
 use super::context::FunctionContext;
@@ -48,6 +48,14 @@ pub(crate) enum LiteralDefaultValue {
     },
     EmptyAssocArray {
         value_type: PhpType,
+    },
+    /// An enum case used as a default (`= State::Pending`). Enum cases are pre-initialized
+    /// global singletons, so the default loads and retains that one object rather than
+    /// constructing anything — every instance's default is the SAME object, which is what
+    /// makes `$this->state === State::Pending` hold (#675).
+    EnumCase {
+        enum_name: String,
+        case_name: String,
     },
 }
 
@@ -132,6 +140,20 @@ pub(crate) fn literal_default_value(
         (PhpType::Void | PhpType::Never, ExprKind::Null) => Ok(LiteralDefaultValue::NullSentinel),
         (PhpType::Void | PhpType::Never, _) => Ok(LiteralDefaultValue::NullSentinel),
         (PhpType::Object(_), ExprKind::Null) => Ok(LiteralDefaultValue::Null),
+        // An object-typed default can only be an enum case: PHP permits `new` in parameter
+        // defaults and attribute arguments but NOT in a property default, so enum cases and
+        // constants aliasing them are the whole legal space here. The emitter re-checks the
+        // receiver against the module's enum registry before loading a case symbol (#675).
+        (
+            PhpType::Object(_),
+            ExprKind::ScopedConstantAccess {
+                receiver: StaticReceiver::Named(enum_name),
+                name: case_name,
+            },
+        ) => Ok(LiteralDefaultValue::EnumCase {
+            enum_name: enum_name.as_str().trim_start_matches('\\').to_string(),
+            case_name: case_name.clone(),
+        }),
         (php_type, ExprKind::Null) if php_type.codegen_repr().is_refcounted() => {
             Ok(LiteralDefaultValue::Null)
         }

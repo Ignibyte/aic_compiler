@@ -1088,6 +1088,23 @@ fn emit_static_property_default_value(
         LiteralDefaultValue::BoxedFloat(value) => {
             emit_boxed_float_literal_to_result(ctx, *value);
         }
+        LiteralDefaultValue::EnumCase {
+            enum_name,
+            case_name,
+        } => {
+            // Unreachable today: `ensure_static_property_default_type_supported` rejects an
+            // object-typed static default before the classifier runs. Kept explicit because the
+            // obvious next step — admitting `Object(_)` at that gate — is NOT sufficient on its
+            // own: static-property initializers are emitted at the top of `main`, BEFORE the enum
+            // case singletons are constructed, so loading a case symbol there reads a null slot
+            // and the retain segfaults (measured, #675). Statics need the singleton
+            // initialization ordered ahead of static initializers first.
+            return Err(CodegenIrError::unsupported(format!(
+                "static property initializer for {}::${} with enum case {}::{} \
+                 (enum singletons are not initialized until after static initializers run)",
+                class_name, property, enum_name, case_name
+            )));
+        }
         LiteralDefaultValue::Array {
             elem_type,
             elements,
