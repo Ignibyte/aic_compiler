@@ -744,6 +744,119 @@ fn emit_descriptor_callback_wrapper(
     wrapper_label
 }
 
+/// Loads an indexed array's packed runtime `value_type` tag into `dest_reg`.
+///
+/// The kind word at `[array_ptr - 8]` carries the value_type in bits 8..14 (see
+/// `emit_array_value_type_stamp`); this mirrors the extraction the deep-free/clone paths already
+/// use (`runtime/arrays/array_free_deep.rs`). Tag 6 = Object (raw element pointers), tag 7 =
+/// Mixed/Union (boxed Mixed cells) — the distinction `array<mixed>` cannot make statically (#678).
+fn emit_load_array_value_type_tag(ctx: &mut FunctionContext<'_>, array_ptr_reg: &str, dest_reg: &str) {
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.emitter
+                .instruction(&format!("ldr {dest_reg}, [{array_ptr_reg}, #-8]")); // load the array kind word
+            ctx.emitter
+                .instruction(&format!("lsr {dest_reg}, {dest_reg}, #8")); // shift the packed value_type into the low bits
+            ctx.emitter
+                .instruction(&format!("and {dest_reg}, {dest_reg}, #0x7f")); // isolate the value_type tag
+        }
+        Arch::X86_64 => {
+            ctx.emitter
+                .instruction(&format!("mov {dest_reg}, QWORD PTR [{array_ptr_reg} - 8]")); // load the array kind word
+            ctx.emitter.instruction(&format!("shr {dest_reg}, 8")); // shift the packed value_type into the low bits
+            ctx.emitter.instruction(&format!("and {dest_reg}, 0x7f")); // isolate the value_type tag
+        }
+    }
+}
+
+/// Materializes into `callback_arg_reg` the user-sort wrapper label that matches the source array's
+/// RUNTIME cell format: the boxed-Mixed wrapper when the array's value_type is Mixed (tag 7), the
+/// raw wrapper otherwise.
+///
+/// `array<mixed>` does not pin the physical element format — cells are boxed Mixed cells when the
+/// array was built through a `mixed` boundary, and raw element pointers when a concrete literal is
+/// merely viewed through a bare `array` hint — so the wrapper cannot be chosen statically (#678).
+/// The two wrappers are ABI-identical (every user-sort element is a single 8-byte handle); they
+/// differ only in whether the incoming word is increfed as an already-boxed cell or boxed as a raw
+/// value. Selecting at the one-time call site keeps the per-comparison wrapper untouched. The
+/// non-boxed branch is byte-identical to the pre-#678 single-wrapper behavior, so raw and
+/// concrete-element sorts are unchanged.
+fn emit_select_sort_wrapper_by_cell_format(
+    ctx: &mut FunctionContext<'_>,
+    array: ValueId,
+    callback_arg_reg: &str,
+    boxed_wrapper_label: &str,
+    raw_wrapper_label: &str,
+) -> Result<()> {
+    const VALUE_TYPE_TAG_MIXED: i64 = 7;
+    let done_label = ctx.next_label("usort_cell_format_selected");
+    let array_ptr_reg = abi::symbol_scratch_reg(ctx.emitter);
+    let tag_reg = abi::secondary_scratch_reg(ctx.emitter);
+    ctx.load_value_to_reg(array, array_ptr_reg)?;
+    emit_load_array_value_type_tag(ctx, array_ptr_reg, tag_reg);
+    // Default to the raw wrapper (the pre-#678 behavior), then upgrade to the boxed wrapper only
+    // when the runtime tag says the cells are boxed Mixed.
+    abi::emit_symbol_address(ctx.emitter, callback_arg_reg, raw_wrapper_label);
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.emitter
+                .instruction(&format!("cmp {tag_reg}, #{VALUE_TYPE_TAG_MIXED}")); // boxed Mixed cells?
+            ctx.emitter.instruction(&format!("b.ne {done_label}"));
+        }
+        Arch::X86_64 => {
+            ctx.emitter
+                .instruction(&format!("cmp {tag_reg}, {VALUE_TYPE_TAG_MIXED}")); // boxed Mixed cells?
+            ctx.emitter.instruction(&format!("jne {done_label}"));
+        }
+    }
+    abi::emit_symbol_address(ctx.emitter, callback_arg_reg, boxed_wrapper_label);
+    ctx.emitter.label(&done_label);
+    Ok(())
+}
+
+/// Emits the boxed-cell user-sort wrapper when the element cell format is only known at runtime
+/// (`array<mixed>`), returning its label; a concrete element type has one known format and returns
+/// `None` to keep the single raw wrapper. Pair with [`select_or_load_sort_wrapper`] (#678).
+fn emit_optional_boxed_sort_wrapper(
+    ctx: &mut FunctionContext<'_>,
+    element_ty: &PhpType,
+) -> Option<String> {
+    matches!(element_ty.codegen_repr(), PhpType::Mixed | PhpType::Union(_)).then(|| {
+        emit_descriptor_callback_wrapper(
+            ctx,
+            vec![element_ty.clone(), element_ty.clone()],
+            PhpType::Int,
+        )
+    })
+}
+
+/// Materializes the user-sort wrapper into `callback_arg_reg`: a runtime cell-format select between
+/// the boxed and raw wrappers when a boxed wrapper was emitted, otherwise just the raw wrapper —
+/// byte-identical to the pre-#678 single-wrapper path.
+fn select_or_load_sort_wrapper(
+    ctx: &mut FunctionContext<'_>,
+    array: ValueId,
+    callback_arg_reg: &str,
+    boxed_wrapper_label: Option<&str>,
+    raw_wrapper_label: &str,
+) -> Result<()> {
+    match boxed_wrapper_label {
+        Some(boxed_label) => {
+            emit_select_sort_wrapper_by_cell_format(
+                ctx,
+                array,
+                callback_arg_reg,
+                boxed_label,
+                raw_wrapper_label,
+            )
+        }
+        None => {
+            abi::emit_symbol_address(ctx.emitter, callback_arg_reg, raw_wrapper_label);
+            Ok(())
+        }
+    }
+}
+
 /// Reserves a one-slot callback environment containing the runtime callable descriptor.
 fn reserve_descriptor_callback_env(
     ctx: &mut FunctionContext<'_>,
@@ -2436,6 +2549,13 @@ fn lower_user_sort_static_callback(
         // descriptor-callback runtime. `static_callback_operand_is_recoverable` above already claimed
         // the statically-bindable `Callable` operands, so anything reaching here is runtime-selected.
         PhpType::Callable => {
+            // For an `array<mixed>` source the element cell format is a RUNTIME property (boxed
+            // Mixed cells vs raw pointers), so emit BOTH wrappers and select by the source array's
+            // value_type stamp at the call site (#678). The raw wrapper (hardcoded `Int` args, the
+            // box arm) is the pre-#678 behavior; the boxed wrapper (`element_ty` args, the incref
+            // arm) is what the boxed-cell case needs. A concrete element type keeps the single raw
+            // wrapper unchanged.
+            let boxed_wrapper_label = emit_optional_boxed_sort_wrapper(ctx, &element_ty);
             lower_descriptor_callback_runtime(
                 ctx,
                 callback,
@@ -2445,7 +2565,13 @@ fn lower_user_sort_static_callback(
                     let callback_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 0);
                     let array_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 1);
                     let env_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 2);
-                    abi::emit_symbol_address(ctx.emitter, callback_arg_reg, wrapper_label);
+                    select_or_load_sort_wrapper(
+                        ctx,
+                        array,
+                        callback_arg_reg,
+                        boxed_wrapper_label.as_deref(),
+                        wrapper_label,
+                    )?;
                     ctx.load_value_to_reg(array, array_arg_reg)?;
                     load_static_callback_env_arg(ctx, env_arg_reg, env_bytes);
                     abi::emit_call_label(ctx.emitter, "__rt_usort");
@@ -2466,6 +2592,11 @@ fn lower_user_sort_static_callback(
         // Unbox the tag-10 closure descriptor, then dispatch through the same wrapper + `__rt_usort` as
         // the `Callable` arm; a non-callable Mixed is a loud runtime fatal, never a silent mis-sort.
         PhpType::Mixed => {
+            // Same runtime cell-format ambiguity as the `Callable` arm: the boxed-`Mixed` source
+            // needs the incref wrapper, a raw source the box wrapper (#678). The comparator here is
+            // a boxed `?Closure` (unboxed inside the helper), independent of the SOURCE array's
+            // cell format that the select keys on.
+            let boxed_wrapper_label = emit_optional_boxed_sort_wrapper(ctx, &element_ty);
             lower_mixed_closure_descriptor_callback_runtime(
                 ctx,
                 callback,
@@ -2475,7 +2606,13 @@ fn lower_user_sort_static_callback(
                     let callback_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 0);
                     let array_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 1);
                     let env_arg_reg = abi::int_arg_reg_name(ctx.emitter.target, 2);
-                    abi::emit_symbol_address(ctx.emitter, callback_arg_reg, wrapper_label);
+                    select_or_load_sort_wrapper(
+                        ctx,
+                        array,
+                        callback_arg_reg,
+                        boxed_wrapper_label.as_deref(),
+                        wrapper_label,
+                    )?;
                     ctx.load_value_to_reg(array, array_arg_reg)?;
                     load_static_callback_env_arg(ctx, env_arg_reg, env_bytes);
                     abi::emit_call_label(ctx.emitter, "__rt_usort");

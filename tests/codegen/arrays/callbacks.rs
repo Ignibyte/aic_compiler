@@ -1715,3 +1715,149 @@ echo "|", count(regionValues());
     );
     assert_eq!(out, "header,main,footer|a,b|3");
 }
+
+/// Regression (#678): `usort` with a typed closure comparator over an `array<mixed>` whose cells
+/// are BOXED (built through a `mixed` boundary) used to return the input order — the wrapper
+/// forwarded the boxed cell word to the comparator as if it were a raw pointer, so every compare
+/// read garbage and the array came back unsorted. The fix selects the wrapper by the source
+/// array's runtime value_type stamp at the call site.
+#[test]
+fn test_usort_over_boxed_mixed_cells_sorts_correctly() {
+    let out = compile_and_run(
+        r#"<?php
+function opaque(mixed $x): mixed { return $x; }
+final class D { public function __construct(public string $id) {} }
+function build(): array {
+    $out = [];
+    foreach ([new D('c'), new D('a'), new D('b')] as $e) { $out[] = opaque($e); }
+    return $out;
+}
+$a = build();
+usort($a, static fn (D $l, D $r): int => strcmp($l->id, $r->id));
+$o = ''; foreach ($a as $d) { $o .= $d->id; }
+echo $o;
+"#,
+    );
+    assert_eq!(out, "abc");
+}
+
+/// Regression (#678) CONTROL: the SAME program with the array built WITHOUT the `mixed` boundary —
+/// raw object pointers under the same static `array<mixed>` type — must stay correct. This is the
+/// pair that proves the fix picks the format at runtime rather than swapping one format's bug for
+/// the other's (the raw path is byte-identical to the pre-fix behavior).
+#[test]
+fn test_usort_over_raw_mixed_cells_stays_correct() {
+    let out = compile_and_run(
+        r#"<?php
+function opaque(mixed $x): mixed { return $x; }
+final class D { public function __construct(public string $id) {} }
+function sortIt(array $ds): array {
+    usort($ds, static fn (D $l, D $r): int => strcmp($l->id, $r->id));
+    return $ds;
+}
+$o = ''; foreach (sortIt(opaque([new D('c'), new D('a'), new D('b')])) as $d) { $o .= $d->id; }
+echo $o;
+"#,
+    );
+    assert_eq!(out, "abc");
+}
+
+/// Regression (#678): `uasort` over boxed `array<mixed>` cells shares the same wrapper path and was
+/// mis-sorting identically; it must now sort correctly too.
+#[test]
+fn test_uasort_over_boxed_mixed_cells_sorts_correctly() {
+    let out = compile_and_run(
+        r#"<?php
+function opaque(mixed $x): mixed { return $x; }
+final class D { public function __construct(public string $id) {} }
+function build(): array {
+    $out = [];
+    foreach ([new D('c'), new D('a'), new D('b')] as $e) { $out[] = opaque($e); }
+    return $out;
+}
+$a = build();
+uasort($a, static fn (D $l, D $r): int => strcmp($l->id, $r->id));
+$o = ''; foreach ($a as $d) { $o .= $d->id; }
+echo $o;
+"#,
+    );
+    assert_eq!(out, "abc");
+}
+
+/// Regression (#678) CONTROL: a concrete-element array (`list<D>`, raw pointers, one known format)
+/// keeps the single unchanged wrapper and must stay correct — the dynamic select must not perturb
+/// the statically-formatted path.
+#[test]
+fn test_usort_over_concrete_object_elements_stays_correct() {
+    let out = compile_and_run(
+        r#"<?php
+final class D { public function __construct(public string $id) {} }
+function sortIt(array $ds): array {
+    usort($ds, static fn (D $l, D $r): int => strcmp($l->id, $r->id));
+    return $ds;
+}
+$o = ''; foreach (sortIt([new D('c'), new D('a'), new D('b')]) as $d) { $o .= $d->id; }
+echo $o;
+"#,
+    );
+    assert_eq!(out, "abc");
+}
+
+/// Regression (#678): the `?Closure`-comparator arm (a closure property narrowed via
+/// `instanceof Closure`, #664) over a boxed `array<mixed>` source shared the same cell-format
+/// mis-sort as the inline-closure arm and is fixed by the same call-site select.
+#[test]
+fn test_usort_closure_property_comparator_over_boxed_mixed_cells_sorts_correctly() {
+    let out = compile_and_run(
+        r#"<?php
+function opaque(mixed $x): mixed { return $x; }
+final class D { public function __construct(public string $id) {} }
+final class Sorter {
+    public ?Closure $cmp = null;
+    public function __construct() { $this->cmp = static fn (D $l, D $r): int => strcmp($l->id, $r->id); }
+    public function run(array $a): array {
+        $c = $this->cmp;
+        if ($c instanceof Closure) { usort($a, $c); }
+        return $a;
+    }
+}
+function build(): array { $o = []; foreach ([new D('c'), new D('a'), new D('b')] as $x) { $o[] = opaque($x); } return $o; }
+$o = ''; foreach ((new Sorter())->run(build()) as $d) { $o .= $d->id; }
+echo $o;
+"#,
+    );
+    assert_eq!(out, "abc");
+}
+
+/// Regression (#678): the boxed-cell path routes each comparator argument through the incref arm
+/// (forwarding an already-boxed Mixed cell) rather than the box arm. Sorting 20 boxed
+/// `array<mixed>` values in a loop must stay CORRECT every iteration — an unbalanced incref
+/// (over-decref) would free a still-referenced cell and corrupt or crash a later iteration.
+///
+/// Heap-cleanliness is deliberately NOT asserted: the `opaque()`-boxed `array<mixed>` cell
+/// lifecycle carries a pre-existing scope-end leak (same family as #663, measured identical before
+/// and after this fix — the box arm and the incref arm have the same heap profile), so the path
+/// cannot run clean until that leak is fixed. This fix changes sort correctness with zero change to
+/// the heap profile.
+#[test]
+fn test_usort_over_boxed_mixed_cells_stays_correct_across_iterations() {
+    let out = compile_and_run(
+        r#"<?php
+final class Row { public function __construct(public int $k) {} }
+function opaque(mixed $x): mixed { return $x; }
+function build(): array {
+    $out = [];
+    foreach ([new Row(3), new Row(1), new Row(2)] as $e) { $out[] = opaque($e); }
+    return $out;
+}
+$ok = 0;
+for ($i = 0; $i < 20; $i++) {
+    $s = build();
+    usort($s, static fn (Row $a, Row $b): int => $a->k <=> $b->k);
+    if ($s[0]->k === 1 && $s[1]->k === 2 && $s[2]->k === 3) { $ok++; }
+}
+echo $ok;
+"#,
+    );
+    assert_eq!(out, "20");
+}
