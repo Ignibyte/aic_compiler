@@ -4535,6 +4535,9 @@ fn ensure_property_value_supported(
     if can_convert_indexed_array_to_mixed_property(value_ty, &slot.php_type) {
         return Ok(());
     }
+    if can_convert_indexed_array_to_hash_property(value_ty, &slot.php_type) {
+        return Ok(());
+    }
     if can_coerce_tagged_scalar_to_int_property(value_ty, &slot.php_type) {
         return Ok(());
     }
@@ -4747,6 +4750,19 @@ fn can_convert_indexed_array_to_mixed_property(value_ty: &PhpType, slot_ty: &Php
     };
     slot_elem.codegen_repr() == PhpType::Mixed
         && value_elem.codegen_repr() != PhpType::Mixed
+}
+
+/// True when an indexed-array value is assigned to a hash-backed (associative) property.
+///
+/// PHP has one array type, so an `[]` literal carries no representation of its own: the same
+/// `$this->data = []` that resets a keyed bag also reads as an indexed literal. `__rt_array_to_hash`
+/// converts the value to an owned hash keyed `0..n-1`, which is PHP-identical for both the empty
+/// case and a genuine list (int keys are preserved). #670.
+fn can_convert_indexed_array_to_hash_property(value_ty: &PhpType, slot_ty: &PhpType) -> bool {
+    matches!(
+        (value_ty.codegen_repr(), slot_ty.codegen_repr()),
+        (PhpType::Array(_), PhpType::AssocArray { .. })
+    )
 }
 
 /// Returns true when a value can initialize a pointer-sized slot as null.
@@ -5218,6 +5234,17 @@ fn load_property_store_value_to_result(
         };
         emit_loaded_indexed_array_to_mixed(ctx, &source_elem.codegen_repr());
         abi::emit_incref_if_refcounted(ctx.emitter, &PhpType::Array(Box::new(PhpType::Mixed)));
+        return Ok(());
+    }
+    if can_convert_indexed_array_to_hash_property(&value_ty, slot_ty) {
+        ctx.load_value_to_result(value)?;
+        if ctx.emitter.target.arch == Arch::X86_64 {
+            ctx.emitter.instruction("mov rdi, rax");                            // move the indexed-array pointer into the first SysV argument register
+        }
+        abi::emit_call_label(ctx.emitter, "__rt_array_to_hash");
+        // `__rt_array_to_hash` returns a freshly OWNED hash (payloads retained/persisted), so the
+        // property takes that reference directly — increfing here would leak the new hash. The
+        // source indexed array keeps its own lifetime and its own release op.
         return Ok(());
     }
     if can_coerce_tagged_scalar_to_int_property(&value_ty, slot_ty) {

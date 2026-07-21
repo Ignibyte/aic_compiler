@@ -567,3 +567,65 @@ echo $c->get();
     );
     assert_eq!(out, "null;5;null;-42");
 }
+
+/// Regression for #670: PHP has ONE array type, so an `[]` literal carries no representation of
+/// its own — the same `$this->data = []` that resets a string-keyed bag also reads as an indexed
+/// literal. Storing it into a hash-backed property previously aborted codegen with
+/// "prop_set assigning PHP type Array(Mixed) to Session::$data with PHP type AssocArray{..}".
+/// This is `Session::clear()` / `ServerRequest::$attributes`.
+///
+/// Asserts the full lifecycle, so a store that silently produced the wrong storage kind would show
+/// up as a wrong lookup rather than merely compiling: keyed reads before the reset, an empty bag
+/// after it, and keyed reads working again once re-populated.
+#[test]
+fn test_empty_array_literal_stored_into_hash_property() {
+    let out = compile_and_run(
+        r#"<?php
+final class Session {
+    private array $data;
+    public function __construct(array $data) { $this->data = $data; }
+    public function set(string $k, string $v): void { $this->data[$k] = $v; }
+    public function get(string $k): string { return $this->data[$k] ?? 'MISS'; }
+    public function clear(): void { $this->data = []; }
+    public function count(): int { return count($this->data); }
+}
+$s = new Session([]);
+$s->set('a', 'A');
+$s->set('b', 'B');
+echo $s->get('a'), $s->get('b'), $s->count();
+$s->clear();
+echo "|", $s->count(), $s->get('a');
+$s->set('c', 'C');
+echo "|", $s->get('c'), $s->count();
+"#,
+    );
+    assert_eq!(out, "AB2|0MISS|C1");
+}
+
+/// Regression for #670: the CONTROL. A genuinely indexed property must NOT be hash-ified by the
+/// rule above — appends, `implode`, and `count` must all keep working across an `[]` reset. Without
+/// this, "accept an indexed literal into a hash slot" could quietly become "make every array
+/// property a hash".
+#[test]
+fn test_indexed_array_property_stays_indexed_across_reset() {
+    let out = compile_and_run(
+        r#"<?php
+final class Bag {
+    private array $items = [];
+    public function add(string $v): void { $this->items[] = $v; }
+    public function all(): string { return implode(",", $this->items); }
+    public function reset(): void { $this->items = []; }
+    public function n(): int { return count($this->items); }
+}
+$b = new Bag();
+$b->add('x');
+$b->add('y');
+echo $b->all(), $b->n();
+$b->reset();
+echo "|", $b->n();
+$b->add('z');
+echo "|", $b->all();
+"#,
+    );
+    assert_eq!(out, "x,y2|0|z");
+}
