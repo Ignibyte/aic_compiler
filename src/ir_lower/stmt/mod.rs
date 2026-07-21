@@ -20,7 +20,8 @@ use crate::ir_lower::effects_lookup;
 use crate::ir_lower::expr::{
     array_access_element_result_type, autovivify_missing_nested_parent, coerce_to_int_at_span,
     lower_array_literal_with_expected_type, lower_callable_array_for_assignment,
-    lower_closure_for_assignment, lower_expr, static_callable_binding_for_expr,
+    lower_closure_for_assignment, lower_expr, lower_lazy_isset_operand,
+    lower_non_local_assignment_write, static_callable_binding_for_expr,
     string_op_uses_scratch_storage, type_satisfies_array_access_for_ir,
 };
 use crate::names::{php_symbol_key, property_hook_set_method};
@@ -1116,6 +1117,51 @@ fn lower_foreach(
     value_by_ref: bool,
     body: &[Stmt],
 ) {
+    // #580: A by-reference foreach over a non-local lvalue (array element or property) must
+    // persist element mutations back to that lvalue. The by-reference iterator writes through a
+    // hidden copy-on-write split of the source array that is only ever stored back to a plain
+    // local origin, never to an array/property cell — so `foreach ($a[0] as &$v)` mutated a
+    // detached copy and the writes were lost. Rewrite it as
+    // `$tmp = $lvalue; foreach ($tmp as &$v) BODY; $lvalue = $tmp;` so the existing
+    // local-origin writeback carries the mutations, then reinstall the array into the lvalue.
+    // The temp carries the source's concrete type so iteration takes the indexed/hash path
+    // (which writes back to a local) rather than the dynamic-Mixed path (which does not).
+    if value_by_ref
+        && matches!(
+            array.kind,
+            ExprKind::ArrayAccess { .. }
+                | ExprKind::PropertyAccess { .. }
+                | ExprKind::StaticPropertyAccess { .. }
+        )
+    {
+        if let Some(exists) = lower_lazy_isset_operand(ctx, array) {
+            // Gate on runtime existence. PHP iterates a missing/null source zero times, so only
+            // the present case runs the body — and only it needs the copy-in and writeback. This
+            // also composes with the null-container guards: a missing element never reaches the
+            // refcounted array-set writeback (which would crash on the sentinel).
+            let run_block = ctx.builder.create_named_block("foreach.ref_run", Vec::new());
+            let done_block = ctx.builder.create_named_block("foreach.ref_done", Vec::new());
+            ctx.builder.terminate(Terminator::CondBr {
+                cond: exists.value,
+                then_target: run_block,
+                then_args: Vec::new(),
+                else_target: done_block,
+                else_args: Vec::new(),
+            });
+            ctx.builder.position_at_end(run_block);
+            let source = lower_expr(ctx, array);
+            let source_ty = ctx.builder.value_php_type(source.value);
+            let temp = ctx.declare_hidden_temp(source_ty.clone());
+            ctx.store_local(&temp, source, source_ty, Some(array.span));
+            ctx.mark_local_initialized(&temp);
+            let temp_expr = Expr::new(ExprKind::Variable(temp.clone()), array.span);
+            lower_foreach(ctx, &temp_expr, key_var, value_var, value_by_ref, body);
+            lower_non_local_assignment_write(ctx, array, &temp_expr, array.span);
+            branch_to(ctx, done_block);
+            ctx.builder.position_at_end(done_block);
+            return;
+        }
+    }
     let source = lower_expr(ctx, array);
     let source_php_ty = ctx.builder.value_php_type(source.value);
     let source_ty = source_php_ty.codegen_repr();

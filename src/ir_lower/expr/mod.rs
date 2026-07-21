@@ -1598,7 +1598,7 @@ fn lower_conditional_non_local_null_coalesce_assignment(
 }
 
 /// Emits the write side of an assignment expression whose target is not a local variable.
-fn lower_non_local_assignment_write(
+pub(crate) fn lower_non_local_assignment_write(
     ctx: &mut LoweringContext<'_, '_>,
     target: &Expr,
     value: &Expr,
@@ -2097,7 +2097,7 @@ fn lower_lazy_isset(
 }
 
 /// Lowers a single `isset()` operand that has special lazy PHP semantics.
-fn lower_lazy_isset_operand(
+pub(crate) fn lower_lazy_isset_operand(
     ctx: &mut LoweringContext<'_, '_>,
     arg: &Expr,
 ) -> Option<LoweredValue> {
