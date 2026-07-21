@@ -1659,6 +1659,49 @@ fn non_local_assignment_stmt_kind(target: &Expr, value: &Expr) -> Option<StmtKin
     }
 }
 
+/// Autovivifies a missing intermediate container before a nested write, matching PHP's
+/// write-context lookup for `$a[$k1][$k2] = v`.
+///
+/// The parent lvalue (`$a[$k1]`) is read silently (no undefined-key warning); when it is null
+/// or missing, a fresh empty array is installed into that lvalue so the leaf write mutates a
+/// real, aliased container rather than a detached temporary that is then silently discarded
+/// (#555). An existing parent is left untouched, so no copy-on-write or extra allocation is
+/// incurred on the common path. Only array-element parents are autovivified here; other parents
+/// (call results, properties, etc.) are left to the leaf write's existing handling.
+///
+/// A side-effecting parent index is evaluated more than once here; that is an accepted edge
+/// (the pre-fix path lost the write entirely) and covers the common constant/simple-index case.
+pub(crate) fn autovivify_missing_nested_parent(
+    ctx: &mut LoweringContext<'_, '_>,
+    parent: &Expr,
+    span: Span,
+) {
+    // Only array-element parents are autovivified here (the `$a[$k1][$k2] = v` case).
+    if !matches!(parent.kind, ExprKind::ArrayAccess { .. }) {
+        return;
+    }
+    // Probe existence without materializing the value: reading a missing Mixed element boxes a
+    // null that then leaks. `isset`-false means null or missing — exactly PHP's autovivification
+    // trigger. Parents without a native isset probe fall through to the leaf write unchanged.
+    let Some(exists) = lower_lazy_isset_operand(ctx, parent) else {
+        return;
+    };
+    let autoviv_block = ctx.builder.create_named_block("autoviv.missing", Vec::new());
+    let after_block = ctx.builder.create_named_block("autoviv.done", Vec::new());
+    ctx.builder.terminate(Terminator::CondBr {
+        cond: exists.value,
+        then_target: after_block,
+        then_args: Vec::new(),
+        else_target: autoviv_block,
+        else_args: Vec::new(),
+    });
+    ctx.builder.position_at_end(autoviv_block);
+    let empty = Expr::new(ExprKind::ArrayLiteral(Vec::new()), parent.span);
+    lower_non_local_assignment_write(ctx, parent, &empty, span);
+    branch_to(ctx, after_block);
+    ctx.builder.position_at_end(after_block);
+}
+
 /// Lowers a runtime-name property write (`$object->{$property} = $value`).
 fn lower_dynamic_property_assign(
     ctx: &mut LoweringContext<'_, '_>,

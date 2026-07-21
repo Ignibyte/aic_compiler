@@ -1031,3 +1031,21 @@ echo "done\n";
     );
     assert_eq!(out, "done\n");
 }
+
+/// Regression for issue #555: a chained write through a missing intermediate element
+/// (`$a[$absent][$k] = v`) must autovivify the parent in write context — installing the value
+/// and emitting no undefined-key warning — instead of mutating a detached temporary and losing
+/// the write.
+#[test]
+fn test_chained_write_autovivifies_missing_parent() {
+    let out = compile_and_run_capture(
+        r#"<?php
+$a = [['x', 'y'], 7];
+$a[7][1] = 'patched';
+echo $a[7][1] . "\n";
+"#,
+    );
+    assert!(out.success);
+    assert_eq!(out.stdout, "patched\n");
+    assert!(!out.stderr.contains("Undefined array key"));
+}
