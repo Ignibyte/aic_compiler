@@ -78,3 +78,46 @@ fn test_nested_call_memo_does_not_revive_narrowing_after_sibling_mutation() {
         "parameter $b expects Str",
     );
 }
+
+/// Verifies a MUTABLE property refinement still dies at a write. #680 exempts `readonly`
+/// properties from the call purge; that exemption must never reach a mutable slot, whose value
+/// a visible write really can change.
+#[test]
+fn test_mutable_property_refinement_dies_at_a_write() {
+    expect_error(
+        "<?php final class Box { public ?string $v = 'set'; } function takesStr(string $s): void {} $b = new Box(); if ($b->v === null) { exit(1); } $b->v = null; takesStr($b->v);",
+        "expects Str, got Union([Str, Void])",
+    );
+}
+
+/// Verifies a MUTABLE property refinement still dies at a call that can mutate the receiver.
+/// The callee is opaque to the checker, so the refinement cannot survive it.
+#[test]
+fn test_mutable_property_refinement_dies_at_a_mutating_call() {
+    expect_error(
+        "<?php final class Box { public ?string $v = 'set'; public function clear(): void { $this->v = null; } } function takesStr(string $s): void {} $b = new Box(); if ($b->v === null) { exit(1); } $b->clear(); takesStr($b->v);",
+        "expects Str, got Union([Str, Void])",
+    );
+}
+
+/// Verifies a MUTABLE property refinement dies at ANY call, even a pure one on an unrelated
+/// receiver. This is the containment test for #680's `readonly` exemption: the sigil that keeps a
+/// refinement across the purge must be reachable only for genuinely immutable slots.
+#[test]
+fn test_mutable_property_refinement_dies_at_an_unrelated_call() {
+    expect_error(
+        "<?php final class Box { public ?string $v = 'set'; } function takesStr(string $s): void {} function pure(): int { return strlen('zz'); } $b = new Box(); if ($b->v === null) { exit(1); } $x = pure(); takesStr($b->v);",
+        "expects Str, got Union([Str, Void])",
+    );
+}
+
+/// Verifies a READONLY property refinement still dies when the root local is rebound. `readonly`
+/// means the slot cannot change, not that the local still names the same object — so #680's
+/// exemption must not reach `purge_property_narrowings_for_root`.
+#[test]
+fn test_readonly_property_refinement_dies_when_the_root_is_rebound() {
+    expect_error(
+        "<?php final readonly class M { public function __construct(public ?string $v) {} } function takesStr(string $s): void {} $m = new M('a'); if ($m->v === null) { exit(1); } $m = new M(null); takesStr($m->v);",
+        "expects Str, got Union([Str, Void])",
+    );
+}

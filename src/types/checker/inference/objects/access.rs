@@ -30,7 +30,15 @@ impl Checker {
         // Flow-narrowing: a ternary like `$var->prop instanceof X ? ... : ...` records the
         // narrowed type of a simple property access under a synthetic env key (see
         // `branch_guard_narrowing`). Consult it first so a guarded branch sees the narrowed type.
-        if let Some(key) = Self::narrowed_property_env_key(object, property) {
+        // A `readonly` property is keyed under its own sigil (it survives the call purge), so both
+        // key forms have to be probed. They are mutually exclusive by construction.
+        for key in [
+            Self::narrowed_readonly_property_env_key(object, property),
+            Self::narrowed_property_env_key(object, property),
+        ]
+        .into_iter()
+        .flatten()
+        {
             if let Some(narrowed) = env.get(&key) {
                 return Ok(narrowed.clone());
             }

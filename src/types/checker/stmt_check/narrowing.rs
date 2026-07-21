@@ -76,7 +76,7 @@ impl Checker {
         // `!==` is the complement of `===`, so it composes with a leading `!` by XOR:
         // `!($x !== null)` narrows the then-branch exactly like `$x === null`.
         let negated = negated ^ inverted;
-        let Some(key) = Self::guard_env_key(receiver) else {
+        let Some(key) = self.guard_env_key(receiver, env)? else {
             return Ok(None);
         };
         if self.property_guard_receiver_is_unstable(receiver, env)? {
@@ -113,32 +113,102 @@ impl Checker {
         }
     }
 
-    /// `TypeEnv` key for a guard receiver: a variable's name, or the synthetic property key for a
-    /// simple property access. `None` for receivers narrowing can't key (complex chains).
-    fn guard_env_key(receiver: &Expr) -> Option<String> {
-        match &receiver.kind {
-            ExprKind::Variable(var) => Some(var.clone()),
-            ExprKind::PropertyAccess { object, property } => {
-                Self::narrowed_property_env_key(object, property)
-            }
+    /// Synthetic `TypeEnv` key for a narrowed `readonly` property access. Same shape as
+    /// [`Self::narrowed_property_env_key`] but under a distinct `\x02` sigil, so
+    /// [`Self::purge_property_narrowings`] can keep these while dropping the mutable ones without
+    /// needing the receiver's class at purge time (it has no `&self` to look one up with).
+    pub(crate) fn narrowed_readonly_property_env_key(
+        object: &Expr,
+        property: &str,
+    ) -> Option<String> {
+        match &object.kind {
+            ExprKind::Variable(var) => Some(format!("\u{2}roprop\u{2}{var}->{property}")),
+            ExprKind::This => Some(format!("\u{2}roprop\u{2}$this->{property}")),
             _ => None,
         }
     }
 
-    /// Drops every synthetic property narrowing from the environment. Called after effects that
-    /// may write a property (property assignments, any call — a callee can mutate the object),
+    /// Whether a refinement on `$object->property` stays true across a call.
+    ///
+    /// A `readonly` property cannot be written after initialization, so no callee and no aliased
+    /// write can change the slot — the refinement survives any call. That guarantee does NOT hold
+    /// inside `__construct` or `__clone` of the declaring class, where PHP still permits
+    /// (re)initialization, so those are excluded.
+    ///
+    /// Only a single concrete receiver class qualifies. For a union the property would have to be
+    /// `readonly` in every member, and that extra precision is not worth the soundness surface.
+    fn property_refinement_survives_calls(
+        &mut self,
+        object: &Expr,
+        property: &str,
+        env: &TypeEnv,
+    ) -> Result<bool, CompileError> {
+        let PhpType::Object(class) = self.infer_type(object, env)? else {
+            return Ok(false);
+        };
+        let in_initializer = matches!(
+            self.current_method.as_deref(),
+            Some("__construct") | Some("__clone")
+        ) && self
+            .current_class
+            .as_deref()
+            .is_some_and(|current| current.eq_ignore_ascii_case(&class));
+        if in_initializer {
+            return Ok(false);
+        }
+        Ok(self.classes.get(&class).is_some_and(|info| {
+            info.is_readonly_class || info.readonly_properties.contains(property)
+        }))
+    }
+
+    /// `TypeEnv` key for a guard receiver: a variable's name, or the synthetic property key for a
+    /// simple property access. `None` for receivers narrowing can't key (complex chains).
+    ///
+    /// A property whose refinement survives calls is keyed under the immutable sigil so the
+    /// call purge leaves it alone.
+    fn guard_env_key(
+        &mut self,
+        receiver: &Expr,
+        env: &TypeEnv,
+    ) -> Result<Option<String>, CompileError> {
+        Ok(match &receiver.kind {
+            ExprKind::Variable(var) => Some(var.clone()),
+            ExprKind::PropertyAccess { object, property } => {
+                if self.property_refinement_survives_calls(object, property, env)? {
+                    Self::narrowed_readonly_property_env_key(object, property)
+                } else {
+                    Self::narrowed_property_env_key(object, property)
+                }
+            }
+            _ => None,
+        })
+    }
+
+    /// Drops every MUTABLE synthetic property narrowing from the environment. Called after effects
+    /// that may write a property (property assignments, any call — a callee can mutate the object),
     /// and at loop-body entry (a later iteration may observe an earlier iteration's write), so a
     /// stale narrowing never survives a potential mutation. Variable narrowings are unaffected —
     /// visible assignments already update those bindings directly.
+    ///
+    /// `readonly` refinements (the `\x02` sigil) are deliberately KEPT: PHP forbids writing the
+    /// slot after initialization, so no callee can invalidate them. That exemption is why a
+    /// `readonly` property survives a nested call in an argument list (#680).
     pub(crate) fn purge_property_narrowings(env: &mut TypeEnv) {
         env.retain(|key, _| !key.starts_with('\u{1}'));
     }
 
     /// Drops synthetic property narrowings rooted at one local variable after that local is
     /// rebound. Other receivers remain valid and keep their precision.
+    ///
+    /// Both sigils are dropped, `readonly` included: `readonly` means the SLOT cannot change, not
+    /// that the local still names the same object. Rebinding the root changes which object the
+    /// path refers to, so the refinement no longer describes anything.
     pub(crate) fn purge_property_narrowings_for_root(env: &mut TypeEnv, root: &str) {
-        let prefix = format!("\u{1}prop\u{1}{root}->");
-        env.retain(|key, _| !key.starts_with(&prefix));
+        let mutable_prefix = format!("\u{1}prop\u{1}{root}->");
+        let readonly_prefix = format!("\u{2}roprop\u{2}{root}->");
+        env.retain(|key, _| {
+            !key.starts_with(&mutable_prefix) && !key.starts_with(&readonly_prefix)
+        });
     }
 
     /// Returns whether a property guard can invoke user code on either read. Hooked or magic

@@ -811,3 +811,48 @@ echo $mixedish->read(), "|", $t->read(), $f->read();
     );
     assert_eq!(out, "k=v;5=five;|a=x;b=y;");
 }
+
+/// Regression (#680): a `readonly` property narrowed by a guard must survive a nested call in a
+/// later argument slot. The purge that drops property refinements after any call used to be
+/// indiscriminate, so `array_merge(...)` in argument 4 erased the fact established for argument 3
+/// before the signature check ran — the verbatim `WardImportInspector::inspectDir` root.
+#[test]
+fn test_readonly_property_narrowing_survives_a_nested_call_in_an_argument_list() {
+    let out = compile_and_run(
+        r#"<?php
+final readonly class Manifest {
+    public function __construct(public string $name, public ?string $testsDir) {}
+}
+final class Inspector {
+    public function take(string $root, Manifest $m, string $d, array $pkgs): string {
+        return $root . ':' . $m->name . ':' . $d . ':' . count($pkgs);
+    }
+    public function run(Manifest $m, array $base): string {
+        if ($m->testsDir === null) { return 'none'; }
+        return $this->take('r', $m, $m->testsDir, array_merge($base, ['x']));
+    }
+}
+$i = new Inspector();
+echo $i->run(new Manifest('w', null), ['a']) . "|" . $i->run(new Manifest('w', 'tests'), ['a']);
+"#,
+    );
+    assert_eq!(out, "none|r:w:tests:2");
+}
+
+/// Regression (#680): a `readonly` property narrowing survives a statement-level call that even
+/// takes the receiver itself, because PHP forbids writing the slot after initialization.
+#[test]
+fn test_readonly_property_narrowing_survives_a_call_taking_the_receiver() {
+    let out = compile_and_run(
+        r#"<?php
+final readonly class M { public function __construct(public ?string $v) {} }
+function useIt(M $m): int { return strlen($m->v ?? ''); }
+$m = new M('kept');
+if ($m->v === null) { exit(1); }
+$n = useIt($m);
+$s = $m->v;
+echo $s . "|" . $n;
+"#,
+    );
+    assert_eq!(out, "kept|4");
+}
