@@ -97,6 +97,27 @@ pub(crate) fn array_key_type_from_value_type(raw_ty: PhpType) -> PhpType {
     }
 }
 
+/// Reads an array-shaped type's KEY type back out.
+///
+/// This is the receiver side of the key-type question, and the inverse of
+/// [`array_key_type_from_value_type`]: builtins like `array_search` return one of
+/// the receiver's keys, so their return type is whatever that receiver is keyed
+/// by. An indexed `Array(_)` is keyed by `Int`; an `AssocArray` carries its key
+/// type directly.
+///
+/// Anything else is not statically array-shaped, so the key type is genuinely
+/// unknown and the answer is `Mixed`. Callers must treat `Mixed` as "keep the
+/// conservative union" rather than narrow on a guess — stamping a concrete key
+/// type that the receiver does not actually have is a silent miscompile, not a
+/// compile error.
+pub(crate) fn receiver_array_key_type(arr_ty: &PhpType) -> PhpType {
+    match arr_ty {
+        PhpType::Array(_) => PhpType::Int,
+        PhpType::AssocArray { key, .. } => key.as_ref().clone(),
+        _ => PhpType::Mixed,
+    }
+}
+
 /// Returns true if `value` is a PHP-valid integer array key.
 ///
 /// A valid PHP integer string is a decimal integer (optionally signed) that fits in a signed

@@ -21,7 +21,7 @@ use crate::codegen::context::FunctionContext;
 use crate::codegen::CodegenIrError;
 use crate::errors::CompileError;
 use crate::ir::Instruction;
-use crate::types::PhpType;
+use crate::types::{receiver_array_key_type, PhpType};
 
 builtin! {
     name: "array_search",
@@ -49,12 +49,9 @@ fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
             "array_search() second argument must be array",
         ));
     }
-    match arr_ty {
-        PhpType::AssocArray { key, .. } => {
-            Ok(cx.checker.normalize_union_type(vec![*key, PhpType::False]))
-        }
-        _ => Ok(PhpType::Union(vec![PhpType::Int, PhpType::False])),
-    }
+    Ok(cx
+        .checker
+        .normalize_union_type(vec![receiver_array_key_type(&arr_ty), PhpType::False]))
 }
 
 /// Lowers an `array_search` call by dispatching to the shared array emitter.

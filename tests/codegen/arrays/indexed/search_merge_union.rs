@@ -168,3 +168,78 @@ echo count($result) . ":" . $result[0] . "," . $result[1];
     );
     assert_eq!(out, "2:first,second");
 }
+
+/// Regression (#679): the three-argument strict form of `array_search` is rewritten
+/// to a shared injected shim declared `int|string|false`, which used to erase the
+/// haystack's key type at every call site. Over a list the result must satisfy a
+/// declared `int` return — this is the exact `ParentChain::depthOf` shape that
+/// blocked three native-survey roots.
+#[test]
+fn test_strict_array_search_over_a_list_satisfies_a_declared_int_return() {
+    let out = compile_and_run(
+        r#"<?php
+function depthOf(string $x): int {
+    $items = ["a", "b", "c"];
+    $d = array_search($x, $items, true);
+    if ($d === false) { return -1; }
+    return $d;
+}
+echo depthOf("b") . "," . depthOf("zz");
+"#,
+    );
+    assert_eq!(out, "1,-1");
+}
+
+/// Regression (#679): over a STRING-keyed map the strict form must yield the string
+/// key, satisfying a declared `string` return. This is the load-bearing case — the
+/// shim is one shared compiled function, so narrowing its call-site type is only
+/// sound if the returned value really carries the key's representation.
+#[test]
+fn test_strict_array_search_over_a_string_keyed_map_returns_the_string_key() {
+    let out = compile_and_run(
+        r#"<?php
+function findKey(string $needle): string {
+    $map = ["alpha" => "a-value", "beta" => "b-value"];
+    $k = array_search($needle, $map, true);
+    if ($k === false) { return "MISS"; }
+    return $k;
+}
+echo findKey("b-value") . "," . findKey("nope");
+"#,
+    );
+    assert_eq!(out, "beta,MISS");
+}
+
+/// Regression (#679): over a sparse INT-keyed map the strict form must yield the
+/// declared key, not the positional offset.
+#[test]
+fn test_strict_array_search_over_a_sparse_int_keyed_map_returns_the_key() {
+    let out = compile_and_run(
+        r#"<?php
+function findIdx(string $needle): int {
+    $map = [5 => "x", 10 => "y", 3 => "z"];
+    $k = array_search($needle, $map, true);
+    if ($k === false) { return -1; }
+    return $k;
+}
+echo findIdx("y") . "," . findIdx("nope");
+"#,
+    );
+    assert_eq!(out, "10,-1");
+}
+
+/// Regression (#679): a haystack that is not statically array-shaped must KEEP the
+/// shim's full `int|string|false` union. Narrowing on a guess would silently
+/// truncate a real string key, which is a miscompile rather than a compile error.
+#[test]
+fn test_strict_array_search_over_an_indeterminate_haystack_keeps_the_wide_union() {
+    let out = compile_and_run(
+        r#"<?php
+function opaque(mixed $x): mixed { return $x; }
+$arr = opaque(["p", "q", "r"]);
+$k = array_search("r", $arr, true);
+var_dump($k);
+"#,
+    );
+    assert_eq!(out, "int(2)\n");
+}

@@ -11,7 +11,8 @@
 use crate::errors::CompileError;
 use crate::parser::ast::{Expr, ExprKind};
 use crate::types::{
-    merge_array_key_types, normalized_array_key_type, packed_type_size, PhpType, TypeEnv,
+    merge_array_key_types, normalized_array_key_type, packed_type_size, receiver_array_key_type,
+    PhpType, TypeEnv,
 };
 mod assignments;
 mod class_refs;
@@ -476,7 +477,8 @@ impl Checker {
                 if let Some(ty) = self.check_builtin(name.as_str(), &args, expr.span, env)? {
                     return Ok(ty);
                 }
-                self.check_function_call(name.as_str(), &args, expr.span, env)
+                let ty = self.check_function_call(name.as_str(), &args, expr.span, env)?;
+                self.refine_arity_ext_shim_return(name.as_str(), &args, ty, env)
             }
             ExprKind::BufferNew { element_type, len } => {
                 let len_ty = self.infer_type(len, env)?;
@@ -795,6 +797,47 @@ impl Checker {
             .unwrap_or(PhpType::Mixed)
     }
 
+    /// Narrows an `arity_ext_prelude` shim's declared return type using the actual
+    /// type of the argument its result depends on.
+    ///
+    /// `array_search($needle, $haystack, $strict)` is rewritten to the shared
+    /// injected `__elephc_array_search_strict` in the name resolver, before the
+    /// checker ever sees the name `array_search`. That bypasses the registry entry
+    /// whose `check` hook derives the return type from the haystack's keys, so the
+    /// shim's flat declared `int|string|false` was stamped at every call site — a
+    /// list haystack reported `int|string` and failed to satisfy a declared `int`
+    /// return (#679). A shared function has one signature for every caller, so the
+    /// dependence has to be recovered per call.
+    ///
+    /// This belongs here rather than at the stamp sites: a call's return type is
+    /// produced from several places depending on whether the callee is already
+    /// resolved into `self.functions` or is still only a forward declaration, and
+    /// this arm is the one point they all flow through.
+    ///
+    /// A haystack that is not statically array-shaped yields a `Mixed` key type,
+    /// and then the declared union stands — stamping a concrete key type the
+    /// receiver does not have would silently truncate a real string key rather than
+    /// produce an error. Other prelude rewrites (`__elephc_strpos_offset`,
+    /// `__elephc_strncmp`, …) have no receiver-dependent return and are untouched.
+    fn refine_arity_ext_shim_return(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+        declared: PhpType,
+        env: &TypeEnv,
+    ) -> Result<PhpType, CompileError> {
+        if name != "__elephc_array_search_strict" {
+            return Ok(declared);
+        }
+        let Some(haystack) = args.get(1) else {
+            return Ok(declared);
+        };
+        let key_ty = receiver_array_key_type(&self.infer_type(haystack, env)?);
+        if key_ty == PhpType::Mixed {
+            return Ok(declared);
+        }
+        Ok(self.normalize_union_type(vec![key_ty, PhpType::False]))
+    }
 }
 
 /// Returns `true` if `index` is a valid string offset index for a string receiver.
