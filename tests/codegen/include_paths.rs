@@ -362,3 +362,48 @@ fn test_include_function_variant_keeps_error_when_call_does_not_respecialize() {
     );
     assert_eq!(out, "3");
 }
+
+/// Regression for #582: `__DIR__` is compile-time-known — it is the directory of the file holding
+/// the include — so `require __DIR__ . '/rel.php'` must fold like any other constant path. That
+/// spelling is how PHP writes a fixed path that survives being installed anywhere, and AIC's
+/// manifest and migration loaders need it to stay AOT-resolvable.
+///
+/// Also covers `__DIR__` reaching the include through a `const`, since the resolver folds const
+/// declarations with the same path folder.
+#[test]
+fn test_include_path_folds_dir_magic_constant() {
+    let out = compile_and_run_files(
+        &[
+            (
+                "main.php",
+                "<?php\n$payload = require __DIR__ . '/manifest.php';\necho count($payload), $payload['alpha'];\n",
+            ),
+            (
+                "manifest.php",
+                "<?php\nreturn ['alpha' => 7, 'beta' => 9];\n",
+            ),
+        ],
+        "main.php",
+    );
+    assert_eq!(out, "27");
+}
+
+/// Regression for #582: the same fold reached through a `const`, which is the shape a loader uses
+/// to name its cache file once and require it from elsewhere in the class.
+#[test]
+fn test_include_path_folds_dir_magic_constant_through_const() {
+    let out = compile_and_run_files(
+        &[
+            (
+                "main.php",
+                "<?php\nconst MANIFEST = __DIR__ . '/manifest.php';\n$payload = require MANIFEST;\necho $payload['alpha'];\n",
+            ),
+            (
+                "manifest.php",
+                "<?php\nreturn ['alpha' => 7];\n",
+            ),
+        ],
+        "main.php",
+    );
+    assert_eq!(out, "7");
+}

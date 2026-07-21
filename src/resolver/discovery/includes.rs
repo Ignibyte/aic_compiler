@@ -54,7 +54,7 @@ pub(super) fn discover_include(
     state: &mut ResolveState,
     output: &mut DiscoveryOutput,
 ) -> Result<(), CompileError> {
-    let path_str = fold_include_path(path, state).map_err(|msg| CompileError::new(span, &msg))?;
+    let path_str = fold_include_path(path, state, base_dir).map_err(|msg| CompileError::new(span, &msg))?;
     let resolved = resolve_path(&path_str, base_dir);
     let canonical = resolved.canonicalize().unwrap_or_else(|_| resolved.clone());
 

@@ -8,24 +8,38 @@
 //! Key details:
 //! - Dynamic include errors are reported early because the compiler needs a closed source graph.
 
-use crate::parser::ast::{BinOp, Expr, ExprKind};
+use std::path::Path;
+
+use crate::parser::ast::{BinOp, Expr, ExprKind, MagicConstant};
 
 use super::state::{resolve_constant_ref, ResolveState};
 
 /// Fold a path expression to a compile-time string. Handles string literals,
-/// concat of foldable subexpressions, and references to const/define-d string
+/// `__DIR__`, concat of foldable subexpressions, and references to const/define-d string
 /// constants tracked in `state`. Returns the human-readable error message when
 /// the expression cannot be folded.
-pub(super) fn fold_include_path(expr: &Expr, state: &ResolveState) -> Result<String, String> {
+///
+/// `base_dir` is the directory of the file being resolved — what `__DIR__` evaluates to there.
+pub(super) fn fold_include_path(
+    expr: &Expr,
+    state: &ResolveState,
+    base_dir: &Path,
+) -> Result<String, String> {
     match &expr.kind {
         ExprKind::StringLiteral(s) => Ok(s.clone()),
+        // `__DIR__` is compile-time-known — it is the directory of the file holding the include.
+        // `require __DIR__ . '/../cache/manifest.php'` is the idiomatic way to write a fixed path
+        // that survives being installed anywhere, so folding it keeps such a require AOT-resolvable
+        // instead of forcing an absolute literal. `__FILE__` is deliberately NOT folded: only the
+        // directory is threaded here, so the file name would have to be guessed.
+        ExprKind::MagicConstant(MagicConstant::Dir) => Ok(base_dir.to_string_lossy().into_owned()),
         ExprKind::BinaryOp {
             left,
             op: BinOp::Concat,
             right,
         } => {
-            let l = fold_include_path(left, state)?;
-            let r = fold_include_path(right, state)?;
+            let l = fold_include_path(left, state, base_dir)?;
+            let r = fold_include_path(right, state, base_dir)?;
             Ok(l + &r)
         }
         ExprKind::ConstRef(name) => resolve_constant_ref(name, state).ok_or_else(|| {

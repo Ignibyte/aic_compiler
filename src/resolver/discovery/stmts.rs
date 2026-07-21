@@ -80,7 +80,7 @@ fn discover_stmt(
         }
         StmtKind::ConstDecl { name, value } => {
             discover_expr(value, base_dir, loaded_paths, include_chain, state, output)?;
-            if let Ok(s) = fold_include_path(value, state) {
+            if let Ok(s) = fold_include_path(value, state, base_dir) {
                 let key = canonical_name_for_decl(state.namespace.as_deref(), name);
                 state.constants.insert(key, s);
             }
@@ -90,7 +90,7 @@ fn discover_stmt(
             if let ExprKind::FunctionCall { name, args } = &expr.kind {
                 if is_define_call_name(name) && args.len() == 2 {
                     if let ExprKind::StringLiteral(const_name) = &args[0].kind {
-                        if let Ok(value) = fold_include_path(&args[1], state) {
+                        if let Ok(value) = fold_include_path(&args[1], state, base_dir) {
                             state
                                 .constants
                                 .insert(normalize_defined_constant_name(const_name), value);
