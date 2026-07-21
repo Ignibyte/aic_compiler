@@ -346,9 +346,16 @@ pub(crate) fn lower_class_name_lookup(
             emit_dynamic_object_class_name(ctx, name);
         }
         PhpType::Str if name == "get_parent_class" => {
-            let class_name = const_string_operand(ctx, value)?;
-            let parent = parent_of(ctx, &class_name);
-            emit_string_result(ctx, parent.as_bytes());
+            // A compile-time-literal class name resolves its parent statically; a runtime
+            // class-name string (e.g. a class-string property) resolves through the always-emitted
+            // dynamic-class lookup instead of erroring (#658).
+            match optional_const_string_operand(ctx, value)? {
+                Some(class_name) => {
+                    let parent = parent_of(ctx, &class_name);
+                    emit_string_result(ctx, parent.as_bytes());
+                }
+                None => emit_dynamic_string_class_parent(ctx, value)?,
+            }
         }
         other => {
             ctx.load_value_to_result(value)?;
@@ -552,6 +559,39 @@ fn emit_dynamic_object_class_name(ctx: &mut FunctionContext<'_>, name: &str) {
     }
 }
 
+/// Emits the runtime-class-name-string path for `get_parent_class($className)`: resolves the name
+/// to a class id via the always-emitted dynamic-class lookup (`__rt_instanceof_lookup`, whose class
+/// target ids are the same `class_id` space `_class_parent_ids`/`_class_name_entries` index), then
+/// reads its parent's name through the shared class-id lookup. Unknown name / interface / parentless
+/// class yields the empty string (matching the object-receiver path's parentless result).
+fn emit_dynamic_string_class_parent(ctx: &mut FunctionContext<'_>, value: ValueId) -> Result<()> {
+    let empty_label = ctx.next_label("get_parent_class_empty");
+    let done_label = ctx.next_label("get_parent_class_done");
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.load_string_value_to_regs(value, "x1", "x2")?;                  // class-name pointer/length into the lookup ABI registers
+            abi::emit_call_label(ctx.emitter, "__rt_instanceof_lookup");        // resolve the runtime class-name string to a class id
+            ctx.emitter.instruction(&format!("cbz x0, {}", empty_label));       // unknown class name -> empty string (PHP false)
+            ctx.emitter.instruction(&format!("cbnz x2, {}", empty_label));      // interface names have no parent class -> empty string
+            ctx.emitter.instruction("mov x9, x1");                              // move the resolved class id into the shared lookup register
+            emit_class_id_name_lookup_aarch64(ctx, "get_parent_class", &empty_label, &done_label);
+        }
+        Arch::X86_64 => {
+            // `__rt_instanceof_lookup` reads its x86_64 string operand from rax/rdx, NOT the
+            // System V rdi/rsi its docstring claims (verified against the implementation).
+            ctx.load_string_value_to_regs(value, "rax", "rdx")?;               // class-name pointer/length into the lookup's actual input registers
+            abi::emit_call_label(ctx.emitter, "__rt_instanceof_lookup");        // resolve the runtime class-name string to a class id
+            ctx.emitter.instruction("test rax, rax");                           // did the lookup resolve the class name?
+            ctx.emitter.instruction(&format!("je {}", empty_label));            // unknown class name -> empty string (PHP false)
+            ctx.emitter.instruction("test rdx, rdx");                           // is the resolved target an interface (kind 1)?
+            ctx.emitter.instruction(&format!("jne {}", empty_label));           // interface names have no parent class -> empty string
+            ctx.emitter.instruction("mov r8, rdi");                             // move the resolved class id into the shared lookup register
+            emit_class_id_name_lookup_x86_64(ctx, "get_parent_class", &empty_label, &done_label);
+        }
+    }
+    Ok(())
+}
+
 /// Emits AArch64 runtime object class-name lookup for `get_class()` and `get_parent_class()`.
 fn emit_dynamic_object_class_name_aarch64(
     ctx: &mut FunctionContext<'_>,
@@ -559,9 +599,20 @@ fn emit_dynamic_object_class_name_aarch64(
     empty_label: &str,
     done_label: &str,
 ) {
-    let (ptr_reg, len_reg) = abi::string_result_regs(ctx.emitter);
     ctx.emitter.instruction(&format!("cbz x0, {}", empty_label));               // null object pointers produce an empty class name
     ctx.emitter.instruction("ldr x9, [x0]");                                    // load the object's concrete runtime class id
+    emit_class_id_name_lookup_aarch64(ctx, name, empty_label, done_label);
+}
+
+/// Emits the class-id → [parent-id →] class-name read shared by the object-receiver and the
+/// runtime-class-name-string `get_class`/`get_parent_class` paths. Assumes the class id is in x9.
+fn emit_class_id_name_lookup_aarch64(
+    ctx: &mut FunctionContext<'_>,
+    name: &str,
+    empty_label: &str,
+    done_label: &str,
+) {
+    let (ptr_reg, len_reg) = abi::string_result_regs(ctx.emitter);
     abi::emit_symbol_address(ctx.emitter, "x10", "_class_name_count");
     ctx.emitter.instruction("ldr x10, [x10]");                                  // load the number of dense class-name lookup rows
     if name == "get_parent_class" {
@@ -600,6 +651,17 @@ fn emit_dynamic_object_class_name_x86_64(
     ctx.emitter.instruction("test rax, rax");                                   // test whether the object pointer is null
     ctx.emitter.instruction(&format!("je {}", empty_label));                    // null object pointers produce an empty class name
     ctx.emitter.instruction("mov r8, QWORD PTR [rax]");                         // load the object's concrete runtime class id
+    emit_class_id_name_lookup_x86_64(ctx, name, empty_label, done_label);
+}
+
+/// Emits the class-id → [parent-id →] class-name read shared by the object-receiver and the
+/// runtime-class-name-string `get_class`/`get_parent_class` paths. Assumes the class id is in r8.
+fn emit_class_id_name_lookup_x86_64(
+    ctx: &mut FunctionContext<'_>,
+    name: &str,
+    empty_label: &str,
+    done_label: &str,
+) {
     ctx.emitter.instruction("mov r9, QWORD PTR [rip + _class_name_count]");     // load the number of dense class-name lookup rows
     if name == "get_parent_class" {
         ctx.emitter.instruction("cmp r8, r9");                                  // validate the object class id before reading its parent id

@@ -635,3 +635,60 @@ echo $c->value;
     );
     assert_eq!(out, "42:42");
 }
+
+/// Regression for #658: `get_parent_class()` on a RUNTIME class-name string (not a literal)
+/// resolves the parent through the dynamic class-name table. Previously rejected with
+/// "get_parent_class with non-literal class name". The class-string is passed through a method
+/// parameter so it is not a compile-time `ConstStr`.
+#[test]
+fn test_get_parent_class_of_runtime_class_string() {
+    let out = compile_and_run(
+        r#"<?php
+class Animal658 {}
+class Dog658 extends Animal658 {}
+final class Reflector658 {
+    public function parentOf(string $className): string {
+        $parent = get_parent_class($className);
+        return $parent === false ? "NONE" : $parent;
+    }
+}
+$r = new Reflector658();
+echo $r->parentOf("Dog658");
+"#,
+    );
+    assert_eq!(out, "Animal658");
+}
+
+/// Regression for #658: the same runtime-class-string `get_parent_class()` resolves correctly
+/// when the class is only ever named by a string (never instantiated) — the class must still be
+/// emitted into the dynamic lookup tables (the `module_uses_dynamic_get_parent_class` trigger).
+#[test]
+fn test_get_parent_class_of_never_instantiated_runtime_string() {
+    let out = compile_and_run(
+        r#"<?php
+class GrandBase658 {}
+class DerivedNeverNew658 extends GrandBase658 {}
+final class Probe658 {
+    public function __construct(public string $name) {}
+    public function run(): string { return get_parent_class($this->name); }
+}
+echo (new Probe658("DerivedNeverNew658"))->run();
+"#,
+    );
+    assert_eq!(out, "GrandBase658");
+}
+
+/// Guard for #658: the object-receiver `get_class()` / `get_parent_class()` path (refactored to
+/// share the class-id lookup with the string path) is unchanged.
+#[test]
+fn test_get_class_and_parent_class_object_arm_unchanged() {
+    let out = compile_and_run(
+        r#"<?php
+class Vehicle658 {}
+class Car658 extends Vehicle658 {}
+$c = new Car658();
+echo get_class($c), ":", get_parent_class($c);
+"#,
+    );
+    assert_eq!(out, "Car658:Vehicle658");
+}

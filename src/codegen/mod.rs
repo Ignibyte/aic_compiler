@@ -200,6 +200,7 @@ fn finalize_user_asm(
     if module_uses_dynamic_callable_lookup(module)
         || module_uses_dynamic_class_exists(module)
         || module_uses_runtime_is_subclass_of(module)
+        || module_uses_dynamic_get_parent_class(module)
     {
         allowed_class_names.extend(module.class_infos.keys().cloned());
     }
@@ -417,6 +418,52 @@ fn function_uses_dynamic_class_exists(module: &Module, function: &Function) -> b
         };
         // A `ConstStr`-defining operand is a string literal (folded at compile time); anything else
         // is a runtime name that scans the table.
+        !matches!(
+            value.def,
+            crate::ir::ValueDef::Instruction { inst: def_inst, .. }
+                if function.instruction(def_inst).map(|i| i.op) == Some(Op::ConstStr)
+        )
+    })
+}
+
+fn module_uses_dynamic_get_parent_class(module: &Module) -> bool {
+    module
+        .functions
+        .iter()
+        .chain(module.class_methods.iter())
+        .chain(module.closures.iter())
+        .chain(module.fiber_wrappers.iter())
+        .chain(module.callback_wrappers.iter())
+        .chain(module.extern_callback_trampolines.iter())
+        .chain(module.runtime_callable_invokers.iter())
+        .any(|function| function_uses_dynamic_get_parent_class(module, function))
+}
+
+/// Returns true when `function` calls `get_parent_class()` with a runtime (non-`ConstStr`)
+/// STRING argument — the path that resolves the parent through the dynamic class-name table
+/// scan, which needs every class emitted into the lookup tables (#658). An object argument
+/// reads the already-reachable instance's own class id, and a `ConstStr` string resolves
+/// statically, so neither forces the full class set.
+fn function_uses_dynamic_get_parent_class(module: &Module, function: &Function) -> bool {
+    function.instructions.iter().any(|inst| {
+        if inst.op != Op::BuiltinCall {
+            return false;
+        }
+        let Some(Immediate::Data(data)) = inst.immediate else {
+            return false;
+        };
+        let Some(name) = module.data.function_names.get(data.as_raw() as usize) else {
+            return false;
+        };
+        if crate::names::php_symbol_key(name.trim_start_matches('\\')) != "get_parent_class" {
+            return false;
+        }
+        let Some(value) = inst.operands.first().and_then(|op| function.value(*op)) else {
+            return false;
+        };
+        if value.php_type.codegen_repr() != crate::types::PhpType::Str {
+            return false;
+        }
         !matches!(
             value.def,
             crate::ir::ValueDef::Instruction { inst: def_inst, .. }
