@@ -126,6 +126,59 @@ echo $c[0] . $c[1];
     assert_eq!(out, "2:34");
 }
 
+/// Verifies variadic `array_merge()` with three positional arrays (#668) — the registry arity gate
+/// no longer caps at two, and the left-fold renumbers integer keys across every operand.
+#[test]
+fn test_array_merge_three_positional_args() {
+    let out = compile_and_run(
+        r#"<?php
+echo implode(",", array_merge([1, 2], [3], [4, 5]));
+"#,
+    );
+    assert_eq!(out, "1,2,3,4,5");
+}
+
+/// Verifies the runtime spread form `array_merge(...$xs)` (#668) folds each element of a
+/// runtime-length array-of-arrays through the merge primitive (`ModulePackageOrderer`'s shape).
+#[test]
+fn test_array_merge_runtime_spread() {
+    let out = compile_and_run(
+        r#"<?php
+$xs = [];
+$xs[] = ["a", "b"];
+$xs[] = ["c"];
+$xs[] = ["d", "e"];
+echo implode(",", array_merge(...$xs));
+"#,
+    );
+    assert_eq!(out, "a,b,c,d,e");
+}
+
+/// Verifies `array_merge(...$xs)` when the spread source is only typed `array` (Mixed elements) —
+/// a bare `: array` return the checker could not refine — the operands are unboxed at the seam.
+#[test]
+fn test_array_merge_spread_mixed_source() {
+    let out = compile_and_run(
+        r#"<?php
+function pick(array $x): array { return $x; }
+$xs = pick([["a", "b"], ["c"], ["d", "e", "f"]]);
+echo implode(",", array_merge(...$xs));
+"#,
+    );
+    assert_eq!(out, "a,b,c,d,e,f");
+}
+
+/// Verifies single-argument `array_merge($a)` (#668) returns the array (a list is unchanged).
+#[test]
+fn test_array_merge_single_positional_arg() {
+    let out = compile_and_run(
+        r#"<?php
+echo implode(",", array_merge(["p", "q", "r"]));
+"#,
+    );
+    assert_eq!(out, "p,q,r");
+}
+
 /// Verifies the `+` operator keeps the left operand's values when both arrays
 /// have the same numeric key (left wins semantics).
 #[test]

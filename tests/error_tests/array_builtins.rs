@@ -50,12 +50,14 @@ fn test_error_array_reverse_wrong_args() {
     );
 }
 
-/// Verifies that error array merge wrong args.
+/// Verifies a non-array `array_merge()` argument is rejected. Since #668 `array_merge` is variadic
+/// (0..N arrays), so there is no arity error — a single array argument is valid (it renumbers integer
+/// keys) — but a statically non-array, non-`Mixed` operand is still a compile error.
 #[test]
-fn test_error_array_merge_wrong_args() {
+fn test_error_array_merge_non_array_arg() {
     expect_error(
-        "<?php $a = [1]; array_merge($a);",
-        "array_merge() takes exactly 2 arguments",
+        "<?php array_merge([1], 2);",
+        "array_merge() argument must be array",
     );
 }
 

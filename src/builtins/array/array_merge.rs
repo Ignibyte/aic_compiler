@@ -21,6 +21,7 @@ use crate::codegen::context::FunctionContext;
 use crate::codegen::CodegenIrError;
 use crate::errors::CompileError;
 use crate::ir::Instruction;
+use crate::parser::ast::ExprKind;
 use crate::types::PhpType;
 
 builtin! {
@@ -28,35 +29,73 @@ builtin! {
     area: Array,
     params: [],
     variadic: "arrays",
-    min_args: 2,
-    max_args: 2,
     returns: Mixed,
     check: check,
     lower: lower,
-    summary: "Merges the elements of two arrays.",
+    summary: "Merges the elements of one or more arrays.",
     php_manual: "https://www.php.net/manual/en/function.array-merge.php",
 }
 
-/// Validates the first argument is an array and returns the merged result type.
+/// Validates every argument is an array and returns the left-folded merged result type.
 ///
-/// Arity (exactly 2 args) is pre-validated by `check_arity`. The hook re-infers both
-/// argument types to derive the precise result type: when the left operand is an empty
-/// indexed array (element type `Void`), the result adopts the right operand's element
-/// type if it is a scalar-merge-compatible type.
+/// PHP's `array_merge(array ...$arrays)` accepts zero or more arrays (arity is pre-validated
+/// by `check_arity` as `min 0`, unbounded). The hook infers each argument, requiring it be
+/// array-typed (or `Mixed`, the runtime-trust posture), and left-folds `array_merge_return_type`
+/// over the operands — reproducing the legacy 2-arg result rule for `N == 2` and extending it
+/// to any N. Zero arguments yield the empty-indexed-array type.
+///
+/// A single trailing spread argument (`array_merge(...$xs)`) contributes its source's element
+/// type: `...$xs` where `$xs: array<array<T>>` merges each inner `array<T>`, so the fold sees
+/// `array<T>` (see [`array_merge_spread_contribution`]). The spread length is runtime data, so
+/// the lowering folds it at runtime; here the checker only needs the merged element type.
 fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
-    let ty1 = cx.checker.infer_type(&cx.args[0], cx.env)?;
-    let ty2 = cx.checker.infer_type(&cx.args[1], cx.env)?;
-    // A Mixed first argument (e.g. an indexed read `$this->headers[$k]` on an `array`-hinted
-    // property, or any value the checker knows only as Mixed) is coerced/enforced at runtime,
-    // the same trust posture as the Mixed→narrower type-compat boundary. Its merged result is
-    // Mixed. A statically non-array, non-Mixed first argument is still rejected.
-    if !matches!(ty1, PhpType::Array(_) | PhpType::AssocArray { .. } | PhpType::Mixed) {
-        return Err(CompileError::new(
-            cx.span,
-            "array_merge() first argument must be array",
-        ));
+    let mut merged: Option<PhpType> = None;
+    for arg in cx.args {
+        // A Mixed argument (e.g. an indexed read `$this->headers[$k]` on an `array`-hinted
+        // property, or any value the checker knows only as Mixed) is coerced/enforced at runtime,
+        // the same trust posture as the Mixed→narrower type-compat boundary. A statically
+        // non-array, non-Mixed argument is still rejected.
+        let contribution = if let ExprKind::Spread(inner) = &arg.kind {
+            let spread_ty = cx.checker.infer_type(inner, cx.env)?;
+            array_merge_spread_contribution(spread_ty, cx.span)?
+        } else {
+            let ty = cx.checker.infer_type(arg, cx.env)?;
+            if !matches!(ty, PhpType::Array(_) | PhpType::AssocArray { .. } | PhpType::Mixed) {
+                return Err(CompileError::new(
+                    cx.span,
+                    "array_merge() argument must be array",
+                ));
+            }
+            ty
+        };
+        merged = Some(match merged {
+            None => contribution,
+            Some(acc) => array_merge_return_type(acc, contribution),
+        });
     }
-    Ok(array_merge_return_type(ty1, ty2))
+    Ok(merged.unwrap_or_else(|| PhpType::Array(Box::new(PhpType::Void))))
+}
+
+/// Returns the per-element merge contribution of a spread source `array_merge(...$xs)`.
+///
+/// `...$xs` spreads `$xs`'s elements as successive merge operands, so a source typed
+/// `array<array<T>>` contributes `array<T>` (one representative inner array) to the fold.
+/// A `Mixed` (or Mixed-keyed) source contributes `Mixed` — the runtime-trust posture, matching
+/// a Mixed positional operand. A source that is statically a non-array, non-Mixed value is
+/// rejected: it cannot be spread into array_merge.
+fn array_merge_spread_contribution(
+    spread_ty: PhpType,
+    span: crate::span::Span,
+) -> Result<PhpType, CompileError> {
+    match spread_ty {
+        PhpType::Array(elem) => Ok((*elem).clone()),
+        PhpType::AssocArray { value, .. } => Ok((*value).clone()),
+        PhpType::Mixed => Ok(PhpType::Mixed),
+        _ => Err(CompileError::new(
+            span,
+            "array_merge() spread argument must be an array of arrays",
+        )),
+    }
 }
 
 /// Lowers an `array_merge` call by delegating to the shared array-merge emitter.

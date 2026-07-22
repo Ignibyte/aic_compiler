@@ -2151,6 +2151,9 @@ fn lower_function_call(ctx: &mut LoweringContext<'_, '_>, name: &Name, args: &[E
     if let Some(value) = lower_static_is_callable(ctx, canonical, args, expr) {
         return value;
     }
+    if let Some(value) = lower_variadic_array_merge(ctx, canonical, args, expr) {
+        return value;
+    }
     let sig = call_signature(ctx, canonical, args);
     let is_extern = ctx.extern_functions.contains_key(canonical);
     let is_user_function = ctx.functions.contains_key(canonical);
@@ -4576,6 +4579,256 @@ fn lower_array_merge_args(
         b.value
     };
     vec![a_value, b_value]
+}
+
+/// Lowers the PHP-variadic `array_merge()` call forms the binary backend emitter cannot represent:
+/// the 0/1/N≥3 positional-array fold and the runtime spread `array_merge(...$xs)`. Both reuse the
+/// verified 2-arg merge primitive (correct string-key-overwrite / int-key-renumber semantics) rather
+/// than a bespoke append, composed in EIR. The 2-arg positional form (no spread) is deliberately
+/// left to the existing binary path so it stays byte-identical (the regression gate). Returns `None`
+/// for that form, for any name other than `array_merge`, for named args, and for spread shapes other
+/// than a single trailing spread.
+fn lower_variadic_array_merge(
+    ctx: &mut LoweringContext<'_, '_>,
+    name: &str,
+    args: &[Expr],
+    expr: &Expr,
+) -> Option<LoweredValue> {
+    if php_symbol_key(name.trim_start_matches('\\')) != "array_merge" {
+        return None;
+    }
+    if crate::types::call_args::has_named_args(args) {
+        return None;
+    }
+    if args.iter().any(is_spread_arg) {
+        // Only the single trailing spread form `array_merge(...$xs)` folds at runtime here; other
+        // spread shapes fall through to the existing generic call path.
+        if let [only] = args {
+            if let ExprKind::Spread(inner) = &only.kind {
+                return Some(lower_array_merge_spread(ctx, inner, expr.span));
+            }
+        }
+        return None;
+    }
+    // Positional-only. The 2-arg form stays on the byte-identical binary path.
+    if args.len() == 2 {
+        return None;
+    }
+    Some(lower_array_merge_positional_fold(ctx, args, expr.span))
+}
+
+/// Emits an empty indexed array typed `array<elem_ty>` (an `Op::ArrayNew` with zero capacity).
+fn emit_empty_indexed_array(
+    ctx: &mut LoweringContext<'_, '_>,
+    elem_ty: PhpType,
+    span: Span,
+) -> LoweredValue {
+    ctx.emit_value(
+        Op::ArrayNew,
+        Vec::new(),
+        Some(Immediate::Capacity(0)),
+        PhpType::Array(Box::new(elem_ty)),
+        Op::ArrayNew.default_effects(),
+        Some(span),
+    )
+}
+
+/// Unboxes a `Mixed`/`Union` operand to a concrete `array<mixed>` at the runtime-trust seam so the
+/// binary merge emitter (and `ArrayLen`/`ArrayGet`) see a `Heap(Array)`, not a `Heap(Mixed)`. A value
+/// already typed as an array is returned unchanged. Same posture as `lower_array_merge_args` uses for
+/// a Mixed 2-arg operand (e.g. an `array_map(...)` result the checker could only type as `array`).
+fn ensure_array_merge_operand(
+    ctx: &mut LoweringContext<'_, '_>,
+    value: crate::ir::ValueId,
+    span: Span,
+) -> crate::ir::ValueId {
+    if matches!(
+        ctx.builder.value_php_type(value).codegen_repr(),
+        PhpType::Mixed | PhpType::Union(_)
+    ) {
+        let lowered = LoweredValue {
+            value,
+            ir_type: IrType::Heap(IrHeapKind::Mixed),
+        };
+        return coerce_mixed_operand_to_array(
+            ctx,
+            lowered,
+            PhpType::Array(Box::new(PhpType::Mixed)),
+            span,
+        );
+    }
+    value
+}
+
+/// Emits one 2-argument `array_merge(a, b)` builtin call, reusing the binary backend emitter. Each
+/// operand is unboxed to an array if the checker could only type it as `Mixed`. The accumulator `a`
+/// carries the running element type, so the result adopts `a`'s type (the backend re-derives the
+/// concrete merge helper from both operands independently).
+fn emit_binary_array_merge(
+    ctx: &mut LoweringContext<'_, '_>,
+    a: crate::ir::ValueId,
+    b: crate::ir::ValueId,
+    span: Span,
+) -> LoweredValue {
+    let a = ensure_array_merge_operand(ctx, a, span);
+    let b = ensure_array_merge_operand(ctx, b, span);
+    let result_ty = ctx.builder.value_php_type(a);
+    emit_builtin_call_value(ctx, "array_merge", vec![a, b], result_ty, span)
+}
+
+/// Returns the element type carried by an indexed or associative array type (`Mixed` otherwise).
+fn array_merge_element_type(ty: &PhpType) -> PhpType {
+    match ty.codegen_repr() {
+        PhpType::Array(elem) => (*elem).clone(),
+        PhpType::AssocArray { value, .. } => (*value).clone(),
+        _ => PhpType::Mixed,
+    }
+}
+
+/// Left-folds `array_merge()` over 0/1/N≥3 positional array operands using the binary primitive.
+/// Zero operands yield the empty indexed array; one operand renumbers its integer keys by merging
+/// it with an empty array of its own element type; N operands chain the 2-arg merge left to right.
+fn lower_array_merge_positional_fold(
+    ctx: &mut LoweringContext<'_, '_>,
+    args: &[Expr],
+    span: Span,
+) -> LoweredValue {
+    let Some((first, rest)) = args.split_first() else {
+        return emit_empty_indexed_array(ctx, PhpType::Void, span);
+    };
+    let acc = lower_expr(ctx, first);
+    if rest.is_empty() {
+        // `array_merge($a)` renumbers $a's integer keys — merge($a, []) with a same-typed empty.
+        let elem = array_merge_element_type(&ctx.builder.value_php_type(acc.value));
+        let empty = emit_empty_indexed_array(ctx, elem, span);
+        return emit_binary_array_merge(ctx, acc.value, empty.value, span);
+    }
+    let mut acc = acc;
+    for arg in rest {
+        let operand = lower_expr(ctx, arg);
+        acc = emit_binary_array_merge(ctx, acc.value, operand.value, span);
+    }
+    acc
+}
+
+/// Lowers the runtime spread `array_merge(...$xs)` as an EIR loop folding each element of `$xs`
+/// (an `array<array<T>>`) through the binary merge primitive into an accumulator. The spread length
+/// is runtime data, so this is a genuine loop — the accumulator is threaded as a loop-carried block
+/// parameter. The result type is the flattened `array<T>` (not the outer `array<array<T>>`).
+fn lower_array_merge_spread(
+    ctx: &mut LoweringContext<'_, '_>,
+    inner_expr: &Expr,
+    span: Span,
+) -> LoweredValue {
+    let outer_raw = lower_expr(ctx, inner_expr);
+    // The spread source may be typed `Mixed` (e.g. an `array_map(...)` result the checker could only
+    // type as `array`); unbox it so `ArrayLen`/`ArrayGet` operate on a `Heap(Array)`.
+    let outer_value = ensure_array_merge_operand(ctx, outer_raw.value, span);
+    let outer_ty = ctx.builder.value_php_type(outer_value).codegen_repr();
+    let inner_ty = array_merge_element_type(&outer_ty);
+    let flat_elem = array_merge_element_type(&inner_ty);
+    let acc_php = PhpType::Array(Box::new(flat_elem));
+    let acc_ir = IrType::Heap(IrHeapKind::Array);
+
+    let len = ctx.emit_value(
+        Op::ArrayLen,
+        vec![outer_value],
+        None,
+        PhpType::Int,
+        Op::ArrayLen.default_effects(),
+        Some(span),
+    );
+    let seed = ctx.emit_value(
+        Op::ArrayNew,
+        Vec::new(),
+        Some(Immediate::Capacity(0)),
+        acc_php.clone(),
+        Op::ArrayNew.default_effects(),
+        Some(span),
+    );
+    let zero = emit_i64_at_span(ctx, 0, span);
+
+    let header = ctx.builder.create_named_block(
+        "array_merge.spread.next",
+        vec![(IrType::I64, PhpType::Int), (acc_ir, acc_php.clone())],
+    );
+    let body = ctx.builder.create_named_block("array_merge.spread.body", Vec::new());
+    let exit = ctx
+        .builder
+        .create_named_block("array_merge.spread.exit", vec![(acc_ir, acc_php.clone())]);
+    ctx.builder.terminate(Terminator::Br {
+        target: header,
+        args: vec![zero.value, seed.value],
+    });
+
+    ctx.builder.position_at_end(header);
+    let index = ctx.builder.block_param(header, 0);
+    let acc = ctx.builder.block_param(header, 1);
+    let has_next = ctx.emit_value(
+        Op::ICmp,
+        vec![index, len.value],
+        Some(Immediate::CmpPredicate(CmpPredicate::Slt)),
+        PhpType::Bool,
+        Op::ICmp.default_effects(),
+        Some(span),
+    );
+    ctx.builder.terminate(Terminator::CondBr {
+        cond: has_next.value,
+        then_target: body,
+        then_args: Vec::new(),
+        else_target: exit,
+        else_args: vec![acc],
+    });
+
+    ctx.builder.position_at_end(body);
+    let inner = ctx.emit_value(
+        Op::ArrayGet,
+        vec![outer_value, index],
+        None,
+        inner_ty,
+        Op::ArrayGet.default_effects(),
+        Some(span),
+    );
+    let merged = emit_binary_array_merge(ctx, acc, inner.value, span);
+    // The binary merge produced an independent array holding owned copies of `acc`'s elements, so the
+    // superseded accumulator (the empty seed on the first iteration, a prior merge result after) is
+    // dead — release it to avoid accumulating one leaked intermediate array per spread element. The
+    // final accumulator reaches the exit block unreleased (it is the result).
+    crate::ir_lower::ownership::release_if_owned(
+        ctx,
+        LoweredValue {
+            value: acc,
+            ir_type: acc_ir,
+        },
+        Some(span),
+    );
+    let one = emit_i64_at_span(ctx, 1, span);
+    let next = ctx.emit_value(
+        Op::IAdd,
+        vec![index, one.value],
+        None,
+        PhpType::Int,
+        Op::IAdd.default_effects(),
+        Some(span),
+    );
+    ctx.builder.terminate(Terminator::Br {
+        target: header,
+        args: vec![next.value, merged.value],
+    });
+
+    ctx.builder.position_at_end(exit);
+    let result = ctx.builder.block_param(exit, 0);
+    let outer_owned = LoweredValue {
+        value: outer_value,
+        ir_type: IrType::Heap(IrHeapKind::Array),
+    };
+    if ctx.value_is_owning_temporary(outer_owned) {
+        crate::ir_lower::ownership::release_if_owned(ctx, outer_owned, Some(span));
+    }
+    LoweredValue {
+        value: result,
+        ir_type: acc_ir,
+    }
 }
 
 /// Picks the array type a Mixed `array_merge` operand is coerced to: a concrete indexed-array
