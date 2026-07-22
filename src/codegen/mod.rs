@@ -98,6 +98,18 @@ impl CodegenIrError {
             message: format!("EIR backend missing {} with id {}", kind, raw),
         }
     }
+
+    /// Annotates a location-less backend error with the function or method it
+    /// occurred in, so a survey/CLI failure names its owner instead of only the
+    /// unsupported shape. The unsupported-feature prefix stays at the front (the
+    /// survey clusters on it); the owner is appended. Idempotent — the innermost
+    /// (first) context wins if the error is annotated more than once.
+    pub(super) fn in_function(mut self, name: &str) -> Self {
+        if !self.message.contains(" [in ") {
+            self.message = format!("{} [in {}]", self.message, name);
+        }
+        self
+    }
 }
 
 impl fmt::Display for CodegenIrError {

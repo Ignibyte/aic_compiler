@@ -70,13 +70,16 @@ pub(super) fn emit_module(
         .iter()
         .filter(|function| !is_main(function))
     {
-        emit_user_function(module, function, emitter, data, regalloc_linear)?;
+        emit_user_function(module, function, emitter, data, regalloc_linear)
+            .map_err(|err| err.in_function(&function.name))?;
     }
     for method in &module.class_methods {
-        emit_class_method(module, method, emitter, data, regalloc_linear)?;
+        emit_class_method(module, method, emitter, data, regalloc_linear)
+            .map_err(|err| err.in_function(&method.name))?;
     }
     for closure in &module.closures {
-        emit_user_function(module, closure, emitter, data, regalloc_linear)?;
+        emit_user_function(module, closure, emitter, data, regalloc_linear)
+            .map_err(|err| err.in_function(&closure.name))?;
     }
     emit_eir_fiber_wrappers(module, emitter);
     if matches!(emit, Emit::Cdylib) {
@@ -97,7 +100,8 @@ pub(super) fn emit_module(
         requires_elephc_tls,
         regalloc_linear,
         web,
-    )?;
+    )
+    .map_err(|err| err.in_function(&main.name))?;
     // Generate the per-request reset routine only for `--web`, and only after the
     // handler body is emitted so every function static local (including any in the
     // main body) has been recorded into `data`. The handler prologue's
