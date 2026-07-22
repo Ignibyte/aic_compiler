@@ -1852,18 +1852,19 @@ pub(crate) fn lower_array_merge_recursive(
 
 /// Returns the scalar callback element type for an indexed-array predicate/comparator builtin.
 ///
-/// The `__rt_array_find_any_all` / `__rt_array_udiff_uintersect` runtimes load each element as a
-/// single 8-byte word and pass it in an integer argument register, so only `int`/`bool` indexed
-/// arrays are supported (float elements would need the float register file).
-fn predicate_callback_element_type(ty: PhpType, name: &str) -> Result<PhpType> {
+/// Int/Bool are raw 8-byte scalars and Mixed is a single 8-byte boxed-cell pointer; each is passed
+/// to the callback as one 8-byte element handle. `allow_str` additionally accepts `Str` (ptr+len,
+/// 16-byte) elements: `__rt_array_find_any_all` dispatches on the array's element width and passes
+/// the string as a `(ptr, len)` register pair, mirroring `__rt_array_filter_refcounted`. The
+/// two-array comparator runtime `__rt_array_udiff_uintersect` has no such width path, so it passes
+/// `allow_str = false` and keeps rejecting string elements.
+fn predicate_callback_element_type(ty: PhpType, name: &str, allow_str: bool) -> Result<PhpType> {
     match ty.codegen_repr() {
         PhpType::Array(elem) => {
             let elem = elem.codegen_repr();
-            // Int/Bool are raw 8-byte scalars and Mixed is a single 8-byte boxed-cell pointer; each
-            // is passed to the predicate callback as one 8-byte element handle (the callback receives
-            // the boxed Mixed and compares/uses it dynamically). Multi-word elements (Str's ptr+len)
-            // are not yet handled.
-            if matches!(elem, PhpType::Int | PhpType::Bool | PhpType::Mixed) {
+            if matches!(elem, PhpType::Int | PhpType::Bool | PhpType::Mixed)
+                || (allow_str && elem == PhpType::Str)
+            {
                 Ok(elem)
             } else {
                 Err(CodegenIrError::unsupported(format!(
@@ -2005,7 +2006,7 @@ fn lower_array_predicate_builtin(
     super::ensure_arg_count(inst, name, 2)?;
     let array = expect_operand(inst, 0)?;
     let callback = expect_operand(inst, 1)?;
-    let elem_ty = predicate_callback_element_type(ctx.value_php_type(array)?, name)?;
+    let elem_ty = predicate_callback_element_type(ctx.value_php_type(array)?, name, true)?;
     let source_arg_ty = PhpType::Array(Box::new(elem_ty.clone()));
     lower_single_array_callback_builtin(
         ctx,
@@ -2105,8 +2106,8 @@ fn lower_two_array_comparator_builtin(
     let arr1 = expect_operand(inst, 0)?;
     let arr2 = expect_operand(inst, 1)?;
     let comparator = expect_operand(inst, 2)?;
-    let elem_ty = predicate_callback_element_type(ctx.value_php_type(arr1)?, name)?;
-    predicate_callback_element_type(ctx.value_php_type(arr2)?, name)?;
+    let elem_ty = predicate_callback_element_type(ctx.value_php_type(arr1)?, name, false)?;
+    predicate_callback_element_type(ctx.value_php_type(arr2)?, name, false)?;
     // The comparator returns an int (negative/zero/positive); the builtin's own array result type
     // is taken from `inst.result_php_type` at `store_if_result`.
     let comparator_return_ty = PhpType::Int;

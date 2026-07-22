@@ -6,7 +6,11 @@
 //! - `crate::codegen_support::runtime::emitters::emit_runtime()` via `crate::codegen_support::runtime::arrays`.
 //!
 //! Key details:
-//! - mode 0 = find (boxed first matching element or null), 1 = any (bool), 2 = all (bool); scalar elements only (8-byte).
+//! - mode 0 = find (boxed first matching element or null), 1 = any (bool), 2 = all (bool).
+//! - The array header's element-width field (`[array + 16]`) selects the element ABI: width 8 =
+//!   raw scalar / boxed-Mixed pointer passed in one integer register; width 16 = `Str` passed as a
+//!   `(ptr, len)` register pair, mirroring `__rt_array_filter_refcounted`. A found string is boxed
+//!   via `__rt_mixed_from_value` (tag 1), which persists its own copy of the payload.
 
 use crate::codegen_support::emit::Emitter;
 use crate::codegen_support::platform::Arch;
@@ -18,7 +22,8 @@ use crate::codegen_support::platform::Arch;
 /// mode 0 (find) returns the first element where the callback is truthy, boxed as a Mixed
 /// value using the array value_type, or a boxed null when none match. mode 1 (any) returns 1
 /// if any element is truthy. mode 2 (all) returns 1 only if every element is truthy. The
-/// callback receives `(element [, env])`; element scalars are read as a single word.
+/// callback receives `(element [, env])` for scalar arrays and `(ptr, len [, env])` for string
+/// arrays, dispatched on the array's element-width header.
 pub fn emit_array_find_any_all(emitter: &mut Emitter) {
     if emitter.target.arch == Arch::X86_64 {
         emit_array_find_any_all_linux_x86_64(emitter);
@@ -28,17 +33,19 @@ pub fn emit_array_find_any_all(emitter: &mut Emitter) {
     emitter.blank();
     emitter.comment("--- runtime: array_find_any_all ---");
     emitter.label_global("__rt_array_find_any_all");
-    emitter.instruction("sub sp, sp, #80");                                     // allocate the find/any/all stack frame
-    emitter.instruction("stp x29, x30, [sp, #64]");                             // save frame pointer and return address
-    emitter.instruction("add x29, sp, #64");                                    // set up the new frame pointer
-    emitter.instruction("stp x19, x20, [sp, #48]");                             // save callee-saved callback address and environment
-    emitter.instruction("str x21, [sp, #40]");                                  // save callee-saved element register
+    emitter.instruction("sub sp, sp, #96");                                     // allocate the find/any/all stack frame (grown for the element-width and saved string-length slots)
+    emitter.instruction("stp x29, x30, [sp, #80]");                             // save frame pointer and return address
+    emitter.instruction("add x29, sp, #80");                                    // set up the new frame pointer
+    emitter.instruction("stp x19, x20, [sp, #64]");                             // save callee-saved callback address and environment
+    emitter.instruction("str x21, [sp, #56]");                                  // save callee-saved element/pointer register
     emitter.instruction("mov x19, x0");                                         // x19 = callback address (callee-saved)
     emitter.instruction("mov x20, x2");                                         // x20 = optional environment (callee-saved)
     emitter.instruction("str x1, [sp, #0]");                                    // save the array pointer
     emitter.instruction("str x3, [sp, #8]");                                    // save the mode selector
     emitter.instruction("ldr x9, [x1]");                                        // load the array length
     emitter.instruction("str x9, [sp, #16]");                                   // save the array length
+    emitter.instruction("ldr x9, [x1, #16]");                                   // load the element width (8 = scalar/pointer, 16 = string ptr+len)
+    emitter.instruction("str x9, [sp, #40]");                                   // save the element width for per-element ABI dispatch
     emitter.instruction("ldr x9, [x1, #-8]");                                   // load the uniform heap-kind header word
     emitter.instruction("lsr x9, x9, #8");                                      // shift the packed value_type into the low bits
     emitter.instruction("and x9, x9, #0x7f");                                   // isolate the indexed-array value_type (also the Mixed tag)
@@ -50,11 +57,26 @@ pub fn emit_array_find_any_all(emitter: &mut Emitter) {
     emitter.instruction("cmp x10, x9");                                         // has the index reached the length?
     emitter.instruction("b.ge __rt_array_find_any_all_end");                    // no element matched / all visited
     emitter.instruction("ldr x1, [sp, #0]");                                    // reload the array pointer
+    emitter.instruction("ldr x11, [sp, #40]");                                  // reload the element width
+    emitter.instruction("cmp x11, #16");                                        // does this array hold string ptr/len slots?
+    emitter.instruction("b.eq __rt_array_find_any_all_load_str");               // use the string element ABI for 16-byte elements
     emitter.instruction("add x1, x1, #24");                                     // skip the 24-byte indexed-array header
     emitter.instruction("ldr x21, [x1, x10, lsl #3]");                          // load element[i] into the callee-saved element register
     emitter.instruction("mov x0, x21");                                         // pass the element as the first callback argument
     emitter.instruction("cbz x20, __rt_array_find_any_all_call");               // no environment keeps the one-argument callback ABI
     emitter.instruction("mov x1, x20");                                         // pass the environment as the second callback argument
+    emitter.instruction("b __rt_array_find_any_all_call");                      // dispatch to the shared callback branch
+    emitter.label("__rt_array_find_any_all_load_str");
+    emitter.instruction("add x1, x1, #24");                                     // skip the 24-byte indexed-array header
+    emitter.instruction("lsl x12, x10, #4");                                    // compute the 16-byte string-slot byte offset
+    emitter.instruction("add x12, x1, x12");                                    // compute the address of the current string slot
+    emitter.instruction("ldr x21, [x12]");                                      // load the string pointer into the callee-saved register (survives the callback for find boxing)
+    emitter.instruction("ldr x13, [x12, #8]");                                  // load the string length
+    emitter.instruction("str x13, [sp, #48]");                                  // save the string length across the callback for find boxing
+    emitter.instruction("mov x0, x21");                                         // pass the string pointer as the first callback argument
+    emitter.instruction("mov x1, x13");                                         // pass the string length as the second callback argument
+    emitter.instruction("cbz x20, __rt_array_find_any_all_call");               // no environment keeps the two-argument string callback ABI
+    emitter.instruction("mov x2, x20");                                         // pass the environment as the third callback argument after the ptr/len pair
     emitter.label("__rt_array_find_any_all_call");
     emitter.instruction("blr x19");                                             // call the predicate callback; truthy result in x0
     emitter.instruction("ldr x11, [sp, #8]");                                   // reload the mode selector
@@ -68,11 +90,20 @@ pub fn emit_array_find_any_all(emitter: &mut Emitter) {
     emitter.instruction("b __rt_array_find_any_all_next");                      // any mode: keep checking
     emitter.label("__rt_array_find_any_all_find");
     emitter.instruction("cbz x0, __rt_array_find_any_all_next");                // find mode: skip falsy elements
+    emitter.instruction("ldr x11, [sp, #40]");                                  // reload the element width to box the found element
+    emitter.instruction("cmp x11, #16");                                        // is the found element a string ptr/len slot?
+    emitter.instruction("b.eq __rt_array_find_any_all_find_str");               // box the found string via its ptr/len pair
     emitter.instruction("ldr x0, [sp, #24]");                                   // value_type tag for boxing the found element
     emitter.instruction("mov x1, x21");                                         // found element low word
     emitter.instruction("mov x2, #0");                                          // found element high word unused
     emitter.instruction("bl __rt_mixed_from_value");                            // box the found element as a Mixed value
     emitter.instruction("b __rt_array_find_any_all_ret");                       // return the boxed element
+    emitter.label("__rt_array_find_any_all_find_str");
+    emitter.instruction("ldr x0, [sp, #24]");                                   // value_type tag for boxing the found string (tag 1)
+    emitter.instruction("mov x1, x21");                                         // found string pointer
+    emitter.instruction("ldr x2, [sp, #48]");                                   // found string length
+    emitter.instruction("bl __rt_mixed_from_value");                            // box the found string (persists its own copy of the payload)
+    emitter.instruction("b __rt_array_find_any_all_ret");                       // return the boxed string
     emitter.label("__rt_array_find_any_all_next");
     emitter.instruction("ldr x10, [sp, #32]");                                  // reload the index
     emitter.instruction("add x10, x10, #1");                                    // advance to the next element
@@ -99,10 +130,10 @@ pub fn emit_array_find_any_all(emitter: &mut Emitter) {
     emitter.label("__rt_array_find_any_all_zero");
     emitter.instruction("mov x0, #0");                                          // boolean result: false
     emitter.label("__rt_array_find_any_all_ret");
-    emitter.instruction("ldr x21, [sp, #40]");                                  // restore the callee-saved element register
-    emitter.instruction("ldp x19, x20, [sp, #48]");                             // restore callee-saved callback address and environment
-    emitter.instruction("ldp x29, x30, [sp, #64]");                             // restore frame pointer and return address
-    emitter.instruction("add sp, sp, #80");                                     // deallocate the stack frame
+    emitter.instruction("ldr x21, [sp, #56]");                                  // restore the callee-saved element/pointer register
+    emitter.instruction("ldp x19, x20, [sp, #64]");                             // restore callee-saved callback address and environment
+    emitter.instruction("ldp x29, x30, [sp, #80]");                             // restore frame pointer and return address
+    emitter.instruction("add sp, sp, #96");                                     // deallocate the stack frame
     emitter.instruction("ret");                                                 // return the result in x0
 }
 
@@ -116,15 +147,17 @@ fn emit_array_find_any_all_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer
     emitter.instruction("mov rbp, rsp");                                        // establish a stable frame base
     emitter.instruction("push r12");                                            // preserve the callback address across the loop
-    emitter.instruction("push r13");                                            // preserve the element register across the callback
+    emitter.instruction("push r13");                                            // preserve the element/pointer register across the callback
     emitter.instruction("push r14");                                            // preserve the environment across the callback
-    emitter.instruction("sub rsp, 40");                                         // reserve local slots for array/mode/length/value_type/index
+    emitter.instruction("sub rsp, 56");                                         // reserve local slots for array/mode/length/value_type/index/element-width/string-length
     emitter.instruction("mov r12, rdi");                                        // r12 = callback address (callee-saved)
     emitter.instruction("mov r14, rdx");                                        // r14 = optional environment (callee-saved)
     emitter.instruction("mov QWORD PTR [rbp - 32], rsi");                       // save the array pointer
     emitter.instruction("mov QWORD PTR [rbp - 40], rcx");                       // save the mode selector
     emitter.instruction("mov rax, QWORD PTR [rsi]");                            // load the array length
     emitter.instruction("mov QWORD PTR [rbp - 48], rax");                       // save the array length
+    emitter.instruction("mov rax, QWORD PTR [rsi + 16]");                       // load the element width (8 = scalar/pointer, 16 = string ptr+len)
+    emitter.instruction("mov QWORD PTR [rbp - 72], rax");                       // save the element width for per-element ABI dispatch
     emitter.instruction("mov rax, QWORD PTR [rsi - 8]");                        // load the uniform heap-kind header word
     emitter.instruction("shr rax, 8");                                          // shift the packed value_type into the low bits
     emitter.instruction("and rax, 127");                                        // isolate the indexed-array value_type (also the Mixed tag)
@@ -135,11 +168,26 @@ fn emit_array_find_any_all_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("cmp rax, QWORD PTR [rbp - 48]");                       // has the index reached the length?
     emitter.instruction("jge __rt_array_find_any_all_end");                     // no element matched / all visited
     emitter.instruction("mov r10, QWORD PTR [rbp - 32]");                       // reload the array pointer
+    emitter.instruction("cmp QWORD PTR [rbp - 72], 16");                        // does this array hold string ptr/len slots?
+    emitter.instruction("je __rt_array_find_any_all_load_str");                 // use the string element ABI for 16-byte elements
     emitter.instruction("mov r13, QWORD PTR [r10 + rax * 8 + 24]");             // load element[i] into the callee-saved element register
     emitter.instruction("mov rdi, r13");                                        // pass the element as the first callback argument
     emitter.instruction("test r14, r14");                                       // is an environment present?
     emitter.instruction("jz __rt_array_find_any_all_call");                     // no environment keeps the one-argument callback ABI
     emitter.instruction("mov rsi, r14");                                        // pass the environment as the second callback argument
+    emitter.instruction("jmp __rt_array_find_any_all_call");                    // dispatch to the shared callback branch
+    emitter.label("__rt_array_find_any_all_load_str");
+    emitter.instruction("mov rcx, rax");                                        // copy the logical index before scaling to a string-slot offset
+    emitter.instruction("shl rcx, 4");                                          // convert the index into a 16-byte string-slot offset
+    emitter.instruction("lea rcx, [r10 + rcx + 24]");                           // compute the address of the current string slot
+    emitter.instruction("mov r13, QWORD PTR [rcx]");                            // load the string pointer into the callee-saved register (survives the callback for find boxing)
+    emitter.instruction("mov r11, QWORD PTR [rcx + 8]");                        // load the string length
+    emitter.instruction("mov QWORD PTR [rbp - 80], r11");                       // save the string length across the callback for find boxing
+    emitter.instruction("mov rdi, r13");                                        // pass the string pointer as the first callback argument
+    emitter.instruction("mov rsi, r11");                                        // pass the string length as the second callback argument
+    emitter.instruction("test r14, r14");                                       // is an environment present?
+    emitter.instruction("jz __rt_array_find_any_all_call");                     // no environment keeps the two-argument string callback ABI
+    emitter.instruction("mov rdx, r14");                                        // pass the environment as the third callback argument after the ptr/len pair
     emitter.label("__rt_array_find_any_all_call");
     emitter.instruction("call r12");                                            // call the predicate callback; truthy result in rax
     emitter.instruction("mov r11, QWORD PTR [rbp - 40]");                       // reload the mode selector
@@ -157,11 +205,19 @@ fn emit_array_find_any_all_linux_x86_64(emitter: &mut Emitter) {
     emitter.label("__rt_array_find_any_all_find");
     emitter.instruction("test rax, rax");                                       // find mode: is this element truthy?
     emitter.instruction("jz __rt_array_find_any_all_next");                     // find mode: skip falsy elements
+    emitter.instruction("cmp QWORD PTR [rbp - 72], 16");                        // is the found element a string ptr/len slot?
+    emitter.instruction("je __rt_array_find_any_all_find_str");                 // box the found string via its ptr/len pair
     emitter.instruction("mov rax, QWORD PTR [rbp - 56]");                       // value_type tag for boxing the found element
     emitter.instruction("mov rdi, r13");                                        // found element low word
     emitter.instruction("xor esi, esi");                                        // found element high word unused
     emitter.instruction("call __rt_mixed_from_value");                          // box the found element as a Mixed value
     emitter.instruction("jmp __rt_array_find_any_all_ret");                     // return the boxed element
+    emitter.label("__rt_array_find_any_all_find_str");
+    emitter.instruction("mov rax, QWORD PTR [rbp - 56]");                       // value_type tag for boxing the found string (tag 1)
+    emitter.instruction("mov rdi, r13");                                        // found string pointer
+    emitter.instruction("mov rsi, QWORD PTR [rbp - 80]");                       // found string length
+    emitter.instruction("call __rt_mixed_from_value");                          // box the found string (persists its own copy of the payload)
+    emitter.instruction("jmp __rt_array_find_any_all_ret");                     // return the boxed string
     emitter.label("__rt_array_find_any_all_next");
     emitter.instruction("mov rax, QWORD PTR [rbp - 64]");                       // reload the index
     emitter.instruction("add rax, 1");                                          // advance to the next element
@@ -186,11 +242,10 @@ fn emit_array_find_any_all_linux_x86_64(emitter: &mut Emitter) {
     emitter.label("__rt_array_find_any_all_zero");
     emitter.instruction("xor eax, eax");                                        // boolean result: false
     emitter.label("__rt_array_find_any_all_ret");
-    emitter.instruction("add rsp, 40");                                         // release the local slots
+    emitter.instruction("add rsp, 56");                                         // release the local slots
     emitter.instruction("pop r14");                                             // restore the environment register
-    emitter.instruction("pop r13");                                             // restore the element register
+    emitter.instruction("pop r13");                                             // restore the element/pointer register
     emitter.instruction("pop r12");                                             // restore the callback register
     emitter.instruction("pop rbp");                                             // restore the caller frame pointer
     emitter.instruction("ret");                                                 // return the result in rax
 }
-
