@@ -77,6 +77,8 @@ pub fn emit_implode(emitter: &mut Emitter) {
     emitter.instruction("ldr x13, [sp, #40]");                                  // reload the indexed-array value_type tag for this element
     emitter.instruction("cmp x13, #7");                                         // are elements boxed Mixed cells?
     emitter.instruction("b.eq __rt_implode_mixed_elem");                        // mixed slots must be cast to string before copying
+    emitter.instruction("cmp x13, #0");                                         // #688: are elements raw integers (value_type 0)? a boxed-Mixed operand can unbox to an int-element array
+    emitter.instruction("b.eq __rt_implode_ielem");                             // integer slots must be converted with __rt_itoa before copying
     emitter.instruction("lsl x12, x11, #4");                                    // compute byte offset: index * 16
     emitter.instruction("add x12, x3, x12");                                    // add to array base
     emitter.instruction("add x12, x12, #24");                                   // skip 24-byte array header
@@ -96,6 +98,20 @@ pub fn emit_implode(emitter: &mut Emitter) {
     emitter.instruction("ldr x9, [sp, #56]");                                   // restore destination cursor after the mixed string cast
     emitter.instruction("ldr x10, [sp, #64]");                                  // restore array length after the mixed string cast
     emitter.instruction("ldr x11, [sp, #72]");                                  // restore loop index after the mixed string cast
+    emitter.instruction("b __rt_implode_copy_value");                           // copy the cast Mixed string payload into the result buffer
+
+    emitter.label("__rt_implode_ielem");                                        // #688: unbox path — the operand was a boxed Mixed wrapping a raw int-element (value_type 0) array
+    emitter.instruction("lsl x12, x11, #3");                                    // compute byte offset: index * 8 for integer slots
+    emitter.instruction("add x12, x3, x12");                                    // add the integer slot offset to the array base
+    emitter.instruction("add x12, x12, #24");                                   // skip the 24-byte array header
+    emitter.instruction("ldr x0, [x12]");                                       // load the raw integer payload into the integer-to-string helper input register
+    emitter.instruction("str x9, [sp, #56]");                                   // save destination cursor across the integer conversion
+    emitter.instruction("str x10, [sp, #64]");                                  // save array length across the integer conversion
+    emitter.instruction("str x11, [sp, #72]");                                  // save loop index across the integer conversion
+    emitter.instruction("bl __rt_itoa");                                        // convert the integer element to a decimal string -> x1=ptr, x2=len
+    emitter.instruction("ldr x9, [sp, #56]");                                   // restore destination cursor after the integer conversion
+    emitter.instruction("ldr x10, [sp, #64]");                                  // restore array length after the integer conversion
+    emitter.instruction("ldr x11, [sp, #72]");                                  // restore loop index after the integer conversion
 
     // -- copy element bytes to output --
     emitter.label("__rt_implode_copy_value");
@@ -187,6 +203,8 @@ fn emit_implode_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov r11, QWORD PTR [rbp - 56]");                       // reload the current indexed-array loop cursor before locating the next string element slot
     emitter.instruction("cmp QWORD PTR [rbp - 64], 7");                         // are elements boxed Mixed cells?
     emitter.instruction("je __rt_implode_mixed_elem");                          // mixed slots must be cast to string before copying
+    emitter.instruction("cmp QWORD PTR [rbp - 64], 0");                         // #688: are elements raw integers (value_type 0)? a boxed-Mixed operand can unbox to an int-element array
+    emitter.instruction("je __rt_implode_ielem");                              // integer slots must be converted with __rt_itoa before copying
     emitter.instruction("mov rcx, r11");                                        // copy the indexed-array loop cursor before scaling it into a string-slot byte offset
     emitter.instruction("shl rcx, 4");                                          // convert the indexed-array loop cursor into the 16-byte offset of the current string slot
     emitter.instruction("mov r8, QWORD PTR [rbp - 24]");                        // reload the indexed-array pointer before addressing the current string slot
@@ -206,6 +224,18 @@ fn emit_implode_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov r8, rax");                                         // move the cast string pointer into the copy-loop source register
     emitter.instruction("mov r9, rdx");                                         // move the cast string length into the copy-loop counter register
     emitter.instruction("mov r10, QWORD PTR [rbp - 40]");                       // reload the current concat-buffer destination cursor after casting
+    emitter.instruction("jmp __rt_implode_copy");                               // copy the cast Mixed string payload into the result buffer
+
+    emitter.label("__rt_implode_ielem");                                        // #688: unbox path — the operand was a boxed Mixed wrapping a raw int-element (value_type 0) array
+    emitter.instruction("mov rcx, r11");                                        // copy the indexed-array loop cursor before scaling it into an 8-byte integer slot offset
+    emitter.instruction("shl rcx, 3");                                          // convert the indexed-array loop cursor into the 8-byte integer slot offset
+    emitter.instruction("mov r8, QWORD PTR [rbp - 24]");                        // reload the indexed-array pointer before addressing the current integer slot
+    emitter.instruction("lea rcx, [r8 + rcx + 24]");                            // compute the address of the current integer slot after the fixed array header
+    emitter.instruction("mov rax, QWORD PTR [rcx]");                            // load the raw integer payload into the integer-to-string helper input register
+    emitter.instruction("call __rt_itoa");                                      // convert the integer element into a concat-buffer-backed decimal string
+    emitter.instruction("mov r8, rax");                                         // move the decimal string pointer into the copy-loop source register
+    emitter.instruction("mov r9, rdx");                                         // move the decimal string length into the copy-loop counter register
+    emitter.instruction("mov r10, QWORD PTR [rbp - 40]");                       // reload the current concat-buffer destination cursor after the integer conversion
 
     emitter.label("__rt_implode_copy");
     emitter.instruction("test r9, r9");                                         // check whether every element byte has already been copied into the concat buffer

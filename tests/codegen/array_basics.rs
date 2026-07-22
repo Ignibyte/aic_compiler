@@ -222,6 +222,26 @@ echo implode("|", $a);
     assert_eq!(out, "item0|item1|item2|item3|item4|item5|item6|item7|item8|item9");
 }
 
+/// Regression (#688): `implode()` over a boxed-Mixed operand that unboxes to a raw int-element
+/// array segfaulted. `$b` is element 1 of an `Array(Mixed)` obtained by destructuring, so its
+/// static type at the `implode()` call is `Mixed`; codegen selects `__rt_implode`, which handled
+/// only string (value_type 1) and boxed-Mixed (value_type 7) elements. The unboxed int array
+/// (value_type 0) fell through to the string-slot path and read 8-byte integer slots as 16-byte
+/// `{ptr,len}` string slots, dereferencing a raw integer as a pointer. `__rt_implode` now has an
+/// int-element branch that converts each slot via `__rt_itoa`.
+#[test]
+fn test_implode_boxed_mixed_int_array_688() {
+    let out = compile_and_run(
+        r#"<?php
+function pick(array $a): array { return $a; }
+$p = pick(['sql', [1, 2, 3]]);
+[$s, $b] = $p;
+echo $s, ':', implode(',', $b);
+"#,
+    );
+    assert_eq!(out, "sql:1,2,3");
+}
+
 /// Regression guard: an empty `[]` literal that first receives refcounted (object) elements must
 /// also survive growth. Object slots are 8-byte pointers, so the empty `array<never>` buffer is
 /// already the right size and only the string-append path needs the capacity rescale — this test
