@@ -170,7 +170,7 @@ fn test_property_throw_guard_narrowing() {
 
 /// Regression: the POSITIVE `!== null` guard narrows inside its own body.
 ///
-/// This is the shape AIC actually writes — `if ($error !== null) { f($error); }` with a
+/// This is a real-world code shape — `if ($error !== null) { f($error); }` with a
 /// `?string $error` parameter — and before `guard_receiver_and_type` reported comparison
 /// polarity only the early-return form (`if ($x === null) { throw; }`) narrowed. Without it a
 /// `?string` never satisfied a `string` parameter inside its own null check, which is one of
@@ -201,7 +201,7 @@ echo ebranch(null), '|', ebranch('z');
 
 /// Regression: a bare `assert(<guard>)` statement narrows the rest of the scope.
 ///
-/// `hash_file()` returns `string|false`; AIC's AssetHasher asserts it to a string and returns
+/// `hash_file()` returns `string|false`; an asset hasher asserts it to a string and returns
 /// it from a `: string` method. PHP compiles `assert()` out under `zend.assertions=-1`, so this
 /// trusts the developer's contract rather than proving it — the same posture PHPStan takes.
 #[test]

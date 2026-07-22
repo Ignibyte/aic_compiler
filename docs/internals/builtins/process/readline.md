@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/readline.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/readline.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:310](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L310) (`lower_readline`)
+- **Signature**: [`src/builtins/io/readline.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/readline.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:310](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L310) (`lower_readline`)
 - **Function symbol**: `lower_readline()`
 
 

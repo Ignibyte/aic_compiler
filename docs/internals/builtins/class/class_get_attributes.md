@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/class_get_attributes.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/class_get_attributes.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/attributes.rs`:68](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/attributes.rs#L68) (`lower_class_get_attributes`)
+- **Signature**: [`src/builtins/system/class_get_attributes.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/class_get_attributes.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/attributes.rs`:68](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/attributes.rs#L68) (`lower_class_get_attributes`)
 - **Function symbol**: `lower_class_get_attributes()`
 
 

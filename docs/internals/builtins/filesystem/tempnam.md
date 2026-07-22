@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/tempnam.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/tempnam.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4453](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L4453) (`lower_tempnam`)
+- **Signature**: [`src/builtins/io/tempnam.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/tempnam.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4453](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L4453) (`lower_tempnam`)
 - **Function symbol**: `lower_tempnam()`
 
 

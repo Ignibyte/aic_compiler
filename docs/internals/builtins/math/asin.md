@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/math/asin.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/math/asin.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/math/libm.rs`:22](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/math/libm.rs#L22) (`lower_unary_libm`)
+- **Signature**: [`src/builtins/math/asin.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/math/asin.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/math/libm.rs`:22](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/math/libm.rs#L22) (`lower_unary_libm`)
 - **Function symbol**: `lower_unary_libm()`
 
 

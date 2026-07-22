@@ -25,7 +25,7 @@ use super::*;
 /// type hint yields an object type. The call could therefore never lower.
 ///
 /// Because the shared stdlib bundle injects all its functions together, that ONE call made every
-/// program that triggers the prelude fail to compile natively — 114 of 1082 roots in the AIC survey,
+/// program that triggers the prelude fail to compile natively — 114 of 1082 roots in the conformance survey,
 /// the single largest native gap. It is also why `explode`/`strtr`/`arity_ext`/`substr_compare` were
 /// each split into their own one-function preludes purely to avoid dragging this bundle in (see their
 /// module docs).

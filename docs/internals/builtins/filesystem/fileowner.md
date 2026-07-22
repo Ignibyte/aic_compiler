@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/fileowner.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/fileowner.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5492](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L5492) (`lower_fileowner`)
+- **Signature**: [`src/builtins/io/fileowner.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/fileowner.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5492](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L5492) (`lower_fileowner`)
 - **Function symbol**: `lower_fileowner()`
 
 

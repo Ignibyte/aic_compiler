@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/spl/spl_object_id.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/spl/spl_object_id.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/spl.rs`:216](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/spl.rs#L216) (`lower_spl_object_id`)
+- **Signature**: [`src/builtins/spl/spl_object_id.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/spl/spl_object_id.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/spl.rs`:216](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/spl.rs#L216) (`lower_spl_object_id`)
 - **Function symbol**: `lower_spl_object_id()`
 
 

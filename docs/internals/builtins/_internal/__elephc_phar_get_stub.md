@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/__elephc_phar_get_stub.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/__elephc_phar_get_stub.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3873](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L3873) (`lower_elephc_phar_get_stub`)
+- **Signature**: [`src/builtins/io/__elephc_phar_get_stub.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/__elephc_phar_get_stub.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3873](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L3873) (`lower_elephc_phar_get_stub`)
 - **Function symbol**: `lower_elephc_phar_get_stub()`
 
 

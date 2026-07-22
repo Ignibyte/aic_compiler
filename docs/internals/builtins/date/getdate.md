@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/getdate.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/getdate.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:183](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/system.rs#L183) (`lower_getdate`)
+- **Signature**: [`src/builtins/system/getdate.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/getdate.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:183](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/system.rs#L183) (`lower_getdate`)
 - **Function symbol**: `lower_getdate()`
 
 

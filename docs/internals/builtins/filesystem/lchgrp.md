@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/lchgrp.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/lchgrp.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4488](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L4488) (`lower_lchgrp`)
+- **Signature**: [`src/builtins/io/lchgrp.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/lchgrp.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4488](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L4488) (`lower_lchgrp`)
 - **Function symbol**: `lower_lchgrp()`
 
 

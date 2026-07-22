@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/readdir.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/readdir.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3557](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L3557) (`lower_readdir`)
+- **Signature**: [`src/builtins/io/readdir.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/readdir.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3557](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L3557) (`lower_readdir`)
 - **Function symbol**: `lower_readdir()`
 
 

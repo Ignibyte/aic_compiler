@@ -1,6 +1,6 @@
 # DOOM E1M1 — rendered in PHP, compiled to native ARM64
 
-This showcase loads original DOOM WAD files and renders levels in real-time, entirely in PHP compiled to a standalone native binary by [elephc](https://github.com/illegalstudio/elephc).
+This showcase loads original DOOM WAD files and renders levels in real-time, entirely in PHP compiled to a standalone native binary by [elephc](https://github.com/Ignibyte/aic_compiler).
 
 No interpreter. No VM. No runtime dependencies beyond SDL2.
 

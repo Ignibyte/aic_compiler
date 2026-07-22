@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/stream_wrapper_restore.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/stream_wrapper_restore.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:1052](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L1052) (`lower_stream_wrapper_restore`)
+- **Signature**: [`src/builtins/io/stream_wrapper_restore.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/stream_wrapper_restore.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:1052](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L1052) (`lower_stream_wrapper_restore`)
 - **Function symbol**: `lower_stream_wrapper_restore()`
 
 

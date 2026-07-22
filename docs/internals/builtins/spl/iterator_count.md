@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/spl/iterator_count.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/spl/iterator_count.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/spl.rs`:237](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/spl.rs#L237) (`lower_iterator_count`)
+- **Signature**: [`src/builtins/spl/iterator_count.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/spl/iterator_count.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/spl.rs`:237](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/spl.rs#L237) (`lower_iterator_count`)
 - **Function symbol**: `lower_iterator_count()`
 
 

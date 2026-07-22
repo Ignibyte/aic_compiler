@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/array/array_intersect_key.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/array/array_intersect_key.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:903](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L903) (`lower_array_intersect_key`)
+- **Signature**: [`src/builtins/array/array_intersect_key.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/array/array_intersect_key.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:903](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L903) (`lower_array_intersect_key`)
 - **Function symbol**: `lower_array_intersect_key()`
 
 

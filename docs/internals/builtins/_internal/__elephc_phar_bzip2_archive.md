@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/__elephc_phar_bzip2_archive.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/__elephc_phar_bzip2_archive.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4120](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L4120) (`lower_elephc_phar_bzip2_archive`)
+- **Signature**: [`src/builtins/io/__elephc_phar_bzip2_archive.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/__elephc_phar_bzip2_archive.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4120](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L4120) (`lower_elephc_phar_bzip2_archive`)
 - **Function symbol**: `lower_elephc_phar_bzip2_archive()`
 
 

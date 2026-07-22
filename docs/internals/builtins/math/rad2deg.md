@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/math/rad2deg.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/math/rad2deg.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/math/libm.rs`:83](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/math/libm.rs#L83) (`lower_rad2deg`)
+- **Signature**: [`src/builtins/math/rad2deg.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/math/rad2deg.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/math/libm.rs`:83](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/math/libm.rs#L83) (`lower_rad2deg`)
 - **Function symbol**: `lower_rad2deg()`
 
 

@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/types/is_numeric.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/types/is_numeric.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/is_numeric.rs`:22](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/is_numeric.rs#L22) (`lower_is_numeric`)
+- **Signature**: [`src/builtins/types/is_numeric.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/types/is_numeric.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/is_numeric.rs`:22](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/is_numeric.rs#L22) (`lower_is_numeric`)
 - **Function symbol**: `lower_is_numeric()`
 
 

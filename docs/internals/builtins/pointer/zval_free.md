@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/pointers/zval_free.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/pointers/zval_free.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/pointers.rs`:606](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/pointers.rs#L606) (`lower_zval_free`)
+- **Signature**: [`src/builtins/pointers/zval_free.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/pointers/zval_free.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/pointers.rs`:606](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/pointers.rs#L606) (`lower_zval_free`)
 - **Function symbol**: `lower_zval_free()`
 
 

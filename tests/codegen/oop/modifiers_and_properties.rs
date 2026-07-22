@@ -491,8 +491,8 @@ echo (new Plan(static fn (): int => 0))->hasComparator() ? "y" : "n";
 /// Array(Mixed)") and every `foreach` over it yielded Int keys. The push and index-assign paths
 /// already permitted this via `declared_generic_array_can_use_assoc_storage`; plain-assign did not.
 ///
-/// This is the idiomatic "build a map locally, then assign it" constructor (AIC's
-/// AdminResourceRegistry). NOTE: `--check` passed both before and after the fix — only a native
+/// This is the idiomatic "build a map locally, then assign it" constructor (an
+/// admin-resource registry). NOTE: `--check` passed both before and after the fix — only a native
 /// compile+run surfaces it, which is why this is a codegen test and not a checker test.
 #[test]
 fn test_declared_generic_array_property_adopts_assoc_storage_on_plain_assign() {

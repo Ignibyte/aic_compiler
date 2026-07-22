@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/callables/is_a.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/callables/is_a.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/types.rs`:369](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/types.rs#L369) (`lower_is_a_relation`)
+- **Signature**: [`src/builtins/callables/is_a.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/callables/is_a.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/types.rs`:369](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/types.rs#L369) (`lower_is_a_relation`)
 - **Function symbol**: `lower_is_a_relation()`
 
 

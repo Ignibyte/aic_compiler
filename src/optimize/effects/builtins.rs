@@ -178,7 +178,7 @@ pub(in crate::optimize) fn is_pure_non_throwing_builtin(name: &str) -> bool {
     // array_combine() is intentionally NOT listed: a key/value length mismatch
     // throws a catchable \ValueError, so DCE must not eliminate an unused
     // array_combine() call and try-pruning must not drop the enclosing handler
-    // (AIC's ForeignKeyNode cardinality check relies on exactly that throw).
+    // (a foreign-key node's cardinality check relies on exactly that throw).
     // hash() is intentionally NOT listed: an unknown algorithm name throws a
     // catchable \ValueError, so DCE must not eliminate an unused hash() call.
     // hash_hmac() is likewise NOT listed: an unknown algorithm or a non-crypto

@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/serialize.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/serialize.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/serialize.rs`:33](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/serialize.rs#L33) (`lower_serialize`)
+- **Signature**: [`src/builtins/system/serialize.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/serialize.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/serialize.rs`:33](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/serialize.rs#L33) (`lower_serialize`)
 - **Function symbol**: `lower_serialize()`
 
 

@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/array/array_diff_assoc.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/array/array_diff_assoc.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:1359](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L1359) (`lower_array_diff_assoc`)
+- **Signature**: [`src/builtins/array/array_diff_assoc.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/array/array_diff_assoc.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:1359](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L1359) (`lower_array_diff_assoc`)
 - **Function symbol**: `lower_array_diff_assoc()`
 
 

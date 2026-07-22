@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/json_validate.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/json_validate.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/json.rs`:95](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/json.rs#L95) (`lower_json_validate`)
+- **Signature**: [`src/builtins/system/json_validate.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/json_validate.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/json.rs`:95](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/json.rs#L95) (`lower_json_validate`)
 - **Function symbol**: `lower_json_validate()`
 
 

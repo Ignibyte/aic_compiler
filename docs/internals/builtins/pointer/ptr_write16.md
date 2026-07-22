@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/pointers/ptr_write16.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/pointers/ptr_write16.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/pointers.rs`:161](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/pointers.rs#L161) (`lower_ptr_write16`)
+- **Signature**: [`src/builtins/pointers/ptr_write16.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/pointers/ptr_write16.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/pointers.rs`:161](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/pointers.rs#L161) (`lower_ptr_write16`)
 - **Function symbol**: `lower_ptr_write16()`
 
 

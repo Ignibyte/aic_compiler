@@ -1,6 +1,6 @@
-# Contributing to Elephc
+# Contributing to AIC Compiler
 
-First of all, thank you for considering contributing to Elephc! ❤️
+First of all, thank you for considering contributing to AIC Compiler! ❤️
 
 Every contribution matters, whether it's fixing a typo, improving documentation, reporting a bug, or implementing a new feature.
 
@@ -28,7 +28,7 @@ When reporting a bug, please include as much information as possible:
 
 * Operating system
 * CPU architecture
-* Elephc version
+* AIC Compiler version
 * Steps to reproduce
 * Expected behavior
 * Actual behavior
@@ -56,20 +56,9 @@ the commit-message prefixes used in this project:
 When the work tracks a GitHub issue, include the issue number, e.g.
 `fix/369-tier2-range-analysis`.
 
-Worktrees can be managed by hand (`git worktree add`), but a small helper makes it
-painless. We recommend [`ggw`](https://github.com/illegalstudio/ggw), which
-creates, navigates, and pushes worktree-backed branches for you:
-
-```bash
-ggw create feat/my-feature      # create the branch and its worktree
-ggw cd feat/my-feature          # switch into the worktree
-# ... implement your change ...
-git commit -m "feat: add my feature"
-ggw push                        # push the branch and set its upstream
-```
-
-`ggw push` is equivalent to `git push -u <remote> feat/my-feature` — use whichever
-you prefer. Once the branch is pushed, open your Pull Request as described below.
+Worktrees can be managed by hand: `git worktree add <path> -b <branch>` creates a
+branch and its worktree in one step. Work in the new directory and push the branch
+when it's ready, then open your Pull Request as described below.
 
 ## Pull Requests
 

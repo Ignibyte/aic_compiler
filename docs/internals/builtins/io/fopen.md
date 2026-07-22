@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/fopen.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/fopen.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:340](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L340) (`lower_fopen`)
+- **Signature**: [`src/builtins/io/fopen.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/fopen.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:340](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L340) (`lower_fopen`)
 - **Function symbol**: `lower_fopen()`
 
 

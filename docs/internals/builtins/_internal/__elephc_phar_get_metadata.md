@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/__elephc_phar_get_metadata.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/__elephc_phar_get_metadata.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3859](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L3859) (`lower_elephc_phar_get_metadata`)
+- **Signature**: [`src/builtins/io/__elephc_phar_get_metadata.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/__elephc_phar_get_metadata.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3859](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L3859) (`lower_elephc_phar_get_metadata`)
 - **Function symbol**: `lower_elephc_phar_get_metadata()`
 
 

@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/lchown.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/lchown.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4483](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L4483) (`lower_lchown`)
+- **Signature**: [`src/builtins/io/lchown.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/lchown.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4483](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L4483) (`lower_lchown`)
 - **Function symbol**: `lower_lchown()`
 
 

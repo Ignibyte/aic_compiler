@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/stream_context_get_params.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/stream_context_get_params.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:1291](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L1291) (`lower_stream_context_get_params`)
+- **Signature**: [`src/builtins/io/stream_context_get_params.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/stream_context_get_params.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:1291](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L1291) (`lower_stream_context_get_params`)
 - **Function symbol**: `lower_stream_context_get_params()`
 
 

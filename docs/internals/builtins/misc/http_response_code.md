@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/http_response_code.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/http_response_code.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:264](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/system.rs#L264) (`lower_http_response_code`)
+- **Signature**: [`src/builtins/system/http_response_code.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/http_response_code.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:264](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/system.rs#L264) (`lower_http_response_code`)
 - **Function symbol**: `lower_http_response_code()`
 
 

@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/stream_filter_register.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/stream_filter_register.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:1521](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L1521) (`lower_stream_filter_register`)
+- **Signature**: [`src/builtins/io/stream_filter_register.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/stream_filter_register.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:1521](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L1521) (`lower_stream_filter_register`)
 - **Function symbol**: `lower_stream_filter_register()`
 
 

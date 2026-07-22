@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/math/fmod.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/math/fmod.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/math/binary.rs`:92](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/math/binary.rs#L92) (`lower_fmod`)
+- **Signature**: [`src/builtins/math/fmod.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/math/fmod.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/math/binary.rs`:92](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/math/binary.rs#L92) (`lower_fmod`)
 - **Function symbol**: `lower_fmod()`
 
 

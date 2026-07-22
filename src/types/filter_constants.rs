@@ -9,7 +9,7 @@
 //!   reference lowers to its integer literal.
 //!
 //! Key details:
-//! - Values are the canonical PHP 8.5 constants. Only the surface AIC references (URL/email
+//! - Values are the canonical PHP 8.5 constants. Only the commonly-used references (URL/email
 //!   validation, `$_FILES` error handling) plus their sibling families are carried; the
 //!   flag/option constants (`FILTER_FLAG_*`) are added on demand.
 

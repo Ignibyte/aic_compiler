@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/usleep.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/usleep.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:625](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/system.rs#L625) (`lower_usleep`)
+- **Signature**: [`src/builtins/system/usleep.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/usleep.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:625](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/system.rs#L625) (`lower_usleep`)
 - **Function symbol**: `lower_usleep()`
 
 

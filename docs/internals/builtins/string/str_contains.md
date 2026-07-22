@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/str_contains.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/str_contains.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:700](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L700) (`lower_str_contains`)
+- **Signature**: [`src/builtins/string/str_contains.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/str_contains.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:700](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L700) (`lower_str_contains`)
 - **Function symbol**: `lower_str_contains()`
 
 

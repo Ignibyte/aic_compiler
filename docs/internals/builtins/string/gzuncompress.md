@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/gzuncompress.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/gzuncompress.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:475](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L475) (`lower_gzuncompress`)
+- **Signature**: [`src/builtins/string/gzuncompress.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/gzuncompress.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:475](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L475) (`lower_gzuncompress`)
 - **Function symbol**: `lower_gzuncompress()`
 
 

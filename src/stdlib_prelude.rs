@@ -12,7 +12,7 @@
 //!   (a cheap Debug-render substring scan — over-injection is harmless, link-GC strips an
 //!   unused prelude function). A user's own same-named declaration shadows the prelude
 //!   (filtered out via `declared_function_names`), so there is no redeclaration conflict.
-//! - Scope is deliberately minimal: only functions the AIC survey flagged as `Undefined`
+//! - Scope is deliberately minimal: only functions the conformance survey flagged as `Undefined`
 //!   on v0.26.1 that the old fork carried as prelude PHP (mb_substr/trim family,
 //!   array_count_values, array_last, http_build_query). Each is byte-parity with PHP 8.5.
 
@@ -182,7 +182,7 @@ function get_debug_type(mixed $value): string {
         // This one call made the ENTIRE stdlib prelude un-compilable natively, which is why
         // explode/strtr/arity_ext/substr_compare each had to be split into their own
         // one-function preludes just to avoid dragging this bundle in (see their module docs).
-        // It was the single largest native-compile gap in the AIC survey: 114 of 1082 roots.
+        // It was the single largest native-compile gap in the conformance survey: 114 of 1082 roots.
         return $value::class;
     }
     if ($value === null) {

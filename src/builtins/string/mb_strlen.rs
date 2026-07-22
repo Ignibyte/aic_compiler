@@ -7,7 +7,7 @@
 //!
 //! Key details:
 //! - No check hook needed: `returns: Int` expresses the return type inline; the count is a
-//!   pure UTF-8 code-point scan in `__rt_mb_strlen`. UTF-8 is assumed (the AIC/default
+//!   pure UTF-8 code-point scan in `__rt_mb_strlen`. UTF-8 is assumed (the default
 //!   encoding); the optional encoding argument is not supported.
 //! - Arity (exactly 1 arg) is validated by the registry.
 

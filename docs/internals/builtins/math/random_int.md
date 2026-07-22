@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/math/random_int.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/math/random_int.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/math/random.rs`:40](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/math/random.rs#L40) (`lower_random_int`)
+- **Signature**: [`src/builtins/math/random_int.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/math/random_int.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/math/random.rs`:40](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/math/random.rs#L40) (`lower_random_int`)
 - **Function symbol**: `lower_random_int()`
 
 

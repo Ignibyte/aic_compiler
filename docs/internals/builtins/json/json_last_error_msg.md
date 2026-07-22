@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/json_last_error_msg.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/json_last_error_msg.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/json.rs`:85](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/json.rs#L85) (`lower_json_last_error_msg`)
+- **Signature**: [`src/builtins/system/json_last_error_msg.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/json_last_error_msg.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/json.rs`:85](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/json.rs#L85) (`lower_json_last_error_msg`)
 - **Function symbol**: `lower_json_last_error_msg()`
 
 

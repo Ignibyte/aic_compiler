@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/substr_replace.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/substr_replace.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:748](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L748) (`lower_substr_replace`)
+- **Signature**: [`src/builtins/string/substr_replace.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/substr_replace.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:748](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L748) (`lower_substr_replace`)
 - **Function symbol**: `lower_substr_replace()`
 
 

@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/math/abs.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/math/abs.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/math.rs`:43](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/math.rs#L43) (`lower_abs`)
+- **Signature**: [`src/builtins/math/abs.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/math/abs.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/math.rs`:43](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/math.rs#L43) (`lower_abs`)
 - **Function symbol**: `lower_abs()`
 
 

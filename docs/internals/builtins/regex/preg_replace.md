@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/preg_replace.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/preg_replace.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/regex.rs`:79](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/regex.rs#L79) (`lower_preg_replace`)
+- **Signature**: [`src/builtins/system/preg_replace.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/preg_replace.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/regex.rs`:79](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/regex.rs#L79) (`lower_preg_replace`)
 - **Function symbol**: `lower_preg_replace()`
 
 

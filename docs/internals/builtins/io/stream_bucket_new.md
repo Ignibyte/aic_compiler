@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/stream_bucket_new.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/stream_bucket_new.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:1970](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L1970) (`lower_stream_bucket_new`)
+- **Signature**: [`src/builtins/io/stream_bucket_new.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/stream_bucket_new.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:1970](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L1970) (`lower_stream_bucket_new`)
 - **Function symbol**: `lower_stream_bucket_new()`
 
 

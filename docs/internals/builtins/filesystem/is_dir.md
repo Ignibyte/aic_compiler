@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/is_dir.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/is_dir.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5600](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L5600) (`lower_is_dir`)
+- **Signature**: [`src/builtins/io/is_dir.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/is_dir.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5600](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L5600) (`lower_is_dir`)
 - **Function symbol**: `lower_is_dir()`
 
 

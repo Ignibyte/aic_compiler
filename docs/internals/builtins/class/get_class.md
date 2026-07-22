@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/callables/get_class.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/callables/get_class.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/types.rs`:331](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/types.rs#L331) (`lower_class_name_lookup`)
+- **Signature**: [`src/builtins/callables/get_class.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/callables/get_class.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/types.rs`:331](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/types.rs#L331) (`lower_class_name_lookup`)
 - **Function symbol**: `lower_class_name_lookup()`
 
 

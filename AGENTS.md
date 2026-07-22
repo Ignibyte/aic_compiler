@@ -535,11 +535,11 @@ When cutting a release:
 - Add a matching compare link at the **bottom** of the file, also newest first, immediately above the previous version's link:
 
   ```
-  [X.Y.Z]: https://github.com/illegalstudio/elephc/compare/v<previous>...vX.Y.Z
+  [X.Y.Z]: https://github.com/Ignibyte/aic_compiler/compare/v<previous>...vX.Y.Z
   ```
 
   The first-ever release uses the `releases/tag/v0.1.0` form instead of a compare range. Every version section must have its link; do not leave the link out.
-- Never change elephc's Cargo package version in `Cargo.toml` or `Cargo.lock`. Release automation in CI owns Cargo version bumps; agent changes should leave those files' version numbers untouched unless the user explicitly overrides this policy.
+- Do not change the Cargo package version in `Cargo.toml` or `Cargo.lock` as a side effect of a change; version bumps are a deliberate, separate release step.
 
 ## Conventions
 

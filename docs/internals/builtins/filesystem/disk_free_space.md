@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/disk_free_space.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/disk_free_space.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3370](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L3370) (`lower_disk_free_space`)
+- **Signature**: [`src/builtins/io/disk_free_space.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/disk_free_space.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3370](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L3370) (`lower_disk_free_space`)
 - **Function symbol**: `lower_disk_free_space()`
 
 

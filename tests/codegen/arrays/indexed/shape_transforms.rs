@@ -81,7 +81,7 @@ echo count($m);
 }
 
 /// Tests that a key/value length mismatch raises a catchable `\ValueError`, even when
-/// the combined result is discarded (AIC's `ForeignKeyNode` cardinality-check shape).
+/// the combined result is discarded (a foreign-key node's cardinality-check shape).
 /// Pre-fix `array_combine` was classified pure-non-throwing, so the optimizer DCE-d the
 /// discarded call and pruned the enclosing try — the mismatch branch was unreachable and
 /// this returned `"ok|ok"`. The runtime helper now compares lengths and throws before

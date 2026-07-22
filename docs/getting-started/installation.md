@@ -1,6 +1,6 @@
 ---
 title: "Installation"
-description: "How to install elephc on supported platforms."
+description: "How to install AIC Compiler on supported platforms."
 sidebar:
   order: 1
 ---
@@ -20,11 +20,7 @@ This provides the assembler (`as`) and linker (`ld`) that elephc uses to produce
 
 On Linux, install your distro's standard native toolchain so `as`, `ld`, and the libc development files are available.
 
-## Homebrew (macOS)
-
-```bash
-brew install illegalstudio/tap/elephc
-```
+## Verify
 
 Verify the installation by compiling a small program:
 
@@ -40,8 +36,8 @@ This prints `ok` and confirms `elephc` can produce and run a native binary.
 If you prefer to build from source, you'll also need the Rust toolchain (`cargo`).
 
 ```bash
-git clone https://github.com/illegalstudio/elephc.git
-cd elephc
+git clone https://github.com/Ignibyte/aic_compiler.git
+cd aic_compiler
 cargo build --release
 ```
 
@@ -53,7 +49,7 @@ cp target/release/elephc /usr/local/bin/
 
 ## From GitHub releases
 
-Pre-built binaries may be available on the [releases page](https://github.com/illegalstudio/elephc/releases). Download the artifact for your platform, make it executable if needed, and move it to your `PATH`:
+Pre-built binaries may be available on the [releases page](https://github.com/Ignibyte/aic_compiler/releases). Download the artifact for your platform, make it executable if needed, and move it to your `PATH`:
 
 ```bash
 chmod +x elephc

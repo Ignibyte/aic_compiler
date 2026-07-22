@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/chr.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/chr.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:876](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L876) (`lower_chr`)
+- **Signature**: [`src/builtins/string/chr.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/chr.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:876](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L876) (`lower_chr`)
 - **Function symbol**: `lower_chr()`
 
 

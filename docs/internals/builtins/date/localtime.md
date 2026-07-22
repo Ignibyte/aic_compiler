@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/localtime.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/localtime.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:220](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/system.rs#L220) (`lower_localtime`)
+- **Signature**: [`src/builtins/system/localtime.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/localtime.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:220](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/system.rs#L220) (`lower_localtime`)
 - **Function symbol**: `lower_localtime()`
 
 

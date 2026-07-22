@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/wordwrap.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/wordwrap.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:820](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L820) (`lower_wordwrap`)
+- **Signature**: [`src/builtins/string/wordwrap.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/wordwrap.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:820](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L820) (`lower_wordwrap`)
 - **Function symbol**: `lower_wordwrap()`
 
 

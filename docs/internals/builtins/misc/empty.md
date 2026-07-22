@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/types/signatures.rs`](https://github.com/illegalstudio/elephc/blob/main/src/types/signatures.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins.rs`:619](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins.rs#L619) (`lower_empty`)
+- **Signature**: [`src/types/signatures.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/types/signatures.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins.rs`:619](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins.rs#L619) (`lower_empty`)
 - **Function symbol**: `lower_empty()`
 
 

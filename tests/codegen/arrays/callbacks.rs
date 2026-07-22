@@ -86,7 +86,7 @@ echo $s;
 
 /// #648: `array_filter()` over a boxed-`Mixed` source (a value the checker could not type as a
 /// concrete array — here laundered through a `mixed` boundary) unboxes the Mixed to its underlying
-/// indexed array and filters it through the refcounted helper. Mirrors the real AIC roots'
+/// indexed array and filters it through the refcounted helper. Mirrors real-world corpus roots'
 /// `array_filter(json_decode(...), is_string(...))` shape over heterogeneous elements.
 #[test]
 fn test_array_filter_over_boxed_mixed_source() {

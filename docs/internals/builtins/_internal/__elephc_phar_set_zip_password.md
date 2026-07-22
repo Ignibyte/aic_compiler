@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/__elephc_phar_set_zip_password.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/__elephc_phar_set_zip_password.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4178](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L4178) (`lower_elephc_phar_set_zip_password`)
+- **Signature**: [`src/builtins/io/__elephc_phar_set_zip_password.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/__elephc_phar_set_zip_password.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4178](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L4178) (`lower_elephc_phar_set_zip_password`)
 - **Function symbol**: `lower_elephc_phar_set_zip_password()`
 
 

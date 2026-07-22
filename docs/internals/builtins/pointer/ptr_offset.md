@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/pointers/ptr_offset.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/pointers/ptr_offset.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/pointers.rs`:86](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/pointers.rs#L86) (`lower_ptr_offset`)
+- **Signature**: [`src/builtins/pointers/ptr_offset.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/pointers/ptr_offset.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/pointers.rs`:86](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/pointers.rs#L86) (`lower_ptr_offset`)
 - **Function symbol**: `lower_ptr_offset()`
 
 

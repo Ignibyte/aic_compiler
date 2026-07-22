@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/putenv.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/putenv.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:657](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/system.rs#L657) (`lower_putenv`)
+- **Signature**: [`src/builtins/system/putenv.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/putenv.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:657](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/system.rs#L657) (`lower_putenv`)
 - **Function symbol**: `lower_putenv()`
 
 

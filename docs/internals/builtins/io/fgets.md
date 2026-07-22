@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/fgets.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/fgets.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2967](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L2967) (`lower_fgets`)
+- **Signature**: [`src/builtins/io/fgets.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/fgets.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2967](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L2967) (`lower_fgets`)
 - **Function symbol**: `lower_fgets()`
 
 

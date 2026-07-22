@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/str_pad.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/str_pad.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:836](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L836) (`lower_str_pad`)
+- **Signature**: [`src/builtins/string/str_pad.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/str_pad.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:836](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L836) (`lower_str_pad`)
 - **Function symbol**: `lower_str_pad()`
 
 

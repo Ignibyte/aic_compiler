@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/ord.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/ord.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:852](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L852) (`lower_ord`)
+- **Signature**: [`src/builtins/string/ord.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/ord.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:852](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L852) (`lower_ord`)
 - **Function symbol**: `lower_ord()`
 
 

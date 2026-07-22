@@ -1,17 +1,17 @@
 ---
-title: "elephc Documentation"
+title: "AIC Compiler Documentation"
 description: "A PHP-to-native compiler. Compiles a static subset of PHP to native assembly and produces standalone binaries for supported targets."
 sidebar:
   order: 0
 ---
 
-elephc compiles PHP to native binaries for the supported targets — currently macOS ARM64, Linux ARM64, and Linux x86_64. No interpreter, no VM, no runtime dependencies. This documentation covers everything from PHP syntax support to compiler-specific extensions and internal architecture.
+AIC Compiler compiles PHP to native binaries for the supported targets — currently macOS ARM64, Linux ARM64, and Linux x86_64. No interpreter, no VM, no runtime dependencies. This documentation covers everything from PHP syntax support to compiler-specific extensions and internal architecture.
 
 ## Getting Started
 
-- [Installation](getting-started/installation.md) — install elephc via Homebrew or from source
+- [Installation](getting-started/installation.md) — install AIC Compiler from source
 - [Your First Program](getting-started/your-first-program.md) — write, compile, and run your first PHP binary
-- [Benchmark Suite](https://github.com/illegalstudio/elephc/blob/main/benchmarks/README.md) — compare elephc against PHP and equivalent C fixtures
+- [Benchmark Suite](https://github.com/Ignibyte/aic_compiler/blob/main/benchmarks/README.md) — compare elephc against PHP and equivalent C fixtures
 
 ## How-To
 
@@ -72,7 +72,7 @@ Compiler-specific extensions that go beyond standard PHP. These features have no
 
 ## Compiler Internals
 
-How elephc works under the hood — from lexing to code generation and runtime structure.
+How AIC Compiler works under the hood — from lexing to code generation and runtime structure.
 
 - [What is a Compiler?](internals/what-is-a-compiler.md) — the big picture of compilation
 - [The Pipeline](internals/how-elephc-works.md) — from `<?php` to running binary

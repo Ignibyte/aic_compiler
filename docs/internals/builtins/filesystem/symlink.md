@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/symlink.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/symlink.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5448](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L5448) (`lower_symlink`)
+- **Signature**: [`src/builtins/io/symlink.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/symlink.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5448](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L5448) (`lower_symlink`)
 - **Function symbol**: `lower_symlink()`
 
 

@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/printf.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/printf.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:535](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L535) (`lower_printf`)
+- **Signature**: [`src/builtins/string/printf.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/printf.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:535](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L535) (`lower_printf`)
 - **Function symbol**: `lower_printf()`
 
 

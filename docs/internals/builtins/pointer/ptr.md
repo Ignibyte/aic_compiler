@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/pointers/ptr.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/pointers/ptr.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/pointers.rs`:25](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/pointers.rs#L25) (`lower_ptr`)
+- **Signature**: [`src/builtins/pointers/ptr.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/pointers/ptr.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/pointers.rs`:25](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/pointers.rs#L25) (`lower_ptr`)
 - **Function symbol**: `lower_ptr()`
 
 

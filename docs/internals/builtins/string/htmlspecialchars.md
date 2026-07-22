@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/htmlspecialchars.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/htmlspecialchars.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:93](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L93) (`lower_html_escape`)
+- **Signature**: [`src/builtins/string/htmlspecialchars.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/htmlspecialchars.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:93](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L93) (`lower_html_escape`)
 - **Function symbol**: `lower_html_escape()`
 
 

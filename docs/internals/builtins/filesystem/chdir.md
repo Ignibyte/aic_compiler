@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/chdir.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/chdir.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4438](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L4438) (`lower_chdir`)
+- **Signature**: [`src/builtins/io/chdir.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/chdir.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4438](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L4438) (`lower_chdir`)
 - **Function symbol**: `lower_chdir()`
 
 

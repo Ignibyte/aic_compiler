@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/ip2long.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/ip2long.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:506](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L506) (`lower_ip2long`)
+- **Signature**: [`src/builtins/string/ip2long.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/ip2long.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:506](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L506) (`lower_ip2long`)
 - **Function symbol**: `lower_ip2long()`
 
 

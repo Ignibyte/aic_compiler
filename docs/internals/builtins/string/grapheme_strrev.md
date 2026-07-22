@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/grapheme_strrev.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/grapheme_strrev.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:106](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L106) (`lower_grapheme_strrev`)
+- **Signature**: [`src/builtins/string/grapheme_strrev.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/grapheme_strrev.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:106](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L106) (`lower_grapheme_strrev`)
 - **Function symbol**: `lower_grapheme_strrev()`
 
 

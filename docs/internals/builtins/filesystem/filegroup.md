@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/filegroup.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/filegroup.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5500](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L5500) (`lower_filegroup`)
+- **Signature**: [`src/builtins/io/filegroup.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/filegroup.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5500](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L5500) (`lower_filegroup`)
 - **Function symbol**: `lower_filegroup()`
 
 

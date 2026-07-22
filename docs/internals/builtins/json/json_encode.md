@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/json_encode.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/json_encode.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/json.rs`:52](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/json.rs#L52) (`lower_json_encode`)
+- **Signature**: [`src/builtins/system/json_encode.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/json_encode.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/json.rs`:52](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/json.rs#L52) (`lower_json_encode`)
 - **Function symbol**: `lower_json_encode()`
 
 

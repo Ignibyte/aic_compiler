@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/rtrim.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/rtrim.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:130](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L130) (`lower_trim_like`)
+- **Signature**: [`src/builtins/string/rtrim.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/rtrim.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:130](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L130) (`lower_trim_like`)
 - **Function symbol**: `lower_trim_like()`
 
 

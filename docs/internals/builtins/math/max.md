@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/math/max.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/math/max.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/math.rs`:204](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/math.rs#L204) (`lower_min_max`)
+- **Signature**: [`src/builtins/math/max.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/math/max.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/math.rs`:204](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/math.rs#L204) (`lower_min_max`)
 - **Function symbol**: `lower_min_max()`
 
 

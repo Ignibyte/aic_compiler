@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/types/is_scalar.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/types/is_scalar.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins.rs`:1035](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins.rs#L1035) (`lower_is_scalar`)
+- **Signature**: [`src/builtins/types/is_scalar.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/types/is_scalar.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins.rs`:1035](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins.rs#L1035) (`lower_is_scalar`)
 - **Function symbol**: `lower_is_scalar()`
 
 

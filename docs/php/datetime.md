@@ -387,4 +387,4 @@ A few corners of PHP's date/time API are not implemented:
 - **Detailed parse warnings**: `getLastErrors()`/`date_get_last_errors()` report whether the last `createFromFormat()` succeeded or failed (`error_count` 0/1) but do not retain PHP's per-character warning/error positions — only the pass/fail count, which covers the common `if (DateTime::getLastErrors()['error_count'])` guard.
 - **Serialization hooks**: the `__serialize()`/`__unserialize()`/`__wakeup()`/`__set_state()` magic methods are not defined on the date classes, because elephc has no object `serialize()`/`unserialize()`/`var_export()` round-trip for any class.
 
-A complete runnable program is in [`examples/datetime/main.php`](https://github.com/illegalstudio/elephc/tree/main/examples/datetime).
+A complete runnable program is in [`examples/datetime/main.php`](https://github.com/Ignibyte/aic_compiler/tree/main/examples/datetime).

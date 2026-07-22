@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/strtotime.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/strtotime.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:487](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/system.rs#L487) (`lower_strtotime`)
+- **Signature**: [`src/builtins/system/strtotime.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/strtotime.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/system.rs`:487](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/system.rs#L487) (`lower_strtotime`)
 - **Function symbol**: `lower_strtotime()`
 
 

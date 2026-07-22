@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/gzinflate.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/gzinflate.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:454](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L454) (`lower_gzinflate`)
+- **Signature**: [`src/builtins/string/gzinflate.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/gzinflate.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:454](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L454) (`lower_gzinflate`)
 - **Function symbol**: `lower_gzinflate()`
 
 

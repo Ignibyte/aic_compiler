@@ -226,7 +226,7 @@ echo $o->x;
 /// helper resolved the object class as empty and fell back to Int — stamping `[$this->make()]`
 /// as `array<int>` and int-casting the returned object into it ("int cast for Object(<x>)").
 /// Resolving `$this` via the current class (like the real call lowering) types the element as the
-/// object. Mirrors AIC's QueryBuilder `whereGroup(): self { withConditions([$this->compound()]); }`.
+/// object. Mirrors a fluent query builder's `whereGroup(): self { withConditions([$this->compound()]); }`.
 #[test]
 fn test_indexed_array_literal_this_method_element_typed_by_return() {
     let out = compile_and_run(
@@ -252,7 +252,7 @@ echo (new QB())->group()->first();
 /// (a property-access receiver, not `$this`) must also be typed by the callee's declared return
 /// type. `instance_callable_object_class` resolved Variable/This/new/function receivers but not a
 /// property-access receiver, so `[$this->factory->link(...)]` fell to the Int default and int-cast
-/// the returned object ("int cast for Object(<x>)"). Mirrors AIC EntityTableComposer::row.
+/// the returned object ("int cast for Object(<x>)"). Mirrors an entity-table composer row.
 #[test]
 fn test_indexed_array_literal_property_receiver_method_element_typed_by_return() {
     let out = compile_and_run(

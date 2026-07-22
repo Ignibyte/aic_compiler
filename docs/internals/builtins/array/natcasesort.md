@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/array/natcasesort.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/array/natcasesort.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:1114](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L1114) (`lower_natcasesort`)
+- **Signature**: [`src/builtins/array/natcasesort.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/array/natcasesort.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:1114](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L1114) (`lower_natcasesort`)
 - **Function symbol**: `lower_natcasesort()`
 
 

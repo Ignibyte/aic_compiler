@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/array/range.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/array/range.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:1023](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L1023) (`lower_range`)
+- **Signature**: [`src/builtins/array/range.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/array/range.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:1023](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L1023) (`lower_range`)
 - **Function symbol**: `lower_range()`
 
 

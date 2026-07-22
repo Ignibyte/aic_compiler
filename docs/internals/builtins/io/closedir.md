@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/closedir.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/closedir.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3572](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L3572) (`lower_closedir`)
+- **Signature**: [`src/builtins/io/closedir.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/closedir.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3572](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L3572) (`lower_closedir`)
 - **Function symbol**: `lower_closedir()`
 
 

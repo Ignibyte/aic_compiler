@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/is_link.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/is_link.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5640](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L5640) (`lower_is_link`)
+- **Signature**: [`src/builtins/io/is_link.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/is_link.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5640](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L5640) (`lower_is_link`)
 - **Function symbol**: `lower_is_link()`
 
 

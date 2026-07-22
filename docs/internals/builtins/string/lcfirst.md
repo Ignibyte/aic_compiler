@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/lcfirst.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/lcfirst.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:122](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L122) (`lower_lcfirst`)
+- **Signature**: [`src/builtins/string/lcfirst.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/lcfirst.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:122](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L122) (`lower_lcfirst`)
 - **Function symbol**: `lower_lcfirst()`
 
 

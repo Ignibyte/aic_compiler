@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/hash.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/hash.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:227](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L227) (`lower_hash`)
+- **Signature**: [`src/builtins/string/hash.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/hash.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:227](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L227) (`lower_hash`)
 - **Function symbol**: `lower_hash()`
 
 

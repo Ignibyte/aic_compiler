@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/tmpfile.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/tmpfile.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5416](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L5416) (`lower_tmpfile`)
+- **Signature**: [`src/builtins/io/tmpfile.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/tmpfile.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5416](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L5416) (`lower_tmpfile`)
 - **Function symbol**: `lower_tmpfile()`
 
 

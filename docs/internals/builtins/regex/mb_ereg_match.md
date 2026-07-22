@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/mb_ereg_match.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/mb_ereg_match.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/regex.rs`:52](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/regex.rs#L52) (`lower_mb_ereg_match`)
+- **Signature**: [`src/builtins/string/mb_ereg_match.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/mb_ereg_match.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/regex.rs`:52](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/regex.rs#L52) (`lower_mb_ereg_match`)
 - **Function symbol**: `lower_mb_ereg_match()`
 
 

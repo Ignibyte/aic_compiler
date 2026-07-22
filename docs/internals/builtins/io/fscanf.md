@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/fscanf.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/fscanf.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2938](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L2938) (`lower_fscanf`)
+- **Signature**: [`src/builtins/io/fscanf.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/fscanf.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2938](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L2938) (`lower_fscanf`)
 - **Function symbol**: `lower_fscanf()`
 
 

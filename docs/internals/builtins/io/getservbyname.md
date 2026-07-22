@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/getservbyname.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/getservbyname.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3486](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L3486) (`lower_getservbyname`)
+- **Signature**: [`src/builtins/io/getservbyname.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/getservbyname.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3486](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L3486) (`lower_getservbyname`)
 - **Function symbol**: `lower_getservbyname()`
 
 

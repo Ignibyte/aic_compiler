@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/callables/get_declared_classes.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/callables/get_declared_classes.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/types.rs`:388](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/types.rs#L388) (`lower_get_declared_names`)
+- **Signature**: [`src/builtins/callables/get_declared_classes.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/callables/get_declared_classes.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/types.rs`:388](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/types.rs#L388) (`lower_get_declared_names`)
 - **Function symbol**: `lower_get_declared_names()`
 
 

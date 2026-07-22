@@ -230,7 +230,7 @@ pub(crate) fn lower_array_filter(ctx: &mut FunctionContext<'_>, inst: &Instructi
     // Unbox it to the underlying indexed array and filter that through the refcounted helper, whose
     // 8-byte boxed-Mixed (value_type 7) element path retains kept cells via `__rt_array_push_refcounted`.
     // A Mixed that does not hold an indexed array (e.g. an associative hash) aborts loudly rather
-    // than mis-filtering. Scoped to a first-class-callable predicate (the real AIC shape, e.g.
+    // than mis-filtering. Scoped to a first-class-callable predicate (a real-world shape, e.g.
     // `is_string(...)`); a user closure's typed-parameter invoker does not yet unpack a boxed-Mixed
     // element, so those keep the clean `array_filter for PHP type Mixed` compile error. #648.
     if ctx.value_php_type(array)?.codegen_repr() == PhpType::Mixed

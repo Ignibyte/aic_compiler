@@ -1,7 +1,7 @@
 # elephc http-server — a native async HTTP server in PHP
 
 A working HTTP/1.1 server written entirely in PHP and compiled to a standalone
-native binary by [elephc](https://github.com/illegalstudio/elephc).
+native binary by [elephc](https://github.com/Ignibyte/aic_compiler).
 
 No interpreter. No VM. No PHP-FPM, no Nginx. Just a single native executable
 that talks TCP directly to the OS kernel.

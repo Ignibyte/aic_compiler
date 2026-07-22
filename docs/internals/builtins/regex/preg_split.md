@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/preg_split.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/preg_split.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/regex.rs`:405](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/regex.rs#L405) (`lower_preg_split`)
+- **Signature**: [`src/builtins/system/preg_split.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/preg_split.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/regex.rs`:405](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/regex.rs#L405) (`lower_preg_split`)
 - **Function symbol**: `lower_preg_split()`
 
 

@@ -1456,7 +1456,7 @@ echo $cb();
 // `<expr>(...)` where the callee is a value (a variable or a parenthesized expression
 // holding an invokable object) is semantically `<expr>->__invoke(...)`. The parser maps
 // it to the method-FCC form, reusing the existing invokable dispatch path. The
-// ControllerRouteRegistrar `(new Factory($id))(...)` registration is the motivating AIC case.
+// ControllerRouteRegistrar `(new Factory($id))(...)` registration is the motivating real-world case.
 
 /// Verifies that a first-class callable taken from an invokable-object variable calls correctly.
 #[test]
@@ -1478,7 +1478,7 @@ echo $c(21);
 /// Verifies that a first-class callable from a parenthesized invokable-object expression calls correctly.
 #[test]
 fn test_fcc_from_parenthesized_invokable_object_expr() {
-    // The motivating AIC pattern: `(new Factory($tag))(...)` used as a first-class callable.
+    // The motivating real-world pattern: `(new Factory($tag))(...)` used as a first-class callable.
     // Fixture: `$c = (new Tagger("F"))(...); $c(3)` → "F:3".
     let out = compile_and_run(
         r#"<?php
@@ -1516,7 +1516,7 @@ echo $c(7), "\n";
 /// Verifies that an invokable-object first-class callable can be passed as an argument and invoked in the callee.
 #[test]
 fn test_fcc_from_invokable_object_passed_as_argument() {
-    // Mirrors the AIC `singleton($id, (new Factory($id))(...))` registration shape.
+    // Mirrors a container's `singleton($id, (new Factory($id))(...))` registration shape.
     // Fixture: FCC built from `(new Factory("F"))(...)`, passed to `register()`, invoked there.
     let out = compile_and_run(
         r#"<?php

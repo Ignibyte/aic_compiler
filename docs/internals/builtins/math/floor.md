@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/math/floor.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/math/floor.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/math.rs`:70](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/math.rs#L70) (`lower_floor`)
+- **Signature**: [`src/builtins/math/floor.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/math/floor.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/math.rs`:70](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/math.rs#L70) (`lower_floor`)
 - **Function symbol**: `lower_floor()`
 
 

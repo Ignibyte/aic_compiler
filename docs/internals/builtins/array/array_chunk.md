@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/array/array_chunk.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/array/array_chunk.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:80](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L80) (`lower_array_chunk`)
+- **Signature**: [`src/builtins/array/array_chunk.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/array/array_chunk.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:80](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L80) (`lower_array_chunk`)
 - **Function symbol**: `lower_array_chunk()`
 
 

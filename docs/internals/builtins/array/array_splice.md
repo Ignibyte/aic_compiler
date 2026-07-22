@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/array/array_splice.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/array/array_splice.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:956](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L956) (`lower_array_splice`)
+- **Signature**: [`src/builtins/array/array_splice.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/array/array_splice.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:956](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L956) (`lower_array_splice`)
 - **Function symbol**: `lower_array_splice()`
 
 

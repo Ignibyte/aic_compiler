@@ -600,7 +600,7 @@ fn value_source_instruction<'a>(
 ///
 /// could not compile natively, even though the shared coercion has handled `Mixed` on BOTH arches
 /// all along (`emit_mixed_borrowed_string_to_regs` -> `__rt_mixed_unbox`, tag-dispatched over
-/// int/string/float/bool payloads). That gap was 98 of 1082 roots in the AIC survey — the largest
+/// int/string/float/bool payloads). That gap was 98 of 1082 roots in the conformance survey — the largest
 /// remaining native gap — and `--check` passed every one of them.
 fn load_string_arg(
     ctx: &mut FunctionContext<'_>,

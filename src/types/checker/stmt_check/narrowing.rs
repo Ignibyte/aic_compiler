@@ -378,7 +378,7 @@ fn guard_receiver_and_type(cond: &Expr) -> Option<(&Expr, PhpType, bool)> {
         // POSITIVE form work: `if ($error !== null) { f($error); }` strips the null-ish member
         // inside the body, so a `?string` parameter satisfies a `string` parameter there. Without
         // it only the early-return form (`if ($x === null) { throw; }`) narrowed, and the positive
-        // form was the shape AIC actually writes.
+        // form was the shape real-world code actually writes.
         ExprKind::BinaryOp { left, op: op @ (BinOp::StrictEq | BinOp::StrictNotEq), right } => {
             let (receiver, lit) = match (&left.kind, &right.kind) {
                 (ExprKind::Variable(_) | ExprKind::PropertyAccess { .. }, _) => {

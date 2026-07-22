@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/fwrite.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/fwrite.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2838](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L2838) (`lower_fwrite`)
+- **Signature**: [`src/builtins/io/fwrite.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/fwrite.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2838](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L2838) (`lower_fwrite`)
 - **Function symbol**: `lower_fwrite()`
 
 

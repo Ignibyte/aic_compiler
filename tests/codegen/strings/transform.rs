@@ -156,7 +156,7 @@ fn test_str_replace_multiple() {
 
 /// Regression for #648: str_replace with an ARRAY `search` over a scalar string subject applies each
 /// search term in turn (a fold reusing the scalar str_replace). Covers a string `replace` (removal),
-/// a parallel array `replace`, and variable array operands — the actual AIC shapes
+/// a parallel array `replace`, and variable array operands — the actual real-world shapes
 /// (`str_replace(['b','t'], '', $mode)`, `str_replace($search, $replace, $message)`). The scalar
 /// str_replace path must be unaffected.
 #[test]
@@ -316,7 +316,7 @@ fn test_multiarg_string_builtins_of_mixed_argument() {
 /// desugars to the injected `__elephc_explode_limit`, which layers PHP's `$limit` semantics
 /// over native 2-arg explode: positive caps with the remainder in the last element, `0`
 /// behaves as `1`, and negative drops trailing elements. The 2-arg form stays the native
-/// builtin. AIC's GateScripts spec parsers and FlashMessenger split with a limit.
+/// builtin. A gate-scripts runner's spec parsers and a flash-messenger split with a limit.
 #[test]
 fn test_explode_three_arg_limit() {
     let out = compile_and_run(

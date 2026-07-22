@@ -193,14 +193,14 @@ def _runtime_helpers_section(b: dict) -> str:
 def _github_url(repo_root: Path, file_path: str) -> str:
     """Build a GitHub permalink for a file (assuming `main` branch — adjust as needed)."""
     rel = file_path
-    return f"https://github.com/illegalstudio/elephc/blob/main/{rel}"
+    return f"https://github.com/Ignibyte/aic_compiler/blob/main/{rel}"
 
 
 def _github_url_with_line(repo_root: Path, file_path: str, line: int) -> str:
     rel = file_path
     if line is None:
         return _github_url(repo_root, file_path)
-    return f"https://github.com/illegalstudio/elephc/blob/main/{rel}#L{line}"
+    return f"https://github.com/Ignibyte/aic_compiler/blob/main/{rel}#L{line}"
 
 
 def _internals_link(b: dict) -> str:

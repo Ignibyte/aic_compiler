@@ -588,7 +588,7 @@ echo tag(new Box(static fn(): int => 1)), tag(new Box(null));
 /// Previously every one of these aborted codegen with
 /// "string register materialization for PHP type Mixed".
 ///
-/// Covers all four narrowing shapes AIC actually writes: the early-return `if ($x === null)`
+/// Covers all four narrowing shapes a real-world codebase actually writes: the early-return `if ($x === null)`
 /// (EntityTypeRegistry::guardOverrideFactory), the `||` short-circuit, the `&&` short-circuit, and
 /// the `is_string()` guard (LayoutTree::__construct).
 #[test]

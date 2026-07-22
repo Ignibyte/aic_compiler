@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/array/array_keys.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/array/array_keys.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/arrays/keys.rs`:23](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/arrays/keys.rs#L23) (`lower_array_keys`)
+- **Signature**: [`src/builtins/array/array_keys.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/array/array_keys.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/arrays/keys.rs`:23](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/arrays/keys.rs#L23) (`lower_array_keys`)
 - **Function symbol**: `lower_array_keys()`
 
 

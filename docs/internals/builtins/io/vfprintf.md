@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/vfprintf.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/vfprintf.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2898](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L2898) (`lower_vfprintf`)
+- **Signature**: [`src/builtins/io/vfprintf.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/vfprintf.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2898](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L2898) (`lower_vfprintf`)
 - **Function symbol**: `lower_vfprintf()`
 
 

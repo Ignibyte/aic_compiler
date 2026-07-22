@@ -468,7 +468,7 @@ echo ifAccumWeight(new Heavy()), ifAccumWeight(new Plain());
 /// poisons every caller: `is_string($x)` cannot narrow an `Int`, so passing the value to a
 /// `string` parameter fails to type-check.
 ///
-/// PSR-7's untyped `getAttribute()` is the canonical victim (AIC's ResourceResolver):
+/// PSR-7's untyped `getAttribute()` is the canonical victim (a resource resolver):
 ///     $type = $request->getAttribute('type');
 ///     if (!is_string($type) || !$registry->has($type)) { ... }
 /// -> "Method Registry::has parameter $entityTypeName expects Str, got Int".
@@ -508,7 +508,7 @@ echo resolve(new Reg(), new Rq(), 'missing');
 /// Regression (#646): a boxed `Mixed` flowing into a STRING-backed enum's `tryFrom`/`from` must
 /// coerce to the backing string and scan, not hard-error "backing input PHP type Mixed".
 ///
-/// AIC's callers all guard with `is_string($raw)` before `Enum::tryFrom($raw)` (the value IS a
+/// Real-world callers all guard with `is_string($raw)` before `Enum::tryFrom($raw)` (the value IS a
 /// string at runtime), but the guard narrows the checker env, not the codegen value type, so the
 /// lowering still saw Mixed. Coerced via the same `load_value_as_string_to_regs` the 42 other
 /// string builtins use on a Mixed operand — consistent with the codebase, and the scan returns the

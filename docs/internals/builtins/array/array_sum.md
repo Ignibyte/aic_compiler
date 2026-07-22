@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/array/array_sum.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/array/array_sum.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:50](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L50) (`lower_array_sum`)
+- **Signature**: [`src/builtins/array/array_sum.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/array/array_sum.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:50](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L50) (`lower_array_sum`)
 - **Function symbol**: `lower_array_sum()`
 
 

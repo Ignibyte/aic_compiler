@@ -1,23 +1,11 @@
-<p align="center">
-  <img src="assets/logo-mark.png" alt="elephc logo" width="130">
-</p>
-
-<h1 align="center">Elephc</h1>
-
-<p align="center">
-  <sub><strong>Pronounced</strong> <em>el-ef-see</em> — just spell out &ldquo;LFC&rdquo;.</sub>
-</p>
+<h1 align="center">AIC Compiler</h1>
 
 <p align="center">
   <em>Write PHP. Ship a native binary.</em>
 </p>
 
 <p align="center">
-  <a href="https://github.com/illegalstudio/elephc/stargazers"><img src="https://img.shields.io/github/stars/illegalstudio/elephc?style=flat-square&logo=github&logoColor=white&label=stars&color=FF7A1A" alt="Stars"></a>
-  <a href="https://github.com/illegalstudio/elephc/releases"><img src="https://img.shields.io/github/downloads/illegalstudio/elephc/total?style=flat-square&logo=github&logoColor=white&label=downloads&color=FF7A1A" alt="Downloads"></a>
-  <a href="https://github.com/illegalstudio/elephc"><img src=".github/traffic/clones-badge.svg" alt="Unique Cloners"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/illegalstudio/elephc?style=flat-square&color=FF7A1A" alt="License: MIT"></a>
-  <a href="https://x.com/nahime0"><img src="https://img.shields.io/badge/Follow-%40nahime0-FF7A1A?style=flat-square&logo=x&logoColor=white" alt="Follow @nahime0 on X"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT"></a>
 </p>
 
 <p align="center">
@@ -29,30 +17,18 @@
 </p>
 
 <p align="center">
-  <a href="https://elephc.dev"><strong>Official Website</strong></a>
+  <sub>The compiler binary is <code>elephc</code>. AIC Compiler is an independent hard fork of <a href="#lineage">elephc</a>.</sub>
 </p>
 
 ---
 
-## Support the project
+<a name="lineage"></a>
 
-elephc is built and maintained independently. You can support the project by either:
+## Lineage
 
-- 🐦 **[Following me on X (@nahime0)](https://x.com/nahime0)** for updates, new features, and behind-the-scenes development.
-- ⭐ **[Starring the repo](https://github.com/illegalstudio/elephc/stargazers)** — it helps others discover it and keeps the project going.
-- 💜 **[Sponsoring on GitHub](https://github.com/sponsors/nahime0)** — every contribution, big or small, makes a real difference.
+**AIC Compiler is an independent hard fork of [elephc](https://github.com/illegalstudio/elephc)**, an MIT-licensed PHP-to-native compiler. The fork diverged at the `v0.26.1` line and is developed and maintained independently by Ignibyte — it does not track, sync from, or merge upstream elephc releases. Full attribution for the original work is in [NOTICE](NOTICE).
 
-## Core Contributors
-
-<p>
-  <a href="https://github.com/nahime0"><img src="https://github.com/nahime0.png" width="40" alt="Vincenzo Petrucci"></a>
-  &nbsp;<a href="https://github.com/nahime0"><b>Vincenzo Petrucci</b></a>
-</p>
-
-<p>
-  <a href="https://github.com/Guikingone"><img src="https://github.com/Guikingone.png" width="40" alt="Guillaume Loulier"></a>
-  &nbsp;<a href="https://github.com/Guikingone"><b>Guillaume Loulier</b></a>
-</p>
+The internal crate, binary (`elephc`), and runtime symbols retain the original identifier; the project as a whole is **AIC Compiler**.
 
 ## An async HTTP server in PHP
 
@@ -72,17 +48,13 @@ See [showcases/doom/](showcases/doom/) for full source and build instructions.
 
 ## Why
 
-My first "serious programming" book was *PHP 4 and MySQL*. After years of experimenting with code, that book turned my passion into a profession. I've worked with many languages over the past 20 years, but PHP is the one that has most consistently put food on the table.
+PHP has a simple, approachable, and elegant syntax, and millions of developers already know it well. That makes it an ideal bridge to bring web developers closer to lower-level programming — systems work, native binaries, and understanding what happens under the hood — without forcing them to learn an entirely new language first.
 
-PHP has a simple, approachable, and elegant syntax. Millions of developers worldwide already know it well. That makes it an ideal bridge to bring web developers closer to lower-level programming — systems work, native binaries, understanding what happens under the hood — without forcing them to learn an entirely new language first.
+One thing PHP has always lacked is the ability to produce optimized, fast native binaries. AIC Compiler fills that gap: a from-scratch compiler that turns a static subset of PHP into real machine code.
 
-One thing I always missed about PHP was the ability to produce optimized, fast native binaries. While everyone else is busy building the next Facebook, I thought I could try to fill that gap and write a compiler for PHP.
+Of course, PHP has its limits when it comes to performance-critical or systems-level work. That's why AIC Compiler introduces compiler extensions like `packed class` for flat POD records, `buffer<T>` for contiguous typed arrays, `ptr` for raw memory access, and `extern` for FFI — constructs that give PHP-shaped code the tools it needs without abandoning the language.
 
-Of course, PHP has its limits when it comes to performance-critical or systems-level work. That's why elephc introduces compiler extensions like `packed class` for flat POD records, `buffer<T>` for contiguous typed arrays, `ptr` for raw memory access, and `extern` for FFI — constructs that give PHP developers the tools they need without abandoning the language they already know.
-
-It's not perfect, but **it works** — and it has grown into a genuinely capable PHP compiler. It also happens to be a great way to understand **how a compiler works** and how assembly language operates under the hood.
-
-I made the project as modular as possible. Every function has its own codegen file, and each one is **commented line by line**, so you can see exactly how a high-level construct gets translated into its low-level equivalent.
+It's not perfect, but **it works** — and it has grown into a genuinely capable PHP compiler. It is also a great way to understand **how a compiler works** and how assembly operates under the hood: the project is deliberately modular, with each function's codegen in its own file, **commented line by line**, so you can see exactly how a high-level construct gets translated into its low-level equivalent.
 
 ## What you can expect
 
@@ -99,13 +71,13 @@ elephc myfile.php
 
 The compiler is experimental and evolving. Not everything PHP supports is implemented, and you will find bugs. But as the DOOM showcase demonstrates, you can build real, non-trivial programs with it today.
 
-If you want to contribute, you're welcome. Mi casa es tu casa.
+Contributions are welcome.
 
 ## Learn how a compiler works
 
 elephc is designed to be read. The code generation and runtime layers are heavily annotated, so you can see what each lowering step and emitted instruction is doing — from stack frame setup to syscall invocation, from integer-to-string conversion to array memory layout. If you've ever wondered what happens between `echo "hello"` and the CPU executing it, follow the code from `src/codegen/` and read the comments. **No prior assembly knowledge required.**
 
-## How elephc is different
+## How AIC Compiler is different
 
 There are several ways to make PHP easier to distribute or faster to run: bundling a PHP runtime into one executable, encrypting bytecode, running through the Zend VM with JIT, or compiling selected hot paths while falling back to opcodes for dynamic code.
 
@@ -131,29 +103,15 @@ So elephc is not a drop-in replacement for an entire dynamic framework today. Th
 
 ## Install
 
-### Homebrew (recommended)
+Build from source:
 
 ```bash
-brew install illegalstudio/tap/elephc
-```
-
-### From source
-
-```bash
-git clone https://github.com/illegalstudio/elephc.git
-cd elephc
+git clone https://github.com/Ignibyte/aic_compiler.git
+cd aic_compiler
 cargo build --release
 ```
 
 The binary is at `./target/release/elephc`.
-
-### Manual download
-
-Pre-built binaries are available on the [Releases](https://github.com/illegalstudio/elephc/releases) page. If macOS blocks the binary, run:
-
-```bash
-xattr -cr elephc
-```
 
 ## Usage
 
@@ -600,20 +558,4 @@ For runnable language samples, see `examples/`. For the benchmark harness and CI
 
 ## License
 
-MIT
-
-## Resources
-
-[![Nuno Maduro: PHP Is Getting a Compiler?](https://img.youtube.com/vi/x06307Ui3uY/maxresdefault.jpg)](https://www.youtube.com/watch?v=x06307Ui3uY)
-
-**[Nuno Maduro: PHP Is Getting a Compiler?](https://www.youtube.com/watch?v=x06307Ui3uY)**
-
-## Star History
-
-<a href="https://star-history.com/#illegalstudio/elephc&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=illegalstudio/elephc&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=illegalstudio/elephc&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=illegalstudio/elephc&type=Date" />
- </picture>
-</a>
+MIT — see [LICENSE](LICENSE). AIC Compiler is a fork of elephc; upstream attribution is in [NOTICE](NOTICE).

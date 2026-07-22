@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/array/array_shift.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/array/array_shift.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/arrays/shift.rs`:23](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/arrays/shift.rs#L23) (`lower_array_shift`)
+- **Signature**: [`src/builtins/array/array_shift.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/array/array_shift.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/arrays/shift.rs`:23](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/arrays/shift.rs#L23) (`lower_array_shift`)
 - **Function symbol**: `lower_array_shift()`
 
 

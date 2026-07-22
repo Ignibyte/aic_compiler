@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/rename.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/rename.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4448](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L4448) (`lower_rename`)
+- **Signature**: [`src/builtins/io/rename.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/rename.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:4448](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L4448) (`lower_rename`)
 - **Function symbol**: `lower_rename()`
 
 

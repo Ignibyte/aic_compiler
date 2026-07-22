@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/spl/spl_autoload_functions.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/spl/spl_autoload_functions.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/spl.rs`:167](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/spl.rs#L167) (`lower_spl_autoload_functions`)
+- **Signature**: [`src/builtins/spl/spl_autoload_functions.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/spl/spl_autoload_functions.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/spl.rs`:167](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/spl.rs#L167) (`lower_spl_autoload_functions`)
 - **Function symbol**: `lower_spl_autoload_functions()`
 
 

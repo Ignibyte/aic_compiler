@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/var_dump.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/var_dump.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/debug.rs`:152](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/debug.rs#L152) (`lower_var_dump`)
+- **Signature**: [`src/builtins/io/var_dump.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/var_dump.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/debug.rs`:152](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/debug.rs#L152) (`lower_var_dump`)
 - **Function symbol**: `lower_var_dump()`
 
 

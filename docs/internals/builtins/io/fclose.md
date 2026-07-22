@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/fclose.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/fclose.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2707](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L2707) (`lower_fclose`)
+- **Signature**: [`src/builtins/io/fclose.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/fclose.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2707](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L2707) (`lower_fclose`)
 - **Function symbol**: `lower_fclose()`
 
 

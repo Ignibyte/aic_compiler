@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/implode.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/implode.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:210](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L210) (`lower_implode`)
+- **Signature**: [`src/builtins/string/implode.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/implode.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:210](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L210) (`lower_implode`)
 - **Function symbol**: `lower_implode()`
 
 

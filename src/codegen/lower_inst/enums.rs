@@ -168,7 +168,7 @@ fn lower_enum_from_like(
         && backing_repr == PhpType::Str
     {
         // A boxed Mixed flowing into a STRING-backed enum's from/tryFrom. The value is a string in
-        // practice (AIC's callers all guard with `is_string($x)` before `Enum::tryFrom($x)`), but
+        // practice (real-world callers all guard with `is_string($x)` before `Enum::tryFrom($x)`), but
         // the guard narrows the checker env, not the codegen value type, so the lowering still sees
         // Mixed. Coerce it into the scan's string input registers with the SAME
         // `load_value_as_string_to_regs` the other string builtins use on a Mixed operand — so the

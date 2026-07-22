@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/hash_hmac.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/hash_hmac.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:246](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L246) (`lower_hash_hmac`)
+- **Signature**: [`src/builtins/string/hash_hmac.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/hash_hmac.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:246](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L246) (`lower_hash_hmac`)
 - **Function symbol**: `lower_hash_hmac()`
 
 

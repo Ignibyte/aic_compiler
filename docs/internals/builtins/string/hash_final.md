@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/hash_final.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/hash_final.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:320](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L320) (`lower_hash_final`)
+- **Signature**: [`src/builtins/string/hash_final.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/hash_final.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:320](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L320) (`lower_hash_final`)
 - **Function symbol**: `lower_hash_final()`
 
 

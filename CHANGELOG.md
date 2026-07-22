@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to elephc, a PHP-to-native compiler written in Rust.
+All notable changes to AIC Compiler (an independent fork of elephc), a PHP-to-native compiler written in Rust.
 Releases are listed newest first.
 
 ## [Unreleased]

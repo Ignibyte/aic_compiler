@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/types/floatval.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/types/floatval.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins.rs`:557](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins.rs#L557) (`lower_floatval`)
+- **Signature**: [`src/builtins/types/floatval.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/types/floatval.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins.rs`:557](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins.rs#L557) (`lower_floatval`)
 - **Function symbol**: `lower_floatval()`
 
 

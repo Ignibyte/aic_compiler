@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/array/array_merge_recursive.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/array/array_merge_recursive.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:1387](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L1387) (`lower_array_merge_recursive`)
+- **Signature**: [`src/builtins/array/array_merge_recursive.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/array/array_merge_recursive.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:1387](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L1387) (`lower_array_merge_recursive`)
 - **Function symbol**: `lower_array_merge_recursive()`
 
 

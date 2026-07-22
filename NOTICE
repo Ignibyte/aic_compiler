@@ -1,0 +1,16 @@
+AIC Compiler
+Copyright (c) Ignibyte
+
+This product is an independent hard fork of elephc, an MIT-licensed
+PHP-to-native compiler:
+
+    elephc — https://github.com/illegalstudio/elephc
+    Copyright (c) the elephc authors
+
+Portions of this software derive from elephc and remain subject to the MIT
+License; the original copyright and permission notice is retained in LICENSE.
+
+AIC Compiler diverged from elephc at the v0.26.1 line and is developed and
+maintained independently. It does not track, sync from, or merge upstream
+elephc releases. The internal crate, binary, and runtime symbols retain the
+"elephc" identifier; the project as a whole is AIC Compiler.

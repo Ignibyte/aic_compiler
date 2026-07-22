@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/ctype_alpha.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/ctype_alpha.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/ctype.rs`:20](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/ctype.rs#L20) (`lower_ctype_alpha`)
+- **Signature**: [`src/builtins/string/ctype_alpha.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/ctype_alpha.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/ctype.rs`:20](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/ctype.rs#L20) (`lower_ctype_alpha`)
 - **Function symbol**: `lower_ctype_alpha()`
 
 

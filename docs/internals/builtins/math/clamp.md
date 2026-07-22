@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/math/clamp.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/math/clamp.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/math.rs`:80](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/math.rs#L80) (`lower_clamp`)
+- **Signature**: [`src/builtins/math/clamp.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/math/clamp.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/math.rs`:80](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/math.rs#L80) (`lower_clamp`)
 - **Function symbol**: `lower_clamp()`
 
 

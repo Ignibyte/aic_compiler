@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/array/array_pad.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/array/array_pad.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:99](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L99) (`lower_array_pad`)
+- **Signature**: [`src/builtins/array/array_pad.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/array/array_pad.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/arrays.rs`:99](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/arrays.rs#L99) (`lower_array_pad`)
 - **Function symbol**: `lower_array_pad()`
 
 

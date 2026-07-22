@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/stream_set_timeout.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/stream_set_timeout.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2267](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L2267) (`lower_stream_set_timeout`)
+- **Signature**: [`src/builtins/io/stream_set_timeout.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/stream_set_timeout.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2267](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L2267) (`lower_stream_set_timeout`)
 - **Function symbol**: `lower_stream_set_timeout()`
 
 

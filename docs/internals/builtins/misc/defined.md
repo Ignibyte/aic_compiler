@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/defined.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/defined.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins.rs`:261](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins.rs#L261) (`lower_defined`)
+- **Signature**: [`src/builtins/system/defined.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/defined.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins.rs`:261](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins.rs#L261) (`lower_defined`)
 - **Function symbol**: `lower_defined()`
 
 

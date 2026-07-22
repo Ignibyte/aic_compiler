@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/stream_wrapper_unregister.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/stream_wrapper_unregister.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:1030](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L1030) (`lower_stream_wrapper_unregister`)
+- **Signature**: [`src/builtins/io/stream_wrapper_unregister.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/stream_wrapper_unregister.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:1030](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L1030) (`lower_stream_wrapper_unregister`)
 - **Function symbol**: `lower_stream_wrapper_unregister()`
 
 

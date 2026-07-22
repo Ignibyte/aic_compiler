@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/system/preg_match_all.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/preg_match_all.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/regex.rs`:66](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/regex.rs#L66) (`lower_preg_match_all`)
+- **Signature**: [`src/builtins/system/preg_match_all.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/system/preg_match_all.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/regex.rs`:66](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/regex.rs#L66) (`lower_preg_match_all`)
 - **Function symbol**: `lower_preg_match_all()`
 
 

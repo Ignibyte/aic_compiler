@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/sys_get_temp_dir.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/sys_get_temp_dir.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5403](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L5403) (`lower_sys_get_temp_dir`)
+- **Signature**: [`src/builtins/io/sys_get_temp_dir.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/sys_get_temp_dir.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:5403](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L5403) (`lower_sys_get_temp_dir`)
 - **Function symbol**: `lower_sys_get_temp_dir()`
 
 

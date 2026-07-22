@@ -9,7 +9,7 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/types/signatures.rs`](https://github.com/illegalstudio/elephc/blob/main/src/types/signatures.rs)
+- **Signature**: [`src/types/signatures.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/types/signatures.rs)
 - **Lowering**: [`(not lowered)`:0]()
 - **Function symbol**: `(none — type-checker only)()`
 

@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/stream_set_read_buffer.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/stream_set_read_buffer.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2254](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L2254) (`lower_stream_set_buffer`)
+- **Signature**: [`src/builtins/io/stream_set_read_buffer.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/stream_set_read_buffer.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:2254](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L2254) (`lower_stream_set_buffer`)
 - **Function symbol**: `lower_stream_set_buffer()`
 
 

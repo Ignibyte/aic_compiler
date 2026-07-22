@@ -365,7 +365,7 @@ fn test_include_function_variant_keeps_error_when_call_does_not_respecialize() {
 
 /// Regression for #582: `__DIR__` is compile-time-known — it is the directory of the file holding
 /// the include — so `require __DIR__ . '/rel.php'` must fold like any other constant path. That
-/// spelling is how PHP writes a fixed path that survives being installed anywhere, and AIC's
+/// spelling is how PHP writes a fixed path that survives being installed anywhere, and real-world
 /// manifest and migration loaders need it to stay AOT-resolvable.
 ///
 /// Also covers `__DIR__` reaching the include through a `const`, since the resolver folds const

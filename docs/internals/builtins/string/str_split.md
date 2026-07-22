@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/string/str_split.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/string/str_split.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:194](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/strings.rs#L194) (`lower_str_split`)
+- **Signature**: [`src/builtins/string/str_split.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/string/str_split.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/strings.rs`:194](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/strings.rs#L194) (`lower_str_split`)
 - **Function symbol**: `lower_str_split()`
 
 

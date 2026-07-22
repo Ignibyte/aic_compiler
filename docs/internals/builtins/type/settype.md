@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/types/settype.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/types/settype.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/types.rs`:25](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/types.rs#L25) (`lower_settype`)
+- **Signature**: [`src/builtins/types/settype.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/types/settype.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/types.rs`:25](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/types.rs#L25) (`lower_settype`)
 - **Function symbol**: `lower_settype()`
 
 

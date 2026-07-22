@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/math/hypot.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/math/hypot.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/math/libm.rs`:43](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/math/libm.rs#L43) (`lower_hypot`)
+- **Signature**: [`src/builtins/math/hypot.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/math/hypot.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/math/libm.rs`:43](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/math/libm.rs#L43) (`lower_hypot`)
 - **Function symbol**: `lower_hypot()`
 
 

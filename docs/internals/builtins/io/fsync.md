@@ -9,8 +9,8 @@ sidebar:
 
 ## Where it lives
 
-- **Signature**: [`src/builtins/io/fsync.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/io/fsync.rs)
-- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3261](https://github.com/illegalstudio/elephc/blob/main/src/codegen/lower_inst/builtins/io.rs#L3261) (`lower_fsync`)
+- **Signature**: [`src/builtins/io/fsync.rs`](https://github.com/Ignibyte/aic_compiler/blob/main/src/builtins/io/fsync.rs)
+- **Lowering**: [`src/codegen/lower_inst/builtins/io.rs`:3261](https://github.com/Ignibyte/aic_compiler/blob/main/src/codegen/lower_inst/builtins/io.rs#L3261) (`lower_fsync`)
 - **Function symbol**: `lower_fsync()`
 
 
