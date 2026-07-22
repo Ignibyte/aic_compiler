@@ -6840,14 +6840,56 @@ fn array_map_builtin_return_type(
     if args.len() != 2 {
         return None;
     }
-    let callback_sig = callable_expr_signature(ctx, &args[0])?;
-    let return_ty = normalize_value_php_type(callback_sig.return_type.codegen_repr());
+    let return_ty = array_map_callback_return_type(ctx, &args[0])?;
     if return_ty == PhpType::Mixed {
         return None;
     }
     let array = operands.get(1)?;
     match ctx.builder.value_php_type(*array).codegen_repr() {
         PhpType::Array(_) => Some(PhpType::Array(Box::new(return_ty))),
+        _ => None,
+    }
+}
+
+/// Resolves the `array_map` callback's result element type for the IR return-type
+/// stamp. Handles a variable-bound callable (its tracked signature) AND an inline
+/// closure / arrow-fn with a context-free SCALAR declared return (`int` / `float`
+/// / `bool` / `string`) — the common `array_map(fn (...): string => ..., $xs)`
+/// idiom the checker's array_map hook already types precisely (`Array<callback
+/// return>`), but which the IR stamp previously dropped to `Mixed` because only
+/// variable callbacks were resolved here (so a local holding the result read back
+/// as `Mixed`, and any Array-requiring consumer — `in_array` / `sort` — rejected
+/// it while `foreach` survived via the generic Mixed iterator). A non-scalar
+/// closure return (class / union / array / nullable / self) needs the namespace
+/// context the checker owns, so it stays `None` -> the existing Mixed fallback.
+fn array_map_callback_return_type(
+    ctx: &LoweringContext<'_, '_>,
+    callback: &Expr,
+) -> Option<PhpType> {
+    if let ExprKind::Closure {
+        return_type: Some(type_expr),
+        ..
+    } = &callback.kind
+    {
+        return scalar_type_expr_to_php(type_expr)
+            .map(|ty| normalize_value_php_type(ty.codegen_repr()));
+    }
+    let callback_sig = callable_expr_signature(ctx, callback)?;
+    Some(normalize_value_php_type(callback_sig.return_type.codegen_repr()))
+}
+
+/// Maps a CONTEXT-FREE scalar type annotation to its `PhpType`. Returns `None`
+/// for anything needing name-resolution / namespace context (classes, unions,
+/// arrays, nullable, `self` / `static`), which is left to the checker-owned
+/// resolver so the IR stamp never diverges from the checker on a context-sensitive
+/// type (a divergence would be exactly the miscompile class this avoids).
+fn scalar_type_expr_to_php(type_expr: &crate::parser::ast::TypeExpr) -> Option<PhpType> {
+    use crate::parser::ast::TypeExpr;
+    match type_expr {
+        TypeExpr::Int => Some(PhpType::Int),
+        TypeExpr::Float => Some(PhpType::Float),
+        TypeExpr::Bool => Some(PhpType::Bool),
+        TypeExpr::Str => Some(PhpType::Str),
         _ => None,
     }
 }
