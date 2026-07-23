@@ -318,6 +318,6 @@ fn test_error_yield_from_rejects_non_generator_call() {
 function not_gen(): int { return 1; }
 function gen() { yield from not_gen(); }
 ",
-        "yield from expects an array literal or Generator, got Int",
+        "yield from expects an array, Generator, or iterable, got Int",
     );
 }

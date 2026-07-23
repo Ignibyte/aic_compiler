@@ -596,7 +596,9 @@ fn value_source_instruction<'a>(
 /// key is an `Op::IterCurrentKey` boxed cell, and `array_keys()` yields the same. So the entirely
 /// ordinary
 ///
-///     foreach (array_keys($attrs) as $key) { mb_ereg_match($pattern, $key); }
+/// ```text
+/// foreach (array_keys($attrs) as $key) { mb_ereg_match($pattern, $key); }
+/// ```
 ///
 /// could not compile natively, even though the shared coercion has handled `Mixed` on BOTH arches
 /// all along (`emit_mixed_borrowed_string_to_regs` -> `__rt_mixed_unbox`, tag-dispatched over

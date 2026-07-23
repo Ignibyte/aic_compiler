@@ -155,9 +155,14 @@ fn test_error_negate_string() {
     );
 }
 
-/// Verifies that comparison operators on strings produce an error.
-/// Input: `$x = "a"; echo $x < 1;` — string vs int comparison is invalid.
+/// Asserts the OLD reject-policy for string comparison. Obsolete: commit 505207074
+/// ("re-port comparison completeness") made the checker ACCEPT scalar/string comparison
+/// (to support usort string comparators), so `$x < 1` no longer errors. But the codegen
+/// lowers it to a pure lexicographic `__rt_strcmp`, ignoring PHP 8 numeric-string semantics
+/// — a SILENT MISCOMPILE (`"10" < "9"` → true; PHP: false). Tracked as #691. Ignored until
+/// that lands, when this should be rewritten to byte-parity-assert PHP's result (not rejection).
 #[test]
+#[ignore = "#691: string comparison is accepted but miscompiles (lexicographic, not PHP numeric-string); reject-policy assertion obsolete"]
 fn test_error_comparison_on_string() {
     expect_error(
         "<?php $x = \"a\"; echo $x < 1;",

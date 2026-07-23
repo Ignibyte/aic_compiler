@@ -6223,9 +6223,29 @@ echo fread($conn, 32);
 fn test_stream_socket_client_ipv6_hostname_via_dns() {
     // Phase 11 B1: tcp://[hostname]:port now resolves the bracketed token
     // through getaddrinfo with AF_INET6 hint when inet_pton rejects the
-    // literal. `localhost` resolves to ::1 on every supported system, so
-    // a server bound to [::1] accepts the client built from
+    // literal. A server bound to [::1] accepts the client built from
     // [localhost]:port end-to-end without any literal-IPv6 input.
+    //
+    // This needs the host resolver to map `localhost` to ::1 (the conventional
+    // `::1 localhost` /etc/hosts entry). Minimal containers ship only
+    // `127.0.0.1 localhost`, so `getaddrinfo("localhost", AF_INET6)` finds
+    // nothing and the client cannot connect. Probe the same resolver the
+    // compiled binary uses and skip when IPv6 `localhost` is unavailable,
+    // rather than hang on `accept()` and fail — this keeps the assertion live
+    // wherever the resolver supports it (dev machines, CI with dual-stack).
+    use std::net::ToSocketAddrs;
+    let localhost_has_ipv6 = ("localhost", 55821u16)
+        .to_socket_addrs()
+        .map(|addrs| addrs.into_iter().any(|addr| addr.is_ipv6()))
+        .unwrap_or(false);
+    if !localhost_has_ipv6 {
+        eprintln!(
+            "skipping test_stream_socket_client_ipv6_hostname_via_dns: \
+             host resolver does not map `localhost` to an IPv6 address"
+        );
+        return;
+    }
+
     let out = compile_and_run(
         r#"<?php
 $srv = stream_socket_server("tcp://[::1]:55821");

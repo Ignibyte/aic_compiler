@@ -166,7 +166,7 @@ fn test_error_array_values_wrong_args() {
 /// Verifies that error sort wrong args.
 #[test]
 fn test_error_sort_wrong_args() {
-    expect_error("<?php sort();", "sort() takes exactly 1 argument");
+    expect_error("<?php sort();", "sort() takes 1 or 2 arguments");
 }
 
 /// Verifies that error rsort wrong args.
