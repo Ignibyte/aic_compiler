@@ -380,6 +380,40 @@ fn test_ctype_digit_false() {
     assert_eq!(out, "");
 }
 
+/// Verifies `ctype_digit()` over a guard-narrowed `Mixed` value — the ward-layout
+/// `ViewPageAction::pageParam` shape `is_string($x) && ctype_digit($x)` — unboxes the string
+/// payload and scans it instead of aborting the backend on the `Mixed` slot repr (#695 D2).
+#[test]
+fn test_ctype_digit_over_guard_narrowed_mixed() {
+    let out = compile_and_run(
+        r#"<?php
+declare(strict_types=1);
+function page(mixed $raw): int {
+    return (is_string($raw) && ctype_digit($raw)) ? (int) $raw : -1;
+}
+echo page("123"), "|", page("007"), "|", page("12a"), "|", page(""), "|", page(42), "|", page(null);
+"#,
+    );
+    assert_eq!(out, "123|7|-1|-1|-1|-1");
+}
+
+/// Verifies the shared `Mixed`-unbox path serves every ctype builtin (here `ctype_alpha`): the
+/// string tag scans normally and a non-string tag yields the empty-string false result rather than
+/// being stringified — so PHP's deprecated int-as-ASCII quirk is not manufactured (#695 D2).
+#[test]
+fn test_ctype_alpha_over_guard_narrowed_mixed() {
+    let out = compile_and_run(
+        r#"<?php
+declare(strict_types=1);
+function alpha(mixed $v): string {
+    return (is_string($v) && ctype_alpha($v)) ? "y" : "n";
+}
+echo alpha("abc"), alpha("ab1"), alpha(""), alpha(65), alpha(null);
+"#,
+    );
+    assert_eq!(out, "ynnnn");
+}
+
 /// Verifies `ctype_alnum()` returns `"1"` (truthy) for an alphanumeric string "Hello123".
 #[test]
 fn test_ctype_alnum_true() {

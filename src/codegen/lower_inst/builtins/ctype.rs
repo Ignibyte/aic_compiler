@@ -8,13 +8,14 @@
 //! - PHP ctype checks operate over bytes, reject empty strings, and return scalar booleans.
 //! - The loops are emitted inline; there is no shared runtime helper.
 
+use crate::codegen::abi;
 use crate::codegen::platform::Arch;
 use crate::codegen::{CodegenIrError, Result};
-use crate::ir::Instruction;
+use crate::ir::{Instruction, ValueId};
 use crate::types::PhpType;
 
 use super::super::super::context::FunctionContext;
-use super::super::{expect_operand, store_if_result};
+use super::super::{expect_operand, load_value_to_first_int_arg, store_if_result};
 
 /// Lowers `ctype_alpha(string)` by checking every byte against ASCII alpha ranges.
 pub(crate) fn lower_ctype_alpha(ctx: &mut FunctionContext<'_>, inst: &Instruction) -> Result<()> {
@@ -105,11 +106,61 @@ fn load_single_string_arg(
     let value = expect_operand(inst, 0)?;
     match ctx.load_value_to_result(value)?.codegen_repr() {
         PhpType::Str => Ok(()),
+        // A guard-narrowed operand (e.g. `is_string($x) && ctype_digit($x)`) keeps a Mixed slot
+        // repr even though the checker proved it a string. Unbox at runtime: the string tag scans
+        // its bytes; any other tag yields an empty string, so the shared loop reports false — which
+        // matches PHP's non-string rejection. (PHP's deprecated int-as-ASCII-code quirk is
+        // deliberately NOT reproduced; every in-corpus ctype call is is_string-guarded, so the
+        // non-string tag is unreachable there and this can never misfilter a real caller.)
+        PhpType::Mixed | PhpType::Union(_) => emit_ctype_mixed_string_arg(ctx, value),
         other => Err(CodegenIrError::unsupported(format!(
             "{} for PHP type {:?}",
             name, other
         ))),
     }
+}
+
+/// Unboxes a `Mixed`/union ctype argument into the string-scan registers.
+///
+/// Leaves the borrowed string pointer/length in the registers the ctype loop reads
+/// (AArch64 `x1`/`x2`, x86_64 `rax`/`rdx`) when the runtime payload is a string, and an empty
+/// string (length 0 → the loop's empty-input branch returns false) for any non-string tag.
+fn emit_ctype_mixed_string_arg(ctx: &mut FunctionContext<'_>, value: ValueId) -> Result<()> {
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => emit_ctype_mixed_string_arg_aarch64(ctx, value),
+        Arch::X86_64 => emit_ctype_mixed_string_arg_x86_64(ctx, value),
+    }
+}
+
+/// AArch64 unbox: `__rt_mixed_unbox` returns tag in `x0` and, for a string, ptr in `x1` / len in
+/// `x2` — already the registers the scan loop reads, so the string path needs no move.
+/// (Mirrored from the x86_64 path below, which is byte-verified on this host; flag for an
+/// aarch64 run.)
+fn emit_ctype_mixed_string_arg_aarch64(ctx: &mut FunctionContext<'_>, value: ValueId) -> Result<()> {
+    let keep = ctx.next_label("ctype_mixed_string_keep");
+    load_value_to_first_int_arg(ctx, value)?;                                   // load the boxed argument into x0
+    abi::emit_call_label(ctx.emitter, "__rt_mixed_unbox");                      // x0 = tag, x1 = ptr, x2 = len (string payload)
+    ctx.emitter.instruction("cmp x0, #1");                                      // check whether the boxed payload is a string
+    ctx.emitter.instruction(&format!("b.eq {}", keep));                         // string: x1/x2 already hold the scan pointer and length
+    ctx.emitter.instruction("mov x1, xzr");                                     // non-string: use an empty string pointer
+    ctx.emitter.instruction("mov x2, xzr");                                     // non-string: zero length -> the loop reports false
+    ctx.emitter.label(&keep);
+    Ok(())
+}
+
+/// x86_64 unbox: `__rt_mixed_unbox` returns tag in `rax`, ptr in `rdi`, len in `rdx` for a string;
+/// move the pointer into `rax` (the scan loop's pointer register), leaving length in `rdx`.
+fn emit_ctype_mixed_string_arg_x86_64(ctx: &mut FunctionContext<'_>, value: ValueId) -> Result<()> {
+    let keep = ctx.next_label("ctype_mixed_string_keep");
+    load_value_to_first_int_arg(ctx, value)?;                                   // load the boxed argument into rdi
+    abi::emit_call_label(ctx.emitter, "__rt_mixed_unbox");                      // rax = tag, rdi = ptr, rdx = len (string payload)
+    ctx.emitter.instruction("cmp rax, 1");                                      // check whether the boxed payload is a string
+    ctx.emitter.instruction(&format!("je {}", keep));                           // string: rdi/rdx hold the scan pointer and length
+    ctx.emitter.instruction("xor edi, edi");                                    // non-string: use an empty string pointer
+    ctx.emitter.instruction("xor edx, edx");                                    // non-string: zero length -> the loop reports false
+    ctx.emitter.label(&keep);
+    ctx.emitter.instruction("mov rax, rdi");                                    // scan loop reads the pointer from rax, length from rdx
+    Ok(())
 }
 
 /// Emits the AArch64 ctype scan loop.
