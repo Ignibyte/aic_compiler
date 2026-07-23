@@ -253,8 +253,40 @@ impl Checker {
                 }
             }
             _ if guard_matches(current, target) => current.clone(),
+            // A guard by an interface the value already satisfies keeps the more-informative
+            // `current` type instead of discarding it for the guard target. PHP's `$x instanceof I`
+            // yields `typeof($x) & I`; with no intersection type, `current` is the sound
+            // approximation whenever `current` is a subtype of the interface (the intersection IS
+            // `current`) or the interface is an empty marker adding no callable surface. Without
+            // this, `AdminResource` guarded by the empty `StaticAdminResource` marker was narrowed
+            // to the marker and lost `AdminResource`'s methods (mis-reported "Undefined method").
+            _ if self.keep_current_over_interface_guard(current, target) => current.clone(),
             _ => target.clone(),
         }
+    }
+
+    /// Returns true when an `instanceof <interface>` guard should keep the pre-guard `current`
+    /// object type rather than replace it with the interface target, because the guard adds no
+    /// callable surface the value did not already carry. Two sound cases (`current` is never a
+    /// supertype claim): (a) `current` already implements/extends the target interface, so
+    /// `current & target` == the more-specific `current`; (b) the target is an empty marker
+    /// interface (no methods, no static methods, no parents), so `current & target` exposes exactly
+    /// `current`'s methods. A class target, or a non-empty unrelated interface, falls through to the
+    /// caller's `target.clone()` — a real intersection type is future work.
+    fn keep_current_over_interface_guard(&self, current: &PhpType, target: &PhpType) -> bool {
+        let (PhpType::Object(current_class), PhpType::Object(target_class)) = (current, target)
+        else {
+            return false;
+        };
+        let Some(target_info) = self.interfaces.get(target_class) else {
+            return false;
+        };
+        if self.object_type_implements_interface(current_class, target_class) {
+            return true;
+        }
+        target_info.methods.is_empty()
+            && target_info.static_methods.is_empty()
+            && target_info.parents.is_empty()
     }
 
     /// Narrows `current` to the subset incompatible with `target` (the guard-false type): a `Union`
