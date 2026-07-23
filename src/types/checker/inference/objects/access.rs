@@ -82,13 +82,27 @@ impl Checker {
                 return self.infer_property_on_class_type(&class_name, property, expr);
             }
             // Union of two or more distinct object classes (`A|B`): the property
-            // must exist on every object member; codegen dispatches on the runtime
-            // class id and the result is the union of each member's property type.
+            // must exist on every object member; the result is the union of each
+            // member's property type.
             let object_classes = self.union_object_classes(&obj_ty);
             if object_classes.len() >= 2 {
                 let mut property_types = Vec::with_capacity(object_classes.len());
                 for class_name in &object_classes {
                     property_types.push(self.infer_property_on_class_type(class_name, property, expr)?);
+                }
+                // #695 D5: bridge the narrowing to lowering when every member stores the
+                // property in the SAME slot (same declaration index + declared type ⇒ same
+                // offset + repr). Recording one representative class through the existing
+                // span-keyed bridge lets codegen do a plain raw-pointer slot load that is
+                // correct for every member — the receiver slot holds a RAW object pointer
+                // (declared interface type), so neither boxed-union lowering applies.
+                // Members with differing slots are NOT recorded: lowering then fails loud
+                // (never a wrong-offset read); no corpus case needs the runtime dispatch.
+                if let Some(representative) =
+                    self.union_property_shared_slot_class(&object_classes, property)
+                {
+                    self.narrowed_call_receivers
+                        .insert(expr.span, PhpType::Object(representative));
                 }
                 return Ok(self.normalize_union_type(property_types));
             }
@@ -304,6 +318,15 @@ impl Checker {
         if let Some(ty) = Self::enum_marker_magic_property(class_name, property) {
             return Ok(ty);
         }
+        // A known INTERFACE receiver deserves a truthful diagnostic — "Undefined class" sent
+        // #695 D5's investigation chasing a phantom missing class when the real problem was a
+        // property read on an un-narrowed interface-typed value.
+        if self.interfaces.contains_key(class_name) {
+            return Err(CompileError::new(
+                expr.span,
+                &format!("Interface '{}' has no property '{}'", class_name, property),
+            ));
+        }
         Err(CompileError::new(
             expr.span,
             &format!("Undefined class: {}", class_name),
@@ -438,6 +461,35 @@ impl Checker {
             }
         }
         classes
+    }
+
+    /// Returns a representative class when EVERY class in `object_classes` declares
+    /// `property` at the same position with the same declared type — the proxy for "same
+    /// payload slot" (offsets derive from declaration index, parent-first; reprs from the
+    /// declared type). `None` whenever any member misses the property in its own
+    /// declaration list or disagrees on position/type: the caller then records nothing and
+    /// lowering fails loud rather than reading a wrong offset (#695 D5).
+    fn union_property_shared_slot_class(
+        &self,
+        object_classes: &[String],
+        property: &str,
+    ) -> Option<String> {
+        let mut shared: Option<(usize, PhpType)> = None;
+        for class_name in object_classes {
+            let info = self.classes.get(class_name.trim_start_matches('\\'))?;
+            let position = info
+                .properties
+                .iter()
+                .position(|(name, _)| name == property)?;
+            let declared_ty = info.properties[position].1.clone();
+            match &shared {
+                None => shared = Some((position, declared_ty)),
+                Some((existing_position, existing_ty))
+                    if *existing_position == position && *existing_ty == declared_ty => {}
+                Some(_) => return None,
+            }
+        }
+        shared.map(|_| object_classes.first().cloned())?
     }
 
     /// Infers the type of a static property access (`Foo::$prop`).

@@ -286,6 +286,37 @@ impl Checker {
         }))
     }
 
+    /// Multi-condition `match (true)` arm guard (#695 D5): when EVERY comma-separated arm
+    /// condition narrows the SAME receiver key (`$r instanceof AndRule, $r instanceof OrRule`),
+    /// the arm fires when ANY condition holds, so inside the arm the receiver is the UNION of
+    /// the per-condition then-types. Returns `None` — narrowing nothing — when any condition
+    /// is not a guard, or when conditions guard different receivers (each condition would only
+    /// prove something about its own receiver, and the arm doesn't know which one fired). A
+    /// single-condition arm degenerates to plain [`Self::guard_narrowing`].
+    pub(crate) fn multi_condition_arm_guard(
+        &mut self,
+        conditions: &[Expr],
+        env: &TypeEnv,
+    ) -> Result<Option<(String, PhpType)>, CompileError> {
+        let mut receiver: Option<String> = None;
+        let mut then_tys: Vec<PhpType> = Vec::new();
+        for condition in conditions {
+            let Some(guard) = self.guard_narrowing(condition, env)? else {
+                return Ok(None);
+            };
+            match &receiver {
+                None => receiver = Some(guard.var.clone()),
+                Some(existing) if *existing == guard.var => {}
+                Some(_) => return Ok(None),
+            }
+            then_tys.push(guard.then_ty);
+        }
+        let Some(receiver) = receiver else {
+            return Ok(None);
+        };
+        Ok(Some((receiver, self.normalize_union_type(then_tys))))
+    }
+
     /// Narrows `current` to the guard-true type. Inside the branch the guard guarantees the target,
     /// so `Mixed` and any incompatible concrete type become `target`; a `Union` keeps only its
     /// matching members (falling back to `target` if none match); a concrete type already matching

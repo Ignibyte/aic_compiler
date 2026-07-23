@@ -206,9 +206,13 @@ impl Checker {
                     for condition in conditions {
                         self.infer_type_with_assignment_effects(condition, &mut arm_env)?;
                     }
-                    if subject_is_true && conditions.len() == 1 {
-                        if let Some(guard) = self.guard_narrowing(&conditions[0], &arm_env)? {
-                            arm_env.insert(guard.var, guard.then_ty);
+                    // Twin of the plain-inference arm narrowing: multi-condition arms over
+                    // one receiver bind the union of their then-types (#695 D5).
+                    if subject_is_true && !conditions.is_empty() {
+                        if let Some((receiver, then_ty)) =
+                            self.multi_condition_arm_guard(conditions, &arm_env)?
+                        {
+                            arm_env.insert(receiver, then_ty);
                         }
                     }
                     let arm_ty = self.infer_type_with_assignment_effects(result, &mut arm_env)?;

@@ -205,11 +205,15 @@ impl Checker {
                     for c in conditions {
                         self.infer_type(c, env)?;
                     }
-                    let ty = if subject_is_true && conditions.len() == 1 {
-                        match self.guard_narrowing(&conditions[0], env)? {
-                            Some(guard) => {
+                    // A multi-condition arm (`A, B => ...`) fires when ANY condition holds;
+                    // when all conditions guard the SAME receiver, it narrows to the UNION
+                    // of their then-types (#695 D5). Single-condition arms degenerate to
+                    // the plain guard.
+                    let ty = if subject_is_true && !conditions.is_empty() {
+                        match self.multi_condition_arm_guard(conditions, env)? {
+                            Some((receiver, then_ty)) => {
                                 let mut arm_env = env.clone();
-                                arm_env.insert(guard.var, guard.then_ty);
+                                arm_env.insert(receiver, then_ty);
                                 self.infer_type(result, &arm_env)?
                             }
                             None => self.infer_type(result, env)?,

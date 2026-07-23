@@ -654,3 +654,28 @@ echo build(3), "|", build(0), "|", build(-2);
         "OK|ERR:needs a positive column count, got 0|ERR:needs a positive column count, got -2"
     );
 }
+
+/// A multi-condition `match (true)` arm (`$r instanceof AndRule, $r instanceof OrRule => ...`)
+/// fires when ANY condition holds, so the receiver narrows to the UNION of the guarded classes
+/// inside the arm (#695 D5). Reading a property both classes declare in the SAME slot lowers as
+/// a plain raw-pointer slot load via the span-keyed narrowed-receiver bridge — byte-parity with
+/// PHP 8.5 across both members and the default arm. Mirrors AIC's BlockDescriptorFactory shape.
+#[test]
+fn test_match_true_multi_condition_arm_narrows_receiver_to_union() {
+    let out = compile_and_run(
+        r#"<?php
+interface Rule {}
+class AndRule implements Rule { public function __construct(public string $tag) {} }
+class OrRule implements Rule { public function __construct(public string $tag) {} }
+class NotRule implements Rule {}
+function label(Rule $r): string {
+    return match (true) {
+        $r instanceof AndRule, $r instanceof OrRule => 'op:' . $r->tag,
+        default => 'other',
+    };
+}
+echo label(new AndRule('a')), '|', label(new OrRule('o')), '|', label(new NotRule());
+"#,
+    );
+    assert_eq!(out, "op:a|op:o|other");
+}

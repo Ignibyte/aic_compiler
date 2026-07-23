@@ -121,3 +121,15 @@ fn test_readonly_property_refinement_dies_when_the_root_is_rebound() {
         "expects Str, got Union([Str, Void])",
     );
 }
+
+/// An un-narrowed property read on an interface-typed receiver names the INTERFACE truthfully
+/// (#695 D5) — the old "Undefined class: <Interface>" sent investigations chasing a phantom
+/// missing class. Also pins the multi-condition arm rule: conditions guarding DIFFERENT
+/// receivers narrow nothing, so the read stays on the declared interface type.
+#[test]
+fn test_interface_property_read_reports_interface_not_undefined_class() {
+    expect_error(
+        "<?php interface Rule {} class AndRule implements Rule { public function __construct(public string $tag) {} } function f(Rule $r): string { return $r->tag; } echo f(new AndRule('x'));",
+        "Interface 'Rule' has no property 'tag'",
+    );
+}
