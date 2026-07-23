@@ -263,6 +263,16 @@ impl Checker {
                 Ok(PhpType::Array(Box::new(elem_ty)))
             }
             ExprKind::ArrayAccess { array, index } => {
+                // Flow-narrowing: consult a guard-recorded element refinement first
+                // (mirrors the property refinement-first probe in objects/access.rs) so an
+                // `is_array($x['k'])`-guarded branch sees the narrowed element type. The
+                // key exists only for literal-indexed reads of genuinely-array roots, and
+                // every element write / root rebind / call purges it (#695 D3).
+                if let Some(key) = Self::narrowed_array_element_env_key(array, index) {
+                    if let Some(narrowed) = env.get(&key) {
+                        return Ok(narrowed.clone());
+                    }
+                }
                 let arr_ty = self.infer_type(array, env)?;
                 let idx_ty = self.infer_type(index, env)?;
                 let normalized_idx_ty = normalized_array_key_type(index, idx_ty.clone());

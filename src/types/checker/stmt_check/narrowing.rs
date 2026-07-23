@@ -128,6 +128,28 @@ impl Checker {
         }
     }
 
+    /// Synthetic `TypeEnv` key for a narrowed array-element access `$var['k']` / `$var[0]` —
+    /// `None` for anything else (non-variable roots, dynamic indexes), which keeps those paths
+    /// un-narrowed rather than unsoundly keyed (#695 D3).
+    ///
+    /// Same `\x01` sigil family as the MUTABLE property keys on purpose: the blanket call/loop
+    /// purge ([`Self::purge_property_narrowings`]) then invalidates element refinements for
+    /// free, which is the required conservative posture — arrays can be aliased via references,
+    /// so any call may mutate the root. A numeric-string literal (`$a['3']`) and its int twin
+    /// (`$a[3]`) name the same PHP element but format as distinct keys; that costs precision
+    /// (a mixed-spelling guard/read pair misses the refinement), never soundness, because every
+    /// element WRITE purges by root, not by key.
+    pub(crate) fn narrowed_array_element_env_key(array: &Expr, index: &Expr) -> Option<String> {
+        let ExprKind::Variable(var) = &array.kind else {
+            return None;
+        };
+        match &index.kind {
+            ExprKind::StringLiteral(key) => Some(format!("\u{1}elem\u{1}{var}['{key}']")),
+            ExprKind::IntLiteral(key) => Some(format!("\u{1}elem\u{1}{var}[{key}]")),
+            _ => None,
+        }
+    }
+
     /// Whether a refinement on `$object->property` stays true across a call.
     ///
     /// A `readonly` property cannot be written after initialization, so no callee and no aliased
@@ -180,6 +202,21 @@ impl Checker {
                     Self::narrowed_property_env_key(object, property)
                 }
             }
+            // #695 D3: key a literal-indexed element read of a genuinely-array root.
+            // The type gate matters: an `ArrayAccess` OBJECT's `offsetGet` may run user
+            // code (two reads can differ — the hooked-property analogue), and a `Mixed`
+            // root could hold such an object at runtime. A known array's literal-indexed
+            // read is a stable flow binding.
+            ExprKind::ArrayAccess { array, index } => {
+                if matches!(
+                    self.infer_type(array, env)?,
+                    PhpType::Array(_) | PhpType::AssocArray { .. }
+                ) {
+                    Self::narrowed_array_element_env_key(array, index)
+                } else {
+                    None
+                }
+            }
             _ => None,
         })
     }
@@ -206,9 +243,21 @@ impl Checker {
     pub(crate) fn purge_property_narrowings_for_root(env: &mut TypeEnv, root: &str) {
         let mutable_prefix = format!("\u{1}prop\u{1}{root}->");
         let readonly_prefix = format!("\u{2}roprop\u{2}{root}->");
+        let element_prefix = format!("\u{1}elem\u{1}{root}[");
         env.retain(|key, _| {
-            !key.starts_with(&mutable_prefix) && !key.starts_with(&readonly_prefix)
+            !key.starts_with(&mutable_prefix)
+                && !key.starts_with(&readonly_prefix)
+                && !key.starts_with(&element_prefix)
         });
+    }
+
+    /// Drops array-element narrowings rooted at one local after an element of that local is
+    /// written (`$root[...] = ...`) or removed (`unset($root[...])`). A dynamic index can hit
+    /// any element, and even a different-literal write mutates the same root value — so the
+    /// purge is by ROOT, never by exact key (#695 D3).
+    pub(crate) fn purge_array_element_narrowings_for_root(env: &mut TypeEnv, root: &str) {
+        let element_prefix = format!("\u{1}elem\u{1}{root}[");
+        env.retain(|key, _| !key.starts_with(&element_prefix));
     }
 
     /// Returns whether a property guard can invoke user code on either read. Hooked or magic

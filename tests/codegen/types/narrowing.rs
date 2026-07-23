@@ -292,3 +292,63 @@ fn test_narrowing_restores_all_narrowed_variables() {
     );
     assert_eq!(out, "8");
 }
+
+/// An `is_array()` guard on a literal-indexed element of a genuinely-array root narrows that
+/// element for the guarded flow (#695 D3): `$decoded['packages']` reads as the narrowed array
+/// inside the branch, so `count()` compiles and runs. Negated-guard early-return shape mirrors
+/// AIC's `SystemStatusReport`. The un-guarded path stays un-narrowed (`no-packages`), and a
+/// non-array root (`not-array`) never reaches the element guard.
+#[test]
+fn test_array_element_guard_narrows_literal_indexed_read() {
+    let out = compile_and_run(
+        r#"<?php
+        function report(string $json): string {
+            $decoded = json_decode($json, true);
+            if (!is_array($decoded)) { return 'not-array'; }
+            if (!is_array($decoded['packages'])) { return 'no-packages'; }
+            return 'n=' . count($decoded['packages']);
+        }
+        echo report('{"packages":{"a":1,"b":2}}'), '|', report('{"packages":3}'), '|', report('"x"');
+        "#,
+    );
+    assert_eq!(out, "n=2|no-packages|not-array");
+}
+
+/// UNSOUNDNESS GUARD (#695 D3): an element WRITE after the guard purges the element
+/// refinement, so the re-read must behave exactly like PHP — never reuse the stale "is an
+/// array" fact. The root here is honest `Array(Mixed)` (json_decode), so a stale refinement
+/// would be the ONLY way `is_array($d['k'])` could wrongly hold after `$d['k'] = 5`.
+#[test]
+fn test_array_element_refinement_purged_on_element_write() {
+    let out = compile_and_run(
+        r#"<?php
+        function stale2(string $json): string {
+            $d = json_decode($json, true);
+            if (!is_array($d)) { return 'x'; }
+            if (!is_array($d['k'])) { return 'no'; }
+            $n1 = count($d['k']);
+            $d['k'] = 5;
+            $after = is_array($d['k']) ? 'arr' : 'int';
+            return 'n1=' . $n1 . ',after=' . $after;
+        }
+        echo stale2('{"k":[1,2]}');
+        "#,
+    );
+    assert_eq!(out, "n1=2,after=int");
+}
+
+/// The guard-false path of an element guard stays un-narrowed and takes the PHP branch
+/// (#695 D3) — a non-array element under a genuinely-array root.
+#[test]
+fn test_array_element_guard_false_path_unnarrowed() {
+    let out = compile_and_run(
+        r#"<?php
+        function guardFalse(array $a): string {
+            if (!is_array($a['k'])) { return 'no:' . (is_int($a['k']) ? 'int' : 'other'); }
+            return 'yes';
+        }
+        echo guardFalse(['k' => 9]);
+        "#,
+    );
+    assert_eq!(out, "no:int");
+}

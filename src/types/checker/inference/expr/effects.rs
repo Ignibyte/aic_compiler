@@ -66,6 +66,20 @@ impl Checker {
                     ExprKind::Variable(name) => {
                         Self::purge_property_narrowings_for_root(env, name)
                     }
+                    // #695 D3: `$root[...] = ...` (any nesting depth) invalidates that
+                    // root's element refinements — a dynamic index can hit any element,
+                    // and even a different-literal write mutates the same root value.
+                    // A property-rooted element write (`$this->x['k'] = ...`) has no
+                    // variable root and additionally falls through to the blanket
+                    // property purge below, which sweeps element keys too (same sigil).
+                    ExprKind::ArrayAccess { .. } => {
+                        if let Some(root) = array_access_root_variable(target) {
+                            Self::purge_array_element_narrowings_for_root(env, root);
+                        }
+                        if assignment_may_write_property(target) {
+                            Self::purge_property_narrowings(env)
+                        }
+                    }
                     _ if assignment_may_write_property(target) => {
                         Self::purge_property_narrowings(env)
                     }
@@ -281,6 +295,11 @@ impl Checker {
                 if builtin_name.eq_ignore_ascii_case("unset") {
                     for arg in &expanded_args {
                         promote_indexed_local_for_element_unset(arg, env);
+                        // #695 D3: removing an element (or the whole local) invalidates
+                        // the root's element refinements, same as an element write.
+                        if let Some(root) = array_access_root_variable(arg) {
+                            Self::purge_array_element_narrowings_for_root(env, root);
+                        }
                     }
                 }
                 Ok(ty)
@@ -406,6 +425,16 @@ fn assignment_may_write_property(target: &Expr) -> bool {
         ExprKind::Variable(_) => false,
         ExprKind::ArrayAccess { array, .. } => assignment_may_write_property(array),
         _ => true,
+    }
+}
+
+/// Returns the root variable of a (possibly nested) `$var[...][...]` element target, or the
+/// bare variable itself — `None` for property-rooted and other complex receivers (#695 D3).
+fn array_access_root_variable(target: &Expr) -> Option<&String> {
+    match &target.kind {
+        ExprKind::Variable(name) => Some(name),
+        ExprKind::ArrayAccess { array, .. } => array_access_root_variable(array),
+        _ => None,
     }
 }
 
