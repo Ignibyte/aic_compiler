@@ -50,6 +50,10 @@ const TEST_BRIDGE_STATICLIBS: &[TestBridgeStaticlib] = &[
         lib_name: "elephc_image",
         package: "elephc-image",
     },
+    TestBridgeStaticlib {
+        lib_name: "elephc_compare",
+        package: "elephc-compare",
+    },
 ];
 
 /// Default timeout for executing one compiled codegen fixture binary.
@@ -275,6 +279,7 @@ pub(crate) fn link_binary(
             || *l == "elephc_phar"
             || *l == "elephc_tz"
             || *l == "elephc_image"
+            || *l == "elephc_compare"
     });
     let bridge_staticlib_dir = match std::env::var("CARGO_TARGET_DIR") {
         Ok(dir) if !dir.is_empty() => format!("{}/debug", dir),
@@ -457,6 +462,21 @@ fn codegen_binary_timeout() -> Duration {
 
 /// Assembles user assembly, links it with a runtime object, runs the binary,
 /// and returns stdout. Asserts the binary exits successfully. Used for happy-path codegen tests.
+/// Augments a fixture's link libraries with bridge staticlibs whose runtime symbols
+/// the generated assembly references but the checker's `required_libraries` does not
+/// surface. Currently just `elephc_compare`: codegen emits a direct
+/// `__rt_php_str_compare` call for string `<`/`<=`/`>`/`>=`/`<=>` (PHP 8 numeric-string
+/// comparison), so link the bridge whenever that symbol appears — mirroring the
+/// production pipeline's asm-scan link gate so `compile_and_run` fixtures need no
+/// explicit `extra_link_libs`.
+fn link_libs_with_asm_bridges(user_asm: &str, extra_link_libs: &[String]) -> Vec<String> {
+    let mut libs = extra_link_libs.to_vec();
+    if user_asm.contains("__rt_php_str_compare") && !libs.iter().any(|lib| lib == "elephc_compare") {
+        libs.push("elephc_compare".to_string());
+    }
+    libs
+}
+
 pub(crate) fn assemble_and_run(
     user_asm: &str,
     runtime_obj: &Path,
@@ -474,7 +494,7 @@ pub(crate) fn assemble_and_run(
         &obj_path,
         runtime_obj,
         &bin_path,
-        extra_link_libs,
+        &link_libs_with_asm_bridges(user_asm, extra_link_libs),
         extra_link_paths,
         extra_frameworks,
     );
@@ -520,7 +540,7 @@ pub(crate) fn assemble_and_run_capture(
         &obj_path,
         runtime_obj,
         &bin_path,
-        extra_link_libs,
+        &link_libs_with_asm_bridges(user_asm, extra_link_libs),
         extra_link_paths,
         extra_frameworks,
     );
@@ -553,7 +573,7 @@ pub(crate) fn assemble_and_run_expect_failure(
         &obj_path,
         runtime_obj,
         &bin_path,
-        extra_link_libs,
+        &link_libs_with_asm_bridges(user_asm, extra_link_libs),
         extra_link_paths,
         extra_frameworks,
     );

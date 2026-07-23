@@ -645,3 +645,28 @@ check([1]);
     );
     assert_eq!(out, "bool(false)\nbool(true)\nbool(false)\nbool(true)\n");
 }
+
+/// Regression (#691): ordered/spaceship comparison over `string` operands must apply
+/// PHP 8 numeric-string semantics via `__rt_php_str_compare` (the `elephc_compare`
+/// bridge), not a pure lexicographic byte compare. Two numeric strings compare
+/// numerically (`"10" <=> "9"` is `1`, not `-1`), integers that fit `i64` compare
+/// exactly (`2^53+1 <=> 2^53` is `1`, which a double-only path would collapse to `0`),
+/// an out-of-range integer orders by its overflow sign, and non-numeric strings fall
+/// back to bytes. Each row prints `<=>` then `L`/`-` (for `<`) then `G`/`-` (for `>`).
+#[test]
+fn test_string_comparison_uses_php8_numeric_string_semantics() {
+    let out = compile_and_run(
+        r#"<?php
+function cmp(string $a, string $b): void {
+    echo ($a <=> $b), ($a < $b ? "L" : "-"), ($a > $b ? "G" : "-"), "\n";
+}
+cmp("10", "9");
+cmp("100", "20");
+cmp("abc", "abd");
+cmp("9007199254740993", "9007199254740992");
+cmp("9223372036854775807", "9223372036854775808");
+cmp("1e3", "1000");
+"#,
+    );
+    assert_eq!(out, "1-G\n1-G\n-1L-\n1-G\n-1L-\n0--\n");
+}

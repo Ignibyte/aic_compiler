@@ -582,6 +582,7 @@ version = "0.26.0"
 dependencies = [
  "bitflags 2.13.0",
  "bzip2-rs",
+ "elephc-compare",
  "elephc-crypto",
  "elephc-image",
  "elephc-pdo",
@@ -596,6 +597,10 @@ dependencies = [
  "serde_json",
  "stacker",
 ]
+
+[[package]]
+name = "elephc-compare"
+version = "0.1.0"
 
 [[package]]
 name = "elephc-crypto"

@@ -134,6 +134,22 @@ const BRIDGES: &[BridgeStaticlib] = &[
         // Rust runtime/unwinder symbols, like the other bridges.
         needs_libdl: true,
     },
+    BridgeStaticlib {
+        lib_name: "elephc_compare",
+        env_var: "ELEPHC_COMPARE_LIB_DIR",
+        crate_name: "elephc-compare",
+        flag_name: "compare",
+        // Pure-std leaf: PHP 8 numeric-string comparison (`__rt_php_str_compare`),
+        // no link-time side effects, so a plain `-l elephc_compare` suffices. Linked
+        // only when codegen actually lowers a string comparison (the pipeline's
+        // asm-scan gate adds it to extra_link_libs), so non-comparing binaries never
+        // carry it.
+        whole_archive: false,
+        // No native transitive deps.
+        macos_frameworks: &[],
+        // Rust runtime/unwinder symbols, like the other bridges.
+        needs_libdl: true,
+    },
 ];
 
 /// Resolves a `--with-<flag>` crate flag to its bridge `lib_name`, or `None`

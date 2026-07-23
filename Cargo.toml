@@ -20,8 +20,8 @@ categories = ["compilers", "command-line-utilities"]
 # libelephc_web.a (--web prefork HTTP server) into target/<profile>/, where
 # linker.rs locates them for programs that use those features.
 [workspace]
-members = [".", "crates/elephc-tls", "crates/elephc-pdo", "crates/elephc-crypto", "crates/elephc-phar", "crates/elephc-tz", "crates/elephc-image", "crates/elephc-web"]
-default-members = [".", "crates/elephc-tls", "crates/elephc-pdo", "crates/elephc-crypto", "crates/elephc-phar", "crates/elephc-tz", "crates/elephc-image", "crates/elephc-web"]
+members = [".", "crates/elephc-tls", "crates/elephc-pdo", "crates/elephc-crypto", "crates/elephc-phar", "crates/elephc-tz", "crates/elephc-image", "crates/elephc-web", "crates/elephc-compare"]
+default-members = [".", "crates/elephc-tls", "crates/elephc-pdo", "crates/elephc-crypto", "crates/elephc-phar", "crates/elephc-tz", "crates/elephc-image", "crates/elephc-web", "crates/elephc-compare"]
 resolver = "2"
 
 [[bin]]
@@ -60,6 +60,7 @@ elephc-phar = { path = "crates/elephc-phar" }
 elephc-tz = { path = "crates/elephc-tz" }
 elephc-image = { path = "crates/elephc-image" }
 elephc-web = { path = "crates/elephc-web" }
+elephc-compare = { path = "crates/elephc-compare" }
 # flate2 lets the phar:// codegen tests build gzip (raw-DEFLATE) fixture entries
 # with the same encoder the compiler decodes, guaranteeing a version-stable
 # round-trip without shelling out to php.

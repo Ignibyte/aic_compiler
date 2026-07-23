@@ -20,13 +20,19 @@ use super::super::context::FunctionContext;
 use super::{expect_operand, secondary_float_reg, store_if_result};
 use crate::codegen::{CodegenIrError, Result};
 
-/// Lowers ordered string comparison (`<`, `<=`, `>`, `>=`) via lexicographic `__rt_strcmp`.
+/// Lowers ordered string comparison (`<`, `<=`, `>`, `>=`) with PHP 8 numeric-string
+/// semantics via the `elephc_compare` bridge's `__rt_php_str_compare`.
 ///
-/// Loads both operands into the runtime comparator's string registers, calls `__rt_strcmp`
-/// (result `< 0` / `0` / `> 0`), then reduces it to a PHP boolean by applying the EIR
-/// comparison predicate against zero — mirroring the integer-compare path. Comparison is by
-/// byte sequence and length; PHP's numeric-string ordering rule is not applied here (the
-/// synthetic date/time methods compare single format characters, for which the two agree).
+/// Loads both operands' `{ptr, len}` into the comparator's argument registers, calls
+/// `__rt_php_str_compare` (result `-1` / `0` / `1`), then reduces it to a PHP boolean by
+/// applying the EIR comparison predicate against zero — mirroring the integer-compare path.
+/// Two numeric strings compare numerically and everything else by byte sequence and length,
+/// exactly as PHP's `zendi_smart_strcmp` does (`"10" < "9"` is `false`, not lexicographic).
+///
+/// The bridge is a Rust `extern "C"` staticlib, so its register convention is the platform
+/// C ABI: on x86-64 that is `__rt_strcmp`'s rdi/rsi/rdx/rcx → rax already, but on AArch64 the
+/// C ABI is x0–x3 → x0 (one lower than `__rt_strcmp`'s custom x1–x4), so the operands load
+/// into x0–x3 here. The pipeline links the bridge only when this call is emitted.
 pub(super) fn lower_str_cmp(ctx: &mut FunctionContext<'_>, inst: &Instruction) -> Result<()> {
     let lhs = expect_operand(inst, 0)?;
     let rhs = expect_operand(inst, 1)?;
@@ -34,11 +40,11 @@ pub(super) fn lower_str_cmp(ctx: &mut FunctionContext<'_>, inst: &Instruction) -
     let result_reg = abi::int_result_reg(ctx.emitter);
     match ctx.emitter.target.arch {
         Arch::AArch64 => {
-            ctx.load_string_value_to_regs(lhs, "x1", "x2")?;
-            ctx.load_string_value_to_regs(rhs, "x3", "x4")?;
-            abi::emit_call_label(ctx.emitter, "__rt_strcmp");
+            ctx.load_string_value_to_regs(lhs, "x0", "x1")?;                    // C-ABI args 1/2: lhs ptr/len
+            ctx.load_string_value_to_regs(rhs, "x2", "x3")?;                    // C-ABI args 3/4: rhs ptr/len
+            abi::emit_call_label(ctx.emitter, "__rt_php_str_compare");
             ctx.emitter
-                .instruction(&format!("cmp {}, #0", result_reg));               // compare the lexicographic result against zero
+                .instruction(&format!("cmp {}, #0", result_reg));               // compare the smart-comparison result against zero
             let set_inst = format!(
                 "cset {}, {}",
                 result_reg,
@@ -49,9 +55,9 @@ pub(super) fn lower_str_cmp(ctx: &mut FunctionContext<'_>, inst: &Instruction) -
         Arch::X86_64 => {
             ctx.load_string_value_to_regs(lhs, "rdi", "rsi")?;
             ctx.load_string_value_to_regs(rhs, "rdx", "rcx")?;
-            abi::emit_call_label(ctx.emitter, "__rt_strcmp");
+            abi::emit_call_label(ctx.emitter, "__rt_php_str_compare");
             ctx.emitter
-                .instruction(&format!("cmp {}, 0", result_reg));                // compare the lexicographic result against zero
+                .instruction(&format!("cmp {}, 0", result_reg));                // compare the smart-comparison result against zero
             ctx.emitter
                 .instruction(&format!("set{} al", super::x86_64_condition(predicate)?)); // materialize the ordered predicate in the low byte
             ctx.emitter
@@ -776,13 +782,14 @@ pub(super) fn lower_spaceship(ctx: &mut FunctionContext<'_>, inst: &Instruction)
     store_if_result(ctx, inst)
 }
 
-/// Emits the byte-lexicographic string comparison for spaceship (`"a" <=> "b"`).
+/// Emits PHP 8 numeric-string-aware string comparison for spaceship (`"a" <=> "b"`).
 ///
-/// Loads both operands into `__rt_strcmp`'s string registers (the same setup as
-/// `lower_str_cmp`), calls it (result `< 0` / `0` / `> 0`), then compares that against
-/// zero so the shared `emit_spaceship_result` reduces the sign to `-1` / `0` / `1` — the
-/// non-float path there reads exactly the flags this `cmp` leaves. PHP's numeric-string
-/// ordering rule is not applied (matching `lower_str_cmp`).
+/// Loads both operands' `{ptr, len}` into `__rt_php_str_compare`'s argument registers (the
+/// same setup as `lower_str_cmp`), calls it (result `-1` / `0` / `1`), then compares that
+/// against zero so the shared `emit_spaceship_result` reduces the sign to `-1` / `0` / `1` —
+/// the non-float path there reads exactly the flags this `cmp` leaves. Two numeric strings
+/// compare numerically, matching PHP's `zendi_smart_strcmp` (the same bridge as `lower_str_cmp`;
+/// see that function for the AArch64 C-ABI x0–x3 register note).
 fn emit_string_spaceship_compare(
     ctx: &mut FunctionContext<'_>,
     lhs: ValueId,
@@ -791,16 +798,16 @@ fn emit_string_spaceship_compare(
     let result_reg = abi::int_result_reg(ctx.emitter);
     match ctx.emitter.target.arch {
         Arch::AArch64 => {
-            ctx.load_string_value_to_regs(lhs, "x1", "x2")?;
-            ctx.load_string_value_to_regs(rhs, "x3", "x4")?;
-            abi::emit_call_label(ctx.emitter, "__rt_strcmp");
-            ctx.emitter.instruction(&format!("cmp {}, #0", result_reg));         // set flags from the lexicographic result's sign
+            ctx.load_string_value_to_regs(lhs, "x0", "x1")?;                    // C-ABI args 1/2: lhs ptr/len
+            ctx.load_string_value_to_regs(rhs, "x2", "x3")?;                    // C-ABI args 3/4: rhs ptr/len
+            abi::emit_call_label(ctx.emitter, "__rt_php_str_compare");
+            ctx.emitter.instruction(&format!("cmp {}, #0", result_reg));         // set flags from the smart-comparison result's sign
         }
         Arch::X86_64 => {
             ctx.load_string_value_to_regs(lhs, "rdi", "rsi")?;
             ctx.load_string_value_to_regs(rhs, "rdx", "rcx")?;
-            abi::emit_call_label(ctx.emitter, "__rt_strcmp");
-            ctx.emitter.instruction(&format!("cmp {}, 0", result_reg));          // set flags from the lexicographic result's sign
+            abi::emit_call_label(ctx.emitter, "__rt_php_str_compare");
+            ctx.emitter.instruction(&format!("cmp {}, 0", result_reg));          // set flags from the smart-comparison result's sign
         }
     }
     Ok(())

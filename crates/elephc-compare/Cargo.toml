@@ -1,0 +1,18 @@
+[package]
+name = "elephc-compare"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Pure-Rust PHP 8 numeric-string-aware string comparison bridge (zendi_smart_strcmp / is_numeric_string_ex) for the elephc PHP-to-native compiler's string <, <=, >, >=, <=> operators"
+publish = false
+
+# Built as a C-callable staticlib (linked into compiled PHP programs that compare
+# string operands with an ordered/spaceship operator) and an rlib (so the numeric
+# comparison logic is unit-testable via `cargo test -p elephc-compare`). Mirrors
+# crates/elephc-crypto / elephc-tz: a pure-std leaf with no dependencies.
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+# No dependencies: the comparison replicates PHP's Zend/zend_operators.c inline, so
+# the bridge is byte-for-byte identical to PHP 8 with nothing at runtime but std.
+[dependencies]

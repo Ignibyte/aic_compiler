@@ -157,12 +157,15 @@ fn test_error_negate_string() {
 
 /// Asserts the OLD reject-policy for string comparison. Obsolete: commit 505207074
 /// ("re-port comparison completeness") made the checker ACCEPT scalar/string comparison
-/// (to support usort string comparators), so `$x < 1` no longer errors. But the codegen
-/// lowers it to a pure lexicographic `__rt_strcmp`, ignoring PHP 8 numeric-string semantics
-/// — a SILENT MISCOMPILE (`"10" < "9"` → true; PHP: false). Tracked as #691. Ignored until
-/// that lands, when this should be rewritten to byte-parity-assert PHP's result (not rejection).
+/// (to support usort string comparators), so `$x < 1` no longer errors. The Str↔Str
+/// codegen path was fixed in #691 (PHP 8 numeric-string semantics via the `elephc_compare`
+/// bridge; guarded by `tests/codegen/operators.rs::test_string_comparison_uses_php8_numeric_string_semantics`).
+/// This test's expression is string-vs-INT — a DIFFERENT path that still miscompiles
+/// (`"a" < 1` → native true; PHP: false), tracked in #692. Stays ignored until #692 lands,
+/// when it should be rewritten as a codegen byte-parity assert of PHP's `false` (not a
+/// reject-policy error assertion).
 #[test]
-#[ignore = "#691: string comparison is accepted but miscompiles (lexicographic, not PHP numeric-string); reject-policy assertion obsolete"]
+#[ignore = "#692: string-vs-number comparison still miscompiles (`$x < 1` is string-vs-int); #691 fixed only the Str↔Str path; reject-policy assertion obsolete"]
 fn test_error_comparison_on_string() {
     expect_error(
         "<?php $x = \"a\"; echo $x < 1;",

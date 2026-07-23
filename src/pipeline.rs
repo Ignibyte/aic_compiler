@@ -389,6 +389,18 @@ pub(crate) fn compile(config: CliConfig) {
         }
     }
 
+    // Ordered/spaceship comparison over `string` operands lowers to a
+    // `__rt_php_str_compare` call in the `elephc_compare` bridge (PHP 8
+    // numeric-string semantics). That symbol appears in the generated assembly
+    // exactly when codegen emitted such a comparison, so scanning the finished
+    // assembly links the bridge precisely — no need to re-derive the codegen's
+    // type-directed dispatch, and non-comparing binaries never carry the bridge.
+    if user_asm.contains("__rt_php_str_compare")
+        && !extra_link_libs.iter().any(|lib| lib == "elephc_compare")
+    {
+        extra_link_libs.push("elephc_compare".to_string());
+    }
+
     let phase_started = Instant::now();
     if let Err(e) = fs::write(&output_paths.asm, &user_asm) {
         eprintln!("Error writing '{}': {}", output_paths.asm.display(), e);
