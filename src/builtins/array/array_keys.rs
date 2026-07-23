@@ -41,6 +41,16 @@ builtin! {
 fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     let ty = cx.checker.infer_type(&cx.args[0], cx.env)?;
     match ty {
+        // `array<mixed>` is "storage kind not known statically": the runtime value may be a
+        // hash, so a key can be a string. MIRRORS ir_lower's array_keys stamp exactly
+        // (ir_lower/expr/mod.rs — its docstring demands this agreement); disagreeing here was
+        // the #696 authority-disagreement: the checker's Int rode the method-return fixpoint
+        // into foreach bindings and string-param calls (#671-class hazard). Keys stay Mixed —
+        // accepted at Str params and unboxed at consumer seams; precise Str keys require
+        // #648 shape retention, out of scope.
+        PhpType::Array(elem) if elem.codegen_repr() == PhpType::Mixed => {
+            Ok(PhpType::Array(Box::new(PhpType::Mixed)))
+        }
         PhpType::Array(_) => Ok(PhpType::Array(Box::new(PhpType::Int))),
         PhpType::AssocArray { key, .. } => Ok(PhpType::Array(key)),
         _ => Err(CompileError::new(

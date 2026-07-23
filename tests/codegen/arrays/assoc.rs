@@ -901,3 +901,27 @@ echo $o, count($r);
     );
     assert_eq!(out, "a=x;b=y;2");
 }
+
+/// `array_keys` over a Mixed-element array stamps `Array(Mixed)` in the CHECK hook, mirroring
+/// ir_lower exactly (#696 — the authority-disagreement previously stamped Int and rode the
+/// method-return fixpoint into string-param calls: WalCommitWriter's
+/// `sortStrings(array_keys($stagedFiles))` rejected "expects Array(Str), got Array(Int)").
+/// The bare-`array` property launders phpdoc away, so the source is genuinely Array(Mixed);
+/// the sibling literal call sharpens the consumer to Array(Str). Byte-parity incl. sort order.
+#[test]
+fn test_array_keys_mixed_element_source_feeds_string_sharpened_consumer() {
+    let out = compile_and_run(
+        r#"<?php
+class W {
+    private array $staged;
+    public function __construct() { $this->staged = ['b' => 'sb', 'a' => 'sa']; }
+    private function sortStrings(array $strings): array { sort($strings); return $strings; }
+    public function seed(): string { return implode(',', $this->sortStrings(['z', 'a'])); }
+    public function apply(): string { return implode(',', $this->sortStrings(array_keys($this->staged))); }
+}
+$w = new W();
+echo $w->seed(), '/', $w->apply();
+"#,
+    );
+    assert_eq!(out, "a,z/a,b");
+}
