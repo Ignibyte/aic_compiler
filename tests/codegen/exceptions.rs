@@ -777,6 +777,30 @@ fn test_exception_previous_round_trips_through_get_previous() {
     assert_eq!(out, "outer: inner/0/inner");
 }
 
+/// `getCode()` types `int|string` per PHP's Throwable contract (#695 D4 — PDOException carries
+/// the SQLSTATE string, so PHP source legitimately writes `is_string($e->getCode())` branches).
+/// The Union-typed result must narrow through is_string/is_int, feed a `strlen` consumer in the
+/// (natively dead) string arm, and behave byte-identically to PHP 8.5 for the int codes that
+/// native construction can produce. Mirrors AIC's `SqlStateMapper::extractSqlstate` shape.
+#[test]
+fn test_get_code_union_narrows_through_is_string_is_int_branches() {
+    let out = compile_and_run(
+        "<?php function classify(\\Throwable $t): string { $code = $t->getCode(); if (is_string($code)) { return 'str:' . $code . ':' . strlen($code); } if (is_int($code)) { return 'int:' . ($code + 1); } return 'other'; } echo classify(new RuntimeException('boom', 42)), '|', classify(new Exception('plain'));",
+    );
+    assert_eq!(out, "int:43|int:1");
+}
+
+/// A boxed-Mixed ctor `$code` argument is tag-check unboxed into the compact payload's raw int
+/// slot (#695 D4): an int-holding Mixed round-trips through `getCode()`, and a non-int Mixed
+/// raises `TypeError` exactly as PHP does for an `int` parameter — never a silent pointer store.
+#[test]
+fn test_throwable_code_argument_from_mixed_unboxes_or_type_errors() {
+    let out = compile_and_run(
+        "<?php function make(mixed $m): string { try { $e = new RuntimeException('x', $m); return 'made:' . $e->getCode(); } catch (\\TypeError $t) { return 'te'; } } echo make(41), '|', make('nope');",
+    );
+    assert_eq!(out, "made:41|te");
+}
+
 /// `getPrevious()` returns `?Throwable`; method calls on that nullable interface type must use
 /// compact Throwable intrinsics (the interface vtable slots stay empty for builtins).
 #[test]

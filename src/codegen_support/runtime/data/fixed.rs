@@ -246,6 +246,10 @@ pub(crate) fn emit_runtime_data_fixed(heap_size: usize, target: Target) -> Strin
             "Argument must be of type array",
         ),
         (
+            "_mixed_arg_not_int_code_msg",
+            "Argument must be of type int",
+        ),
+        (
             "_iterator_iterator_downcast_msg",
             "Class to downcast to not found or not base class or does not implement Traversable",
         ),

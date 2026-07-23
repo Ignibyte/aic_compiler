@@ -173,11 +173,23 @@ pub(super) fn builtin_exception_previous_property() -> ClassProperty {
 }
 
 /// Returns a synthetic `ClassMethod` for `Exception::getCode()`.
-/// Body returns `$this->code` cast to `int`.
+/// Body returns `$this->code`.
+///
+/// Declared `int|string` (#695 D4): PHP's `getCode()` contract is effectively
+/// `int|string` — PDOException carries the SQLSTATE string — so PHP source
+/// legitimately writes `is_string($e->getCode())` branches. STORAGE stays a raw
+/// int (the `code` property remains typed `int` and the compact payload's
+/// offset-24 word is untouched): natively a string code is unrepresentable
+/// (PDO never compiles; a subclass string write to `$this->code` is a loud
+/// checker reject), so the `is_string` branch is honestly dead at runtime —
+/// exactly PHP-without-PDO behavior. The intrinsic accessor keeps returning the
+/// raw Int; the shared throwable-dispatch epilogue boxes it into Mixed-repr'd
+/// result slots, which is what an `int|string` (Union → Mixed repr) call site
+/// receives.
 pub(super) fn builtin_exception_get_code_method() -> ClassMethod {
     concrete_throwable_method(
         "getCode",
-        TypeExpr::Int,
+        TypeExpr::Union(vec![TypeExpr::Int, TypeExpr::Str]),
         Expr::new(
             ExprKind::PropertyAccess {
                 object: Box::new(Expr::new(ExprKind::This, crate::span::Span::dummy())),
@@ -281,7 +293,11 @@ pub(super) fn builtin_exception_to_string_method() -> ClassMethod {
 pub(super) fn builtin_throwable_methods() -> Vec<ClassMethod> {
     vec![
         abstract_throwable_method("getMessage", TypeExpr::Str),
-        abstract_throwable_method("getCode", TypeExpr::Int),
+        // int|string per PHP's Throwable contract (PDOException SQLSTATE) — #695 D4.
+        abstract_throwable_method(
+            "getCode",
+            TypeExpr::Union(vec![TypeExpr::Int, TypeExpr::Str]),
+        ),
         abstract_throwable_method("getFile", TypeExpr::Str),
         abstract_throwable_method("getLine", TypeExpr::Int),
         abstract_throwable_method("getTrace", array_type()),
@@ -350,12 +366,14 @@ fn nullable_throwable_type() -> TypeExpr {
 pub(crate) fn patch_builtin_exception_signatures(checker: &mut Checker) {
     let nullable_throwable =
         checker.normalize_union_type(vec![PhpType::Object("Throwable".to_string()), PhpType::Void]);
+    // int|string per PHP's Throwable contract (PDOException SQLSTATE) — #695 D4.
+    let int_or_string = checker.normalize_union_type(vec![PhpType::Int, PhpType::Str]);
     if let Some(interface_info) = checker.interfaces.get_mut("Throwable") {
         if let Some(sig) = interface_info.methods.get_mut(&php_symbol_key("getMessage")) {
             sig.return_type = PhpType::Str;
         }
         if let Some(sig) = interface_info.methods.get_mut(&php_symbol_key("getCode")) {
-            sig.return_type = PhpType::Int;
+            sig.return_type = int_or_string.clone();
         }
         if let Some(sig) = interface_info.methods.get_mut(&php_symbol_key("getFile")) {
             sig.return_type = PhpType::Str;
@@ -406,7 +424,7 @@ pub(crate) fn patch_builtin_exception_signatures(checker: &mut Checker) {
                 sig.return_type = PhpType::Str;
             }
             if let Some(sig) = class_info.methods.get_mut(&php_symbol_key("getCode")) {
-                sig.return_type = PhpType::Int;
+                sig.return_type = int_or_string.clone();
             }
             if let Some(sig) = class_info.methods.get_mut(&php_symbol_key("getFile")) {
                 sig.return_type = PhpType::Str;

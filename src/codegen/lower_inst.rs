@@ -5366,6 +5366,45 @@ fn emit_mixed_unbox_to_object_pointer(emitter: &mut crate::codegen_support::emit
 /// `array` parameter does not actually hold an array at runtime.
 const MIXED_ARG_NOT_ARRAY_MSG_LEN: usize = "Argument must be of type array".len();
 
+/// Length of the `TypeError` message raised when a boxed `Mixed` argument passed to an
+/// `int` parameter (the builtin Throwable `$code` slot) does not hold an int at runtime.
+const MIXED_ARG_NOT_INT_MSG_LEN: usize = "Argument must be of type int".len();
+
+/// Unboxes the boxed `Mixed` cell in the result register to the raw int it holds, or raises a
+/// `TypeError` when the cell is not an int.
+///
+/// `__rt_mixed_unbox` returns the runtime tag in the int-result register and the payload low
+/// word in the first payload register (AArch64 `x1`, x86_64 `rdi`). Tag 0 (int) unboxes to that
+/// payload; any other tag raises a `TypeError`, matching PHP's `strict_types` rejection of a
+/// non-int argument for an `int` parameter. Same contract as
+/// `emit_mixed_unbox_to_array_pointer`: the checker admits `mixed -> int` unconditionally, so
+/// the tag must be checked at runtime. The live producer is #695 D4 — `getCode()` now types
+/// `int|string`, so `new E($msg, $e->getCode())` materializes the code argument as a boxed
+/// Mixed cell that the compact Throwable payload must store as a RAW int.
+fn emit_mixed_unbox_to_int_value(ctx: &mut FunctionContext<'_>) {
+    abi::emit_call_label(ctx.emitter, "__rt_mixed_unbox");
+    let ok_label = ctx.next_label("mixed_arg_is_int");
+    let result_reg = abi::int_result_reg(ctx.emitter);
+    let payload_lo_reg = match ctx.emitter.target.arch {
+        Arch::AArch64 => "x1",
+        Arch::X86_64 => "rdi",
+    };
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.emitter.instruction("cmp x0, #0");                              // tag 0 = int
+            ctx.emitter.instruction(&format!("b.eq {}", ok_label));
+        }
+        Arch::X86_64 => {
+            ctx.emitter.instruction("cmp rax, 0");                              // tag 0 = int
+            ctx.emitter.instruction(&format!("je {}", ok_label));
+        }
+    }
+    emit_throw_type_error_static_message(ctx, "_mixed_arg_not_int_code_msg", MIXED_ARG_NOT_INT_MSG_LEN);
+    ctx.emitter.label(&ok_label);
+    ctx.emitter
+        .instruction(&format!("mov {}, {}", result_reg, payload_lo_reg));
+}
+
 /// Unboxes the boxed `Mixed` cell in the result register to the raw array/hash pointer it
 /// holds, or raises a `TypeError` when the cell is not an array.
 ///

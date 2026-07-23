@@ -1096,12 +1096,24 @@ fn emit_throwable_code_field(
 }
 
 /// Writes the AArch64 Throwable code field from an integer operand or zero default.
+///
+/// A Mixed-repr'd operand (#695 D4: `getCode()` types `int|string`, so
+/// `new E($msg, $e->getCode())` feeds a boxed Mixed cell here) is tag-check
+/// unboxed to the raw int before the store — the compact payload's code slot
+/// holds a RAW i64, and storing the cell pointer verbatim would make the later
+/// `getCode()` read return a heap address.
 fn emit_throwable_code_field_aarch64(
     ctx: &mut FunctionContext<'_>,
     code: Option<ValueId>,
 ) -> Result<()> {
     if let Some(code) = code {
-        ctx.load_value_to_reg(code, "x1")?;
+        if ctx.value_php_type(code)?.codegen_repr() == PhpType::Mixed {
+            ctx.load_value_to_reg(code, "x0")?;
+            super::emit_mixed_unbox_to_int_value(ctx);
+            ctx.emitter.instruction("mov x1, x0");                              // move the unboxed code into the store register
+        } else {
+            ctx.load_value_to_reg(code, "x1")?;
+        }
     } else {
         abi::emit_load_int_immediate(ctx.emitter, "x1", 0);
     }
@@ -1111,12 +1123,19 @@ fn emit_throwable_code_field_aarch64(
 }
 
 /// Writes the x86_64 Throwable code field from an integer operand or zero default.
+///
+/// Mixed-repr'd operands are tag-check unboxed first — see the AArch64 twin.
 fn emit_throwable_code_field_x86_64(
     ctx: &mut FunctionContext<'_>,
     code: Option<ValueId>,
 ) -> Result<()> {
     if let Some(code) = code {
-        ctx.load_value_to_reg(code, "rax")?;
+        if ctx.value_php_type(code)?.codegen_repr() == PhpType::Mixed {
+            ctx.load_value_to_reg(code, "rax")?;
+            super::emit_mixed_unbox_to_int_value(ctx);
+        } else {
+            ctx.load_value_to_reg(code, "rax")?;
+        }
     } else {
         abi::emit_load_int_immediate(ctx.emitter, "rax", 0);
     }
