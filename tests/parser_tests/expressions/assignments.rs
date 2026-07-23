@@ -156,10 +156,13 @@ fn test_parse_nested_array_assignment_target() {
 
 /// Verifies that nested append (`$items[0][] = 2`) lowers to a synthetic
 /// read/append/write-back sequence instead of overwriting `$items[0]` directly.
-/// Pre-existing failure (#672 collateral): the temp ArrayAccess read now lowers to a
-/// NullCoalesce, so this expectation no longer holds. Tracked + to-fix in #685.
+/// The temp read coalesces the nested element to `[]` (`$items[0] ?? []`) so PHP's
+/// auto-vivification of a missing/null inner slot survives the copy-on-write split —
+/// see `lower_nested_append_assignment`. Byte-parity-verified against PHP for present,
+/// missing (auto-vivify), and repeated-append cases (#685: the coalesced read is
+/// correct behavior, not a regression — the earlier bare-ArrayAccess shape could not
+/// append to a missing/null slot).
 #[test]
-#[ignore = "#685: nested-append lowering emits NullCoalesce instead of a temp ArrayAccess read (#672 collateral)"]
 fn test_parse_nested_array_append_lowers_to_temp_push_writeback() {
     let stmts = parse_source("<?php $items[0][] = 2;");
     match &stmts[0].kind {
@@ -167,12 +170,24 @@ fn test_parse_nested_array_append_lowers_to_temp_push_writeback() {
             assert_eq!(stmts.len(), 3);
             let temp = match &stmts[0].kind {
                 StmtKind::Assign { name, value } => {
+                    // The read is `$items[0] ?? []`: a NullCoalesce whose value is the
+                    // nested ArrayAccess and whose default is an empty array literal.
                     match &value.kind {
-                        ExprKind::ArrayAccess { array, index } => {
-                            assert!(matches!(array.kind, ExprKind::Variable(ref name) if name == "items"));
-                            assert!(matches!(index.kind, ExprKind::IntLiteral(0)));
+                        ExprKind::NullCoalesce { value, default } => {
+                            match &value.kind {
+                                ExprKind::ArrayAccess { array, index } => {
+                                    assert!(matches!(array.kind, ExprKind::Variable(ref name) if name == "items"));
+                                    assert!(matches!(index.kind, ExprKind::IntLiteral(0)));
+                                }
+                                other => panic!("Expected coalesced ArrayAccess read, got {:?}", other),
+                            }
+                            assert!(
+                                matches!(default.kind, ExprKind::ArrayLiteral(ref elems) if elems.is_empty()),
+                                "Expected `?? []` default, got {:?}",
+                                default.kind,
+                            );
                         }
-                        other => panic!("Expected temp read from ArrayAccess, got {:?}", other),
+                        other => panic!("Expected temp read coalesced to [], got {:?}", other),
                     }
                     name.clone()
                 }
