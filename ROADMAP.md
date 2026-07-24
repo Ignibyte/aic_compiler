@@ -14,6 +14,33 @@ Current direction:
 - Treat shared libraries, the PHP extension bridge, and WebAssembly as later 0.x product tracks.
 - Leave the major-version discussion for the final future-perspective section.
 
+## Backend strategy (adopted 2026-07-24 — AIC ADR 0059)
+
+Four phases, sequenced to keep exactly one unknown in play at a time:
+
+1. **Correctness first.** Drive the AIC runtime-surface ledger (compile + link +
+   run, byte-diffed vs Zend) from 92% to 100%. The remaining gaps are
+   checker/IR-fidelity work (the `Array(Mixed)` erasure cluster is the final
+   boss) — all of it backend-agnostic.
+2. **Parity, proven.** A permanent differential harness (survey `MISMATCH=0`,
+   curated miscompile-repro corpus, HTTP-level record/replay) gates the claim
+   that compiled behavior is identical to Zend — tests, exceptions, exit
+   codes, responses.
+3. **LLVM as a second backend.** Same frontend, same EIR; LLVM lowers beside
+   the hand-written assembly emitter and calls the same `__rt_*` runtime.
+   A small proof-of-concept runs EARLY (inside the array-representation
+   design decision) purely to validate that EIR lowers naturally; the full
+   backend waits for the phase-2 harness so backend bugs debug against
+   trusted semantics. The asm backend stays as the fast/debug path.
+   This also retires the two-architecture hand-mirroring tax.
+4. **Benchmark before optimizing.** No custom passes without profile evidence.
+
+Standing rules, effective now: **typed IR** (lowering decisions expressed as
+type-resolved ops — `IntegerAdd`/`StringConcat`/`RuntimeDynamicAdd` — never
+re-derived in a backend from `PhpType` reprs; the type-authority-disagreement
+bug family dies by construction) and **thin backend, thick runtime** (new
+codegen composes `__rt_*` helpers; no new bespoke assembly).
+
 ## v0.1.x — Usable CLI compiler (done)
 
 - [x] Lexer, parser (Pratt), type checker, ARM64 codegen pipeline
