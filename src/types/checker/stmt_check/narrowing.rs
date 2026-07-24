@@ -66,6 +66,59 @@ impl Checker {
                 _ => None,
             });
         }
+        // Compound `A && B` guard: in the then-branch BOTH conjuncts hold, so a guard
+        // conjunct's narrowing applies to the body even when the other conjunct is not a
+        // type guard — `is_int($v) && $v > 0 ? $v : null` (ward-forms
+        // Field::optionalPositiveInt) narrows `$v` to Int in the then-branch exactly as
+        // nested `if`s would. Previously this fell through to the single-guard matcher and
+        // narrowed NOTHING — invisible while the un-narrowed binding stayed Mixed
+        // (admitted everywhere), a false rejection once call-site sharpening made the
+        // binding a concrete scalar.
+        //
+        // Same-receiver guards compose sequentially: the right conjunct's narrowing is
+        // computed under the left guard's then-env. A different-receiver right guard keeps
+        // only the LEFT narrowing for this binding (GuardNarrowing carries one binding —
+        // a documented precision limit, never an unsoundness). The else-branch knows only
+        // `!A || !B`, which refines nothing for any single binding: else_ty is the
+        // binding's pre-split type (then ∪ else of the kept guard), never the complement.
+        if let ExprKind::BinaryOp { left, op: BinOp::And, right } = &condition.kind {
+            let left_guard = self.guard_narrowing(left, env)?;
+            return Ok(match left_guard {
+                Some(left_guard) => {
+                    let unsplit = self.normalize_union_type(vec![
+                        left_guard.then_ty.clone(),
+                        left_guard.else_ty.clone(),
+                    ]);
+                    let mut then_env = env.clone();
+                    then_env.insert(left_guard.var.clone(), left_guard.then_ty.clone());
+                    match self.guard_narrowing(right, &then_env)? {
+                        Some(right_guard) if right_guard.var == left_guard.var => {
+                            Some(GuardNarrowing {
+                                var: left_guard.var,
+                                then_ty: right_guard.then_ty,
+                                else_ty: unsplit,
+                            })
+                        }
+                        _ => Some(GuardNarrowing {
+                            var: left_guard.var,
+                            then_ty: left_guard.then_ty,
+                            else_ty: unsplit,
+                        }),
+                    }
+                }
+                None => self.guard_narrowing(right, env)?.map(|right_guard| {
+                    let unsplit = self.normalize_union_type(vec![
+                        right_guard.then_ty.clone(),
+                        right_guard.else_ty.clone(),
+                    ]);
+                    GuardNarrowing {
+                        var: right_guard.var,
+                        then_ty: right_guard.then_ty,
+                        else_ty: unsplit,
+                    }
+                }),
+            });
+        }
         let (cond, negated) = match &condition.kind {
             ExprKind::Not(inner) => (inner.as_ref(), true),
             _ => (condition, false),

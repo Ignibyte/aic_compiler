@@ -352,3 +352,42 @@ fn test_array_element_guard_false_path_unnarrowed() {
     );
     assert_eq!(out, "no:int");
 }
+
+/// A compound `A && B` condition applies its guard conjunct's narrowing to the branch body
+/// (#695 drift pin — previously `guard_narrowing` had no `&&` arm and narrowed NOTHING, a
+/// false rejection once call-site sharpening made the binding a concrete scalar). The
+/// non-guard conjunct (`$v > 0`) contributes nothing; the else branch keeps the UNSPLIT
+/// type — `elseSide(0)` is an int that failed the second conjunct, so the else body must
+/// still see int|string, never the bare complement. Byte-parity vs PHP 8.5.
+#[test]
+fn test_compound_and_guard_narrows_then_branch_and_keeps_unsplit_else() {
+    let out = compile_and_run(
+        r#"<?php
+function pick(int|string $v): int {
+    return is_int($v) && $v > 0 ? $v + 1 : -1;
+}
+function elseSide(int|string $v): string {
+    if (is_int($v) && $v > 0) { return 'pos:' . $v; }
+    return is_int($v) ? 'int:' . $v : 'str:' . $v;
+}
+echo pick(5), '|', pick(-2), '|', pick('x'), '|', elseSide(7), '|', elseSide(0), '|', elseSide('w');
+"#,
+    );
+    assert_eq!(out, "6|-1|-1|pos:7|int:0|str:w");
+}
+
+/// The ward-forms `Field::optionalPositiveInt` shape: a statically-false guard conjunct over
+/// a concrete Str binding still narrows the (dead) then-branch to Int, so `?int` returns
+/// type-check and the live path runs byte-identically (#695 drift pin).
+#[test]
+fn test_compound_and_guard_over_concrete_scalar_dead_branch() {
+    let out = compile_and_run(
+        r#"<?php
+function fieldShape(string $v): ?int {
+    return is_int($v) && $v > 0 ? $v : null;
+}
+var_dump(fieldShape('x'));
+"#,
+    );
+    assert_eq!(out, "NULL\n");
+}
