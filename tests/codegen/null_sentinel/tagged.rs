@@ -69,6 +69,22 @@ var_dump($a["k"]);
     );
 }
 
+/// Returning a `?int` element READ from an associative literal must unbox the Mixed entry into the
+/// tagged-scalar return shape: the declared return (`f`) and the inferred return (`g`) both used to
+/// be rejected by `lower_runtime_call` with `runtime_call from PHP type Mixed to PHP type
+/// TaggedScalar` (#1561 review).
+#[test]
+fn test_tagged_nullable_int_returned_from_an_associative_literal() {
+    let out = compile_and_run_tagged(
+        r#"<?php
+function f(?int $n): ?int { return ["k" => $n]["k"]; }
+function g(?int $n) { return ["k" => $n]["k"]; }
+var_dump(f(3), f(null), g(4), g(null));
+"#,
+    );
+    assert_eq!(out, "int(3)\nNULL\nint(4)\nNULL\n");
+}
+
 /// A nullable-int function returning the sentinel-valued integer var_dumps as int(...).
 #[test]
 fn test_tagged_int_at_sentinel_nullable_return_is_not_null() {
