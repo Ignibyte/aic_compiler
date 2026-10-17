@@ -106,6 +106,68 @@ pub(super) fn prepare_indexed_array_local_set(
     prepare_indexed_array_local_write(ctx, array_value, value, span)
 }
 
+/// Prepares an associative-array local for an offset assignment.
+///
+/// `Op::HashSet` tags each entry from the hash's static value type when that type is
+/// concrete, so a write of any other payload kind must first box the hash's values.
+/// Without it, `$m = []; $m["k"] = "v"; $m["j"] = 5;` in a function stored the integer 5
+/// under the string tag and `count($m)` crashed on release; written the other way round it
+/// read the string pointer back as an integer. The checker already types the local
+/// `array<string, mixed>`; this is the hash analogue of `prepare_indexed_array_local_set`.
+pub(super) fn prepare_assoc_array_local_set(
+    ctx: &mut LoweringContext<'_, '_>,
+    array_value: LoweredValue,
+    value: LoweredValue,
+    span: Span,
+) -> (LoweredValue, Option<PhpType>) {
+    let current_ty = ctx.builder.value_php_type(array_value.value);
+    let value_ty = ctx.builder.value_php_type(value.value);
+    let PhpType::AssocArray { key, .. } = current_ty.codegen_repr() else {
+        return (array_value, None);
+    };
+    if !assoc_array_set_needs_mixed_conversion(&current_ty, &value_ty) {
+        return (array_value, None);
+    }
+    let updated_ty = PhpType::AssocArray {
+        key,
+        value: Box::new(PhpType::Mixed),
+    };
+    let converted = ctx.emit_value(
+        Op::HashToMixed,
+        vec![array_value.value],
+        None,
+        updated_ty.clone(),
+        Op::HashToMixed.default_effects(),
+        Some(span),
+    );
+    (converted, Some(updated_ty))
+}
+
+/// Returns true when writing `value_ty` into the associative array would mis-tag the entry.
+///
+/// A boxed Mixed value written into scalar storage is left to the codegen cast, and pointer
+/// payloads of the same container or object family share storage.
+pub(super) fn assoc_array_set_needs_mixed_conversion(current_ty: &PhpType, value_ty: &PhpType) -> bool {
+    let PhpType::AssocArray { value: storage_ty, .. } = current_ty.codegen_repr() else {
+        return false;
+    };
+    let storage_ty = storage_ty.codegen_repr();
+    let value_ty = value_ty.codegen_repr();
+    if matches!(storage_ty, PhpType::Mixed | PhpType::Iterable) || storage_ty == value_ty {
+        return false;
+    }
+    !matches!(
+        (&value_ty, &storage_ty),
+        (PhpType::Array(_), PhpType::Array(_))
+            | (PhpType::AssocArray { .. }, PhpType::AssocArray { .. })
+            | (PhpType::Object(_), PhpType::Object(_))
+            | (
+                PhpType::Mixed,
+                PhpType::Int | PhpType::Bool | PhpType::Float | PhpType::Str
+            )
+    )
+}
+
 /// Coerces miss-capable scalar reads before writing them into a concrete indexed-array slot.
 pub(super) fn coerce_indexed_array_set_value(
     ctx: &mut LoweringContext<'_, '_>,
