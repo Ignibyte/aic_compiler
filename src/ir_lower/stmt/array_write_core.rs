@@ -224,6 +224,11 @@ pub(crate) fn lower_array_assign_with_diagnosed_key(
         release_indexed_array_write_operand(ctx, elem_ty.as_ref(), value_value, span);
         return;
     }
+    let (array_value, updated_ty) = if op == Op::HashSet {
+        prepare_assoc_array_local_set(ctx, array_value, value_value, span)
+    } else {
+        (array_value, None)
+    };
     ctx.emit_void(
         op,
         vec![array_value.value, index_value.value, value_value.value],
@@ -231,6 +236,9 @@ pub(crate) fn lower_array_assign_with_diagnosed_key(
         op.default_effects(),
         Some(span),
     );
+    if let Some(updated_ty) = updated_ty {
+        ctx.store_mutated_local(array, array_value, updated_ty, Some(span));
+    }
     release_persisted_string_operand(ctx, index_value, span);
     release_persisted_string_operand(ctx, value_value, span);
 }
