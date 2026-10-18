@@ -1,8 +1,9 @@
 # About this fork
 
 This repository is a private fork of [illegalstudio/elephc](https://github.com/illegalstudio/elephc).
-Since 2026-10-17 its `main` is upstream `main` plus a small set of carried commits. Upstream's
-code wins wherever both sides touched the same thing.
+Since 2026-10-17 its `main` is upstream `main` plus carried commits. The goal (AIC ADR 0064,
+2026-10-18) is AIC's whole runtime surface compiled natively: our carries stay where they get
+AIC there, and each one leaves as soon as plain upstream does the same job.
 
 ## History
 
@@ -17,20 +18,27 @@ code wins wherever both sides touched the same thing.
 Every commit on top of upstream is a carry commit. Each one:
 
 1. fixes a behaviour upstream gets wrong or refuses, with a PHP program that shows it;
-2. adds tests in upstream's own layout and passes upstream's suite;
-3. is written so it could be sent upstream as a pull request, and is sent when it is ready.
+2. adds tests in upstream's own layout and passes upstream's suite.
 
-A carry commit that upstream later supersedes is dropped at the next sync, not merged around.
+A carry does not have to be written as an upstream pull request. It may re-port the earlier
+fork's own fix (AIC's `docs/planning/elephc-upstream-sync/carry-inventory.md` lists them by
+cluster) or carry a policy upstream has not adopted. The tests are what let a sync tell when
+upstream covers a carry: a carry whose program passes on plain upstream is dropped at that sync,
+not merged around. Where upstream changed the same code but still fails the program, the carry
+is re-applied on top of upstream's version.
 
-Carry commits follow upstream's conventions (`AGENTS.md`, "Conventions"), because each one is
-meant to go upstream: a `fix:` or `feat:` prefix, a short message, no `Co-Authored-By` line, and
-no `CHANGELOG.md` entry. When the change alters what a page in `docs/internals/` says, the same
-commit updates it.
+Only a fix that is solid (`just check` passes, with a byte-parity program) and about PHP rather
+than shaped around AIC goes upstream, one narrow fix per pull request, each with the owner's OK.
+
+Carry commits still follow upstream's conventions (`AGENTS.md`, "Conventions"), so any of them
+can go upstream later without a rewrite: a `fix:` or `feat:` prefix, a short message, no
+`Co-Authored-By` line, and no `CHANGELOG.md` entry. When the change alters what a page in
+`docs/internals/` says, the same commit updates it.
 
 ## Carry workflow
 
-A carry fix goes through four phases, the compiler's version of AIC's Plan, Code, Quality
-checks and Documentation (AIC ADR 0063). The checks are `just` recipes in
+A carry fix goes through four phases: Plan, Code, Quality checks and Documentation. The checks
+are `just` recipes in
 `/srv/stacks/elephc-bundler/justfile`, run as `just -f /srv/stacks/elephc-bundler/justfile
 <recipe>`. They live outside this repository because a carry branch starts from upstream and
 would not contain them. The AIC skill `elephc-carry` walks through the same steps.
@@ -56,24 +64,34 @@ would not contain them. The AIC skill `elephc-carry` walks through the same step
    `/mnt/fast/build/elephc-upstream` and records its ledger, which adds about five minutes.
 4. **Documentation and delivery.**
    - Open a PR from the branch into this fork's `main` and merge it with a merge commit, so the
-     fork holds the same commit upstream gets. A branch made from a newer `upstream/main` brings
-     those upstream commits along, so that merge also counts as a sync.
-   - With the owner's OK, push the branch to the public fork `chadmandoo/elephc` and open the PR
-     on `illegalstudio/elephc`: the repro, php's output and ours, the cause, the fix, and the
-     check results.
+     fork holds the commit as written. A branch made from a newer `upstream/main` brings those
+     upstream commits along, so that merge also counts as a sync.
+   - Only for a solid, PHP-generic fix (see "Carry commits") and with the owner's OK, push the
+     branch to the public fork `chadmandoo/elephc` and open the PR on `illegalstudio/elephc`:
+     the repro, php's output and ours, the cause, the fix, and the check results.
    - Record the outcome on the AIC ticket. Keep the run as a ledger with `just record <sha>`
      when it will serve as a baseline.
 
 ## Syncing with upstream
 
+Sync on every upstream release, or monthly, whichever comes first. Each sync is also the
+re-evaluation of every carry.
+
 ```sh
 git fetch upstream
 git switch -c sync/upstream-<sha> main
-git merge upstream/main          # resolve conflicts in upstream's favour
+git merge upstream/main          # take upstream's side, then re-apply a carry it still needs
 ```
 
-Then run `just check base=<previous upstream base>`, and drop any carry commit whose program
-now passes on plain upstream.
+Then:
+
+1. `just baseline base=upstream/main` records plain upstream's ledger. Run each carry's PHP
+   program on that build.
+2. Drop every carry whose program now passes on plain upstream. Re-apply any carry upstream's
+   change displaced but did not replace.
+3. `just check base=<new upstream base>` until it prints `check: PASS`.
+4. Add a row (date, upstream base, carry count, survey) to the carry ledger in AIC's
+   `docs/planning/native-compilation-roadmap.md`.
 
 Build with a per-checkout target directory, so the bridge archives sit beside the binary:
 
