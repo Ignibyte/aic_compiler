@@ -121,7 +121,9 @@ impl Checker {
             ExprKind::BinaryOp { left, op, right } => {
                 self.infer_type_with_assignment_effects(left, env)?;
                 if matches!(op, BinOp::And | BinOp::Or) {
-                    let mut right_env = env.clone();
+                    let mut right_env = self
+                        .logical_right_operand_env(left, op, env)?
+                        .unwrap_or_else(|| env.clone());
                     self.infer_type_with_assignment_effects(right, &mut right_env)?;
                     merge_array_storage_effects(env, &right_env);
                     Ok(PhpType::Bool)

@@ -427,3 +427,19 @@ var_dump(merge(3));
     );
     assert_eq!(out, "bool(true)\nbool(true)\nstring(1) \"L\"\nfloat(1.5)\n");
 }
+
+/// Verifies a ternary between an `array`-returning call and an empty literal stays an array, so
+/// it can be passed to an `array` parameter.
+#[test]
+fn test_ternary_between_array_call_and_empty_literal_is_an_array() {
+    let out = compile_and_run(
+        r#"<?php
+function strings(array $values): array { return array_values(array_filter($values, is_string(...))); }
+function count2(array $a): int { return count($a); }
+$input = ['a', 1, 'b'];
+$picked = count($input) > 1 ? strings($input) : [];
+echo count2($picked), "\n";
+"#,
+    );
+    assert_eq!(out, "2\n");
+}

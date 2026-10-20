@@ -35,6 +35,13 @@ impl Checker {
         env: &TypeEnv,
     ) -> Result<PhpType, CompileError> {
         let lt = self.infer_type(left, env)?;
+        if matches!(op, BinOp::And | BinOp::Or) {
+            // The right operand sees the left operand's guard, as it runs only when that one
+            // did not settle the result.
+            let right_env = self.logical_right_operand_env(left, op, env)?;
+            self.infer_type(right, right_env.as_ref().unwrap_or(env))?;
+            return Ok(PhpType::Bool);
+        }
         let rt = self.infer_type(right, env)?;
         if let Some(plan) = crate::types::object_operators::binary_plan(op, &lt, &rt) {
             return Ok(plan.result_type(op));

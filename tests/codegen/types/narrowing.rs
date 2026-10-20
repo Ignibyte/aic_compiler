@@ -787,3 +787,88 @@ fn test_negated_instanceof_early_return_narrows_interface_receiver() {
     );
     assert_eq!(out, "4|0");
 }
+
+/// Verifies an `instanceof` on the left of `&&` narrows its right operand and the guarded body,
+/// and a negated one on the left of `||` narrows its right operand and the code after an early
+/// return.
+#[test]
+fn test_instanceof_narrows_logical_right_operands_and_bodies() {
+    let out = compile_and_run(
+        r#"<?php
+        interface Shape { public function name(): string; }
+        final class Square implements Shape {
+            public function name(): string { return "square"; }
+            public function side(): int { return 3; }
+        }
+        final class Circle implements Shape { public function name(): string { return "circle"; } }
+        function area(Shape $shape): int {
+            if ($shape instanceof Square && $shape->side() > 2) { return $shape->side() * $shape->side(); }
+            return 0;
+        }
+        function side(Shape $shape): int {
+            if (!$shape instanceof Square || $shape->side() < 2) { return 0; }
+            return $shape->side();
+        }
+        echo area(new Square()), "|", area(new Circle()), "|", side(new Square()), "|", side(new Circle());
+        "#,
+    );
+    assert_eq!(out, "9|0|3|0");
+}
+
+/// Verifies a nullable property narrowed by `instanceof` (an interface-typed `?Shape` to a class)
+/// or by `!== null` can call a method only the narrowed class declares.
+#[test]
+fn test_narrowed_nullable_property_receiver_calls_class_method() {
+    let out = compile_and_run(
+        r#"<?php
+        interface Shape { public function name(): string; }
+        final class Square implements Shape {
+            public function name(): string { return "square"; }
+            public function side(): int { return 3; }
+        }
+        final class Holder {
+            public function __construct(private ?Shape $shape) {}
+            public function side(): int {
+                if ($this->shape instanceof Square) { return $this->shape->side(); }
+                return 0;
+            }
+        }
+        final class Box {
+            public function __construct(private ?Square $square) {}
+            public function side(): int {
+                if ($this->square !== null) { return $this->square->side(); }
+                return -1;
+            }
+        }
+        echo (new Holder(new Square()))->side(), "|", (new Holder(null))->side(), "|";
+        echo (new Box(new Square()))->side(), "|", (new Box(null))->side();
+        "#,
+    );
+    assert_eq!(out, "3|0|3|-1");
+}
+
+/// Verifies a value typed by an interface or an abstract class, narrowed by `instanceof` to a
+/// class, can read a property only the narrowed class declares.
+#[test]
+fn test_instanceof_narrowed_receiver_reads_class_property() {
+    let out = compile_and_run(
+        r#"<?php
+        interface Answer {}
+        final class Shape implements Answer { public function __construct(public string $body) {} }
+        final class Blank implements Answer {}
+        abstract class Reply {}
+        final class Text extends Reply { public function __construct(public string $text) {} }
+        final class Empty_ extends Reply {}
+        function render(Answer $answer): string {
+            if ($answer instanceof Shape) { return $answer->body; }
+            return "other";
+        }
+        function say(Reply $reply): string {
+            if ($reply instanceof Text) { return $reply->text; }
+            return "none";
+        }
+        echo render(new Shape("hi")), "|", render(new Blank()), "|", say(new Text("yo")), "|", say(new Empty_());
+        "#,
+    );
+    assert_eq!(out, "hi|other|yo|none");
+}
