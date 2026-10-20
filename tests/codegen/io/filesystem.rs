@@ -87,6 +87,64 @@ unlink("new.txt");
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Verifies rename() moves a file across filesystems, where libc's rename() fails with EXDEV,
+/// by copying it with its permissions and unlinking the source, as PHP does; a second rename of
+/// the now-missing source fails. Skipped when `/dev/shm` shares the temp directory's filesystem.
+#[test]
+fn test_rename_file_across_filesystems() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let other = std::path::Path::new("/dev/shm");
+    let (Ok(other_meta), Ok(temp_meta)) = (fs::metadata(other), fs::metadata(std::env::temp_dir()))
+    else {
+        return;
+    };
+    if other_meta.dev() == temp_meta.dev() {
+        return;
+    }
+    let source = other.join(format!("elephc_rename_{}.txt", std::process::id()));
+    fs::write(&source, "data").unwrap();
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o640)).unwrap();
+    let (out, dir) = compile_and_run_in_dir(&format!(
+        r#"<?php
+var_dump(rename("{src}", "moved.txt"));
+echo file_get_contents("moved.txt"), "|", file_exists("{src}") ? "kept" : "gone", "|", decoct(fileperms("moved.txt") & 0777), "\n";
+var_dump(@rename("{src}", "again.txt"));
+"#,
+        src = source.display()
+    ));
+    let _ = fs::remove_file(&source);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out, "bool(true)\ndata|gone|640\nbool(false)\n");
+}
+
+/// Verifies rename() leaves a directory in place when moving it would cross filesystems, as
+/// PHP's copy fallback refuses directories. Skipped when `/dev/shm` shares the temp directory's
+/// filesystem.
+#[test]
+fn test_rename_directory_across_filesystems_fails() {
+    use std::os::unix::fs::MetadataExt;
+    let other = std::path::Path::new("/dev/shm");
+    let (Ok(other_meta), Ok(temp_meta)) = (fs::metadata(other), fs::metadata(std::env::temp_dir()))
+    else {
+        return;
+    };
+    if other_meta.dev() == temp_meta.dev() {
+        return;
+    }
+    let source = other.join(format!("elephc_rename_dir_{}", std::process::id()));
+    fs::create_dir_all(&source).unwrap();
+    let (out, dir) = compile_and_run_in_dir(&format!(
+        r#"<?php
+var_dump(@rename("{src}", "moved"));
+echo is_dir("{src}") ? "kept" : "gone", "|", file_exists("moved") ? "made" : "absent", "\n";
+"#,
+        src = source.display()
+    ));
+    let _ = fs::remove_dir_all(&source);
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(out, "bool(false)\nkept|absent\n");
+}
+
 /// Verifies getcwd returns a non-empty string (platform-independent check).
 #[test]
 fn test_getcwd() {
