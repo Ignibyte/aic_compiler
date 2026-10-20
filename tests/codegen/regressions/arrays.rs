@@ -2282,6 +2282,36 @@ echo count($grow->b["k"]), ":", $grow->b["k"][11], "\n";
     assert_eq!(out.stdout, "2:2:1\n12:11\n");
 }
 
+/// Verifies a nested append that falls open to the read/push/write-back desugar (a property the
+/// lowering sees as `Mixed`) vivifies its bucket silently, as PHP does: no "Undefined array key"
+/// warning for the first write into a bucket.
+#[test]
+fn test_nested_append_fallback_vivifies_without_a_warning() {
+    let out = compile_and_run_capture(
+        r#"<?php
+final class Tags {
+    private array $tags = [];
+
+    public function tag(string $type, string $id): void {
+        $this->tags[$type][] = $id;
+    }
+
+    public function names(string $type): string {
+        return implode(",", $this->tags[$type] ?? []);
+    }
+}
+$tags = new Tags();
+$tags->tag("greeter", "english");
+$tags->tag("greeter", "spanish");
+$tags->tag("logger", "stderr");
+echo $tags->names("greeter"), "|", $tags->names("logger"), "|", $tags->names("none"), "\n";
+"#,
+    );
+    assert!(out.success, "program failed: {}", out.stderr);
+    assert_eq!(out.stdout, "english,spanish|stderr|\n");
+    assert!(!out.stderr.contains("Undefined array key"), "unexpected warning: {}", out.stderr);
+}
+
 /// Verifies nested append auto-vivifies on a STATIC-property base.
 ///
 /// This shape needed two separate fixes. The parser was dropping the append outright —
