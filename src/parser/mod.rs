@@ -51,18 +51,50 @@ thread_local! {
     /// Monotonic counter producing unique synthetic class names. Never reset within a process so
     /// that anonymous classes from different files (e.g. includes) cannot collide once merged.
     static ANONYMOUS_CLASS_COUNTER: Cell<usize> = const { Cell::new(0) };
+    /// While an included file parses: a stable key for that file and the anonymous classes it has
+    /// declared so far. Set by `with_anonymous_class_scope`.
+    static ANONYMOUS_CLASS_SCOPE: RefCell<Option<(u64, usize)>> = const { RefCell::new(None) };
 }
 
-/// Returns a fresh, globally-unique synthetic class name for an anonymous class. The `@`/`#`
-/// characters cannot appear in a PHP identifier, so the name never collides with a user class,
-/// and `mangle_fqn` hex-encodes them when generating assembly symbols.
+/// Returns a fresh synthetic class name for an anonymous class. The `@`/`#` characters cannot
+/// appear in a PHP identifier, so the name never collides with a user class, and `mangle_fqn`
+/// hex-encodes them when generating assembly symbols.
+///
+/// Inside `with_anonymous_class_scope` the name is derived from the file and the class's position
+/// in it, so every parse of one included file names its anonymous classes alike: the resolver
+/// parses an included file once to discover its declarations and again to inline its body, and
+/// the two must agree. Elsewhere a process-wide counter keeps the names unique.
 pub(crate) fn next_anonymous_class_name() -> String {
+    let scoped = ANONYMOUS_CLASS_SCOPE.with(|scope| {
+        scope.borrow_mut().as_mut().map(|(file, position)| {
+            let name = format!("class@anonymous#{:016x}x{}", file, position);
+            *position += 1;
+            name
+        })
+    });
+    if let Some(name) = scoped {
+        return name;
+    }
     let id = ANONYMOUS_CLASS_COUNTER.with(|counter| {
         let id = counter.get();
         counter.set(id + 1);
         id
     });
     format!("class@anonymous#{}", id)
+}
+
+/// Runs `parse` with anonymous classes named after `file` and their position in it (see
+/// `next_anonymous_class_name`), restoring the previous naming afterwards, so a nested include
+/// keeps its own count.
+pub(crate) fn with_anonymous_class_scope<T>(file: &str, parse: impl FnOnce() -> T) -> T {
+    // FNV-1a over the file path: stable for a path within and across runs.
+    let key = file.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    let previous = ANONYMOUS_CLASS_SCOPE.with(|scope| scope.replace(Some((key, 0))));
+    let result = parse();
+    ANONYMOUS_CLASS_SCOPE.with(|scope| scope.replace(previous));
+    result
 }
 
 /// Records a hoisted anonymous-class `ClassDecl` so the current parse appends it to the program.

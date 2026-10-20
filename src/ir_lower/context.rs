@@ -387,6 +387,9 @@ pub(crate) struct LoweringContext<'m, 'f> {
     array_conversions: HashMap<String, PhpType>,
     /// Whether the current statement lowering is a disposable discovery pass.
     speculating: bool,
+    /// While set, an ordinary array read lowers without the missing-key warning (the read of a
+    /// fallen-open nested append, which PHP auto-vivifies silently).
+    quiet_array_reads: bool,
     pub return_type: IrType,
     pub return_php_type: PhpType,
     /// `true` when the function SOURCE declares a return type, as opposed to one inferred
@@ -561,6 +564,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
             foreach_int_key_locals: HashSet::new(),
             array_conversions: HashMap::new(),
             speculating: false,
+            quiet_array_reads: false,
             return_type,
             return_php_type,
             return_type_is_declared: false,
@@ -965,6 +969,17 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
     /// Sets speculative-lowering mode and returns its previous value.
     pub(crate) fn set_speculating(&mut self, speculating: bool) -> bool {
         std::mem::replace(&mut self.speculating, speculating)
+    }
+
+    /// Returns whether ordinary array reads currently lower without the missing-key warning.
+    pub(crate) fn quiet_array_reads(&self) -> bool {
+        self.quiet_array_reads
+    }
+
+    /// Sets whether ordinary array reads lower without the missing-key warning, and returns the
+    /// previous setting so the caller can restore it.
+    pub(crate) fn set_quiet_array_reads(&mut self, quiet: bool) -> bool {
+        std::mem::replace(&mut self.quiet_array_reads, quiet)
     }
 
     /// Updates only the flow-sensitive PHP type fact for a local.

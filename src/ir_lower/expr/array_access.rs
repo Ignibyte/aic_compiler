@@ -9,14 +9,16 @@
 
 use super::*;
 
-/// Lowers array, hash, string, or ArrayAccess indexing.
+/// Lowers array, hash, string, or ArrayAccess indexing; silently while the context asks for
+/// quiet array reads.
 pub(super) fn lower_array_access(
     ctx: &mut LoweringContext<'_, '_>,
     array: &Expr,
     index: &Expr,
     expr: &Expr,
 ) -> LoweredValue {
-    lower_array_access_with_missing_warning(ctx, array, index, expr, true)
+    let warn_on_missing = !ctx.quiet_array_reads();
+    lower_array_access_with_missing_warning(ctx, array, index, expr, warn_on_missing)
 }
 
 /// Lowers `$base[...][$index]` as the source of a by-reference `foreach`, separating the element

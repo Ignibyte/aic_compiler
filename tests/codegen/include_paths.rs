@@ -474,3 +474,24 @@ fn test_included_line_diagnostic_past_16_bit_columns_reports_the_real_column() {
         "the diagnostic must name column 70006: {stderr}"
     );
 }
+
+/// Verifies an anonymous class declared in an included file. The resolver parses the file once to
+/// discover its declarations and again to inline its body; both parses must give the class one
+/// name, or the `new` in the inlined body refers to a class discovery never declared.
+#[test]
+fn test_anonymous_class_in_included_file() {
+    let out = compile_and_run_files(
+        &[
+            (
+                "main.php",
+                "<?php\nrequire __DIR__ . '/lib/sink.php';\n$sink->write('main');\n",
+            ),
+            (
+                "lib/sink.php",
+                "<?php\ninterface Sink { public function write(string $s): void; }\n$sink = new class () implements Sink { public function write(string $s): void { echo '[', $s, ']'; } };\n$sink->write('included');\n",
+            ),
+        ],
+        "main.php",
+    );
+    assert_eq!(out, "[included][main]");
+}
