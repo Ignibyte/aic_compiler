@@ -8,7 +8,7 @@
 //! Key details:
 //! - Fixtures verify caller-side by-reference values are written back before a
 //!   method callable's catchable throw is returned through the eval bridge.
-//! - Argument-preparation fatal cases each compile and link one program per test.
+//! - Named-argument fatal fixtures compile and link one program per independent test.
 
 use crate::support::{compile_and_run, compile_and_run_capture};
 
@@ -461,13 +461,12 @@ echo "bad";');
     }
 }
 
-/// Verifies named AOT callable by-ref argument-prep fatals restore the eval bridge frame.
+/// Verifies instance array callable named argument-prep fatals restore the eval bridge frame.
 #[test]
-fn test_eval_aot_callable_named_ref_arg_prep_fatal_cleans_up_stack() {
-    let cases = [
-        (
-            "instance array callable",
-            r#"<?php
+fn test_eval_aot_callable_named_ref_arg_prep_fatal_cleans_up_stack_instance_array_callable() {
+    assert_aot_function_arg_prep_fatal(
+        "instance array callable",
+        r#"<?php
 class EvalAotNamedRefArrayFatalNeed {}
 class EvalAotNamedRefArrayFatalBridge {
     public function bump(int &$value, EvalAotNamedRefArrayFatalNeed $need): int {
@@ -482,10 +481,15 @@ $value = "2";
 $callback(value: $value, need: 123);
 echo "bad";');
 "#,
-        ),
-        (
-            "first-class instance callable",
-            r#"<?php
+    );
+}
+
+/// Verifies first-class instance callable named argument-prep fatals restore the eval bridge frame.
+#[test]
+fn test_eval_aot_callable_named_ref_arg_prep_fatal_cleans_up_stack_first_class_instance_callable() {
+    assert_aot_function_arg_prep_fatal(
+        "first-class instance callable",
+        r#"<?php
 class EvalAotNamedRefFirstFatalNeed {}
 class EvalAotNamedRefFirstFatalBridge {
     public function bump(int &$value, EvalAotNamedRefFirstFatalNeed $need): int {
@@ -500,10 +504,15 @@ $value = "2";
 $callback(need: 123, value: $value);
 echo "bad";');
 "#,
-        ),
-        (
-            "Closure::fromCallable instance",
-            r#"<?php
+    );
+}
+
+/// Verifies Closure::fromCallable instance named argument-prep fatals restore the eval bridge frame.
+#[test]
+fn test_eval_aot_callable_named_ref_arg_prep_fatal_cleans_up_stack_closure_from_callable_instance() {
+    assert_aot_function_arg_prep_fatal(
+        "Closure::fromCallable instance",
+        r#"<?php
 class EvalAotNamedRefClosureFatalNeed {}
 class EvalAotNamedRefClosureFatalBridge {
     public function bump(int &$value, EvalAotNamedRefClosureFatalNeed $need): int {
@@ -518,10 +527,15 @@ $value = "2";
 $callback(value: $value, need: 123);
 echo "bad";');
 "#,
-        ),
-        (
-            "static string callable",
-            r#"<?php
+    );
+}
+
+/// Verifies static string callable named argument-prep fatals restore the eval bridge frame.
+#[test]
+fn test_eval_aot_callable_named_ref_arg_prep_fatal_cleans_up_stack_static_string_callable() {
+    assert_aot_function_arg_prep_fatal(
+        "static string callable",
+        r#"<?php
 class EvalAotNamedRefStringFatalNeed {}
 class EvalAotNamedRefStringFatalBridge {
     public static function bump(int &$value, EvalAotNamedRefStringFatalNeed $need): int {
@@ -535,10 +549,15 @@ $value = "2";
 $callback(need: 123, value: $value);
 echo "bad";');
 "#,
-        ),
-        (
-            "first-class static callable",
-            r#"<?php
+    );
+}
+
+/// Verifies first-class static callable named argument-prep fatals restore the eval bridge frame.
+#[test]
+fn test_eval_aot_callable_named_ref_arg_prep_fatal_cleans_up_stack_first_class_static_callable() {
+    assert_aot_function_arg_prep_fatal(
+        "first-class static callable",
+        r#"<?php
 class EvalAotNamedRefStaticFatalNeed {}
 class EvalAotNamedRefStaticFatalBridge {
     public static function bump(int &$value, EvalAotNamedRefStaticFatalNeed $need): int {
@@ -552,10 +571,15 @@ $value = "2";
 $callback(value: $value, need: 123);
 echo "bad";');
 "#,
-        ),
-        (
-            "invokable object callable",
-            r#"<?php
+    );
+}
+
+/// Verifies invokable object callable named argument-prep fatals restore the eval bridge frame.
+#[test]
+fn test_eval_aot_callable_named_ref_arg_prep_fatal_cleans_up_stack_invokable_object_callable() {
+    assert_aot_function_arg_prep_fatal(
+        "invokable object callable",
+        r#"<?php
 class EvalAotNamedRefInvokeFatalNeed {}
 class EvalAotNamedRefInvokeFatalBridge {
     public function __invoke(int &$value, EvalAotNamedRefInvokeFatalNeed $need): int {
@@ -569,28 +593,7 @@ $value = "2";
 $callback(need: 123, value: $value);
 echo "bad";');
 "#,
-        ),
-    ];
-
-    for (label, source) in cases {
-        let out = compile_and_run_capture(source);
-        assert!(
-            !out.success,
-            "{label}: expected eval runtime fatal, stdout={:?} stderr={}",
-            out.stdout, out.stderr
-        );
-        assert_eq!(out.stdout, "", "{label}: unexpected stdout");
-        assert!(
-            out.stderr.contains("Fatal error: eval() runtime failed"),
-            "{label}: stderr did not contain eval runtime fatal diagnostic: {}",
-            out.stderr
-        );
-        assert!(
-            !out.stderr.contains("panicked at") && !out.stderr.contains("thread '"),
-            "{label}: stderr leaked a Rust panic: {}",
-            out.stderr
-        );
-    }
+    );
 }
 
 /// Verifies AOT first-class method argument-prep fatals restore the eval bridge frame.

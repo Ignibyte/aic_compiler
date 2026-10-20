@@ -42,3 +42,26 @@ fn json_decode_owners_all_targets_have_one_throw_boundary() {
         }
     }
 }
+
+/// Only validated string tokens enter the legacy unescaper on every direct and PIC ABI.
+#[test]
+fn json_decode_nonstring_tokens_skip_legacy_unescape_all_targets() {
+    for name in ["macos-aarch64", "ios-arm64", "ios-sim-arm64", "linux-aarch64", "linux-x86_64"] {
+        for pic in [false, true] {
+            let mut emitter = Emitter::new(Target::parse(name).unwrap());
+            emitter.pic_data_refs = pic;
+            emit_json_decode_mixed(&mut emitter);
+            let assembly = emitter.output();
+            let call = if name == "linux-x86_64" { "    call " } else { "    bl " };
+            let value = assembly.split("__rt_json_decode_mixed_value:\n").nth(1).unwrap();
+            let (dispatch, string) = value.split_once("__rt_json_decode_mixed_string:\n").unwrap();
+            let string = string.split("__rt_json_decode_mixed_array:\n").next().unwrap();
+            assert!(!dispatch.contains(&format!("{call}__rt_json_decode\n")), "{name}, pic={pic}");
+            let validate = string.find(&format!("{call}__rt_json_validate_string")).unwrap();
+            let unescape = string.find(&format!("{call}__rt_json_decode\n")).unwrap();
+            assert!(validate < unescape, "{name}, pic={pic}: malformed strings must fail before unescaping");
+            assert_eq!(value.matches(&format!("{call}__rt_json_decode\n")).count(), 1,
+                "{name}, pic={pic}: scalar and container branches use their already trimmed slices");
+        }
+    }
+}

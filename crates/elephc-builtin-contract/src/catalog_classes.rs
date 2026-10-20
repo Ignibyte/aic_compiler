@@ -17,9 +17,10 @@ macro_rules! class {
     (
         $name:literal, $canonical:literal, $kind:ident, $module:ident, $route:ident
         $(, since: $since:ident)? $(, extension: $extension:literal)? $(, internal: $internal:literal)?
-        $(, targets: $targets:expr)? $(,)?
+        $(, targets: $targets:expr)? $(, operators: $operators:expr)? $(,)?
     ) => {
         ClassContract {
+            operators: class!(@operators $($operators)?),
             id: BuiltinId::from_canonical_name($canonical),
             name: $name,
             kind: ClassKind::$kind,
@@ -38,15 +39,20 @@ macro_rules! class {
     (@flag) => { false };
     (@targets $targets:expr) => { Some($targets) };
     (@targets) => { None };
+    (@operators $operators:expr) => { Some($operators) };
+    (@operators) => { None };
 }
 
 pub(crate) static CLASSES: &[ClassContract] = &[
     class!("__ElephcCallableSessionHandler", "__elephccallablesessionhandler", Class, Elephc, Prelude, internal: true),
+    class!("__ElephcDOMNodeListIterator", "__elephcdomnodelistiterator", Class, Elephc, Prelude, internal: true),
     class!("__ElephcMysqliResultIterator", "__elephcmysqliresultiterator", Class, Elephc, Prelude, internal: true),
     class!("__ElephcPDOPgsqlLobStream", "__elephcpdopgsqllobstream", Class, Elephc, Prelude, internal: true),
     class!("__ElephcPDOSqliteBlobStream", "__elephcpdosqliteblobstream", Class, Elephc, Prelude, internal: true),
     class!("__ElephcPDOStatementIterator", "__elephcpdostatementiterator", Class, Elephc, Prelude, internal: true),
     class!("__ElephcSessionState", "__elephcsessionstate", Class, Elephc, Prelude, internal: true),
+    class!("__ElephcWeakMapIterator", "__elephcweakmapiterator", Class, Elephc, Prelude, internal: true),
+    class!("AllowDynamicProperties", "allowdynamicproperties", Class, Core, Prelude, since: Php82),
     class!("AppendIterator", "appenditerator", Class, Spl, CheckerInjected),
     class!("ArgumentCountError", "argumentcounterror", Class, Core, CheckerInjected),
     class!("ArithmeticError", "arithmeticerror", Class, Core, CheckerInjected),
@@ -54,8 +60,11 @@ pub(crate) static CLASSES: &[ClassContract] = &[
     class!("ArrayIterator", "arrayiterator", Class, Spl, CheckerInjected),
     class!("ArrayObject", "arrayobject", Class, Spl, CheckerInjected),
     class!("AssertionError", "assertionerror", Class, Standard, CheckerInjected),
+    class!("Attribute", "attribute", Class, Core, Prelude),
+    class!("BackedEnum", "backedenum", Interface, Core, CheckerInjected, since: Php81),
     class!("BadFunctionCallException", "badfunctioncallexception", Class, Spl, CheckerInjected),
     class!("BadMethodCallException", "badmethodcallexception", Class, Spl, CheckerInjected),
+    class!("BcMath\\Number", "bcmath\\number", Class, Bcmath, Prelude, since: Php84, operators: &crate::BCMATH_NUMBER_OPERATORS),
     class!("CachingIterator", "cachingiterator", Class, Spl, CheckerInjected),
     class!("CairoAntialias", "cairoantialias", Class, Cairo, Prelude),
     class!("CairoContext", "cairocontext", Class, Cairo, Prelude),
@@ -84,7 +93,9 @@ pub(crate) static CLASSES: &[ClassContract] = &[
     class!("CairoSvgSurface", "cairosvgsurface", Class, Cairo, Prelude),
     class!("CairoToyFontFace", "cairotoyfontface", Class, Cairo, Prelude),
     class!("CallbackFilterIterator", "callbackfilteriterator", Class, Spl, CheckerInjected),
+    class!("ClosedGeneratorException", "closedgeneratorexception", Class, Core, CheckerInjected),
     class!("Closure", "closure", Class, Core, LanguageIntrinsic),
+    class!("CompileError", "compileerror", Class, Core, CheckerInjected),
     class!("Countable", "countable", Interface, Core, CheckerInjected),
     class!("CURLFile", "curlfile", Class, Curl, Prelude),
     class!("CurlHandle", "curlhandle", Class, Curl, Prelude),
@@ -108,11 +119,22 @@ pub(crate) static CLASSES: &[ClassContract] = &[
     class!("DateTimeInterface", "datetimeinterface", Interface, Date, CheckerInjected),
     class!("DateTimeZone", "datetimezone", Class, Date, CheckerInjected),
     class!("DateUnknownException", "dateunknownexception", Class, Date, CheckerInjected, extension: true),
+    class!("DelayedTargetValidation", "delayedtargetvalidation", Class, Core, Prelude, since: Php85),
+    class!("Deprecated", "deprecated", Class, Core, Prelude, since: Php84),
     class!("DirectoryIterator", "directoryiterator", Class, Spl, CheckerInjected),
     class!("DivisionByZeroError", "divisionbyzeroerror", Class, Core, CheckerInjected),
     class!("DomainException", "domainexception", Class, Spl, CheckerInjected),
+    class!("DOMCharacterData", "domcharacterdata", Class, Dom, Prelude),
+    class!("DOMComment", "domcomment", Class, Dom, Prelude),
+    class!("DOMDocument", "domdocument", Class, Dom, Prelude),
+    class!("DOMElement", "domelement", Class, Dom, Prelude),
+    class!("DOMNode", "domnode", Class, Dom, Prelude),
+    class!("DOMNodeList", "domnodelist", Class, Dom, Prelude),
+    class!("DOMProcessingInstruction", "domprocessinginstruction", Class, Dom, Prelude),
+    class!("DOMText", "domtext", Class, Dom, Prelude),
     class!("EmptyIterator", "emptyiterator", Class, Spl, CheckerInjected),
     class!("Error", "error", Class, Core, CheckerInjected),
+    class!("ErrorException", "errorexception", Class, Core, Prelude),
     class!("Exception", "exception", Class, Core, CheckerInjected),
     class!("Fiber", "fiber", Class, Core, CheckerInjected, since: Php81),
     class!("FiberError", "fibererror", Class, Core, CheckerInjected, since: Php81),
@@ -155,12 +177,15 @@ pub(crate) static CLASSES: &[ClassContract] = &[
     class!("mysqli_result", "mysqli_result", Class, Mysqli, Prelude),
     class!("mysqli_sql_exception", "mysqli_sql_exception", Class, Mysqli, Prelude),
     class!("mysqli_stmt", "mysqli_stmt", Class, Mysqli, Prelude),
+    class!("NoDiscard", "nodiscard", Class, Core, Prelude, since: Php85),
     class!("NoRewindIterator", "norewinditerator", Class, Spl, CheckerInjected),
     class!("OuterIterator", "outeriterator", Interface, Spl, CheckerInjected),
     class!("OutOfBoundsException", "outofboundsexception", Class, Spl, CheckerInjected),
     class!("OutOfRangeException", "outofrangeexception", Class, Spl, CheckerInjected),
     class!("OverflowException", "overflowexception", Class, Spl, CheckerInjected),
+    class!("Override", "override", Class, Core, Prelude, since: Php83),
     class!("ParentIterator", "parentiterator", Class, Spl, CheckerInjected),
+    class!("ParseError", "parseerror", Class, Core, CheckerInjected),
     class!("Pcntl\\QosClass", "pcntl\\qosclass", Enum, Pcntl, CheckerInjected, since: Php84, targets: &["macos-aarch64"]),
     class!("PDO", "pdo", Class, Pdo, Prelude),
     class!("Pdo\\Dblib", "pdo\\dblib", Class, PdoDblib, Prelude, since: Php84),
@@ -203,8 +228,14 @@ pub(crate) static CLASSES: &[ClassContract] = &[
     class!("ReflectionProperty", "reflectionproperty", Class, Reflection, CheckerInjected),
     class!("ReflectionUnionType", "reflectionuniontype", Class, Reflection, CheckerInjected),
     class!("RegexIterator", "regexiterator", Class, Spl, CheckerInjected),
+    class!("RequestParseBodyException", "requestparsebodyexception", Class, Core, CheckerInjected, since: Php84),
+    class!("ReturnTypeWillChange", "returntypewillchange", Class, Core, Prelude, since: Php81),
+    class!("RoundingMode", "roundingmode", Enum, Standard, Prelude, since: Php84),
     class!("RuntimeException", "runtimeexception", Class, Spl, CheckerInjected),
     class!("SeekableIterator", "seekableiterator", Interface, Spl, CheckerInjected),
+    class!("SensitiveParameter", "sensitiveparameter", Class, Core, Prelude, since: Php82),
+    class!("SensitiveParameterValue", "sensitiveparametervalue", Class, Core, Prelude, since: Php82),
+    class!("Serializable", "serializable", Interface, Core, CheckerInjected),
     class!("SessionHandler", "sessionhandler", Class, Session, Prelude),
     class!("SessionHandlerInterface", "sessionhandlerinterface", Interface, Session, Prelude),
     class!("SessionIdInterface", "sessionidinterface", Interface, Session, Prelude),
@@ -232,7 +263,10 @@ pub(crate) static CLASSES: &[ClassContract] = &[
     class!("UnderflowException", "underflowexception", Class, Spl, CheckerInjected),
     class!("UnexpectedValueException", "unexpectedvalueexception", Class, Spl, CheckerInjected),
     class!("UnhandledMatchError", "unhandledmatcherror", Class, Core, CheckerInjected),
+    class!("UnitEnum", "unitenum", Interface, Core, CheckerInjected, since: Php81),
     class!("ValueError", "valueerror", Class, Core, CheckerInjected),
+    class!("WeakMap", "weakmap", Class, Core, Prelude),
+    class!("WeakReference", "weakreference", Class, Core, Prelude),
     class!("XMLParser", "xmlparser", Class, Xml, Prelude),
     class!("XMLWriter", "xmlwriter", Class, Xmlwriter, Prelude),
 ];

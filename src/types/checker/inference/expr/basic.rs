@@ -34,6 +34,9 @@ impl Checker {
             ExprKind::Variable(name) => self.variable_type_or_eval_dynamic(name, expr.span, env),
             ExprKind::Negate(inner) => {
                 let ty = self.infer_type(inner, env)?;
+                if crate::types::object_operators::binary_plan(&crate::parser::ast::BinOp::Sub, &PhpType::Int, &ty).is_some() {
+                    return Ok(ty);
+                }
                 match ty {
                     PhpType::Int => {
                         if matches!(&inner.kind, ExprKind::IntLiteral(_)) {
@@ -66,6 +69,7 @@ impl Checker {
                 Ok(PhpType::Int)
             }
             ExprKind::PreIncrement(name) | ExprKind::PreDecrement(name) => match env.get(name) {
+                Some(ty) if crate::types::object_operators::operator_class(ty).is_some() => Ok(ty.clone()),
                 Some(PhpType::Int) => Ok(PhpType::Mixed),
                 Some(PhpType::Mixed) => Ok(PhpType::Mixed),
                 // PHP's string increment can change the value's type (`"9"++` is
@@ -95,6 +99,7 @@ impl Checker {
                 )),
             },
             ExprKind::PostIncrement(name) | ExprKind::PostDecrement(name) => match env.get(name) {
+                Some(ty) if crate::types::object_operators::operator_class(ty).is_some() => Ok(ty.clone()),
                 Some(PhpType::Int)
                 | Some(PhpType::Bool)
                 | Some(PhpType::False)
@@ -264,6 +269,11 @@ impl Checker {
                             // promotes to hash at runtime. Return the element type
                             // widened to Mixed so ?? / isset / reads type-check.
                             Ok(PhpType::Mixed)
+                        } else if **elem_ty == PhpType::Never {
+                            // Never describes the element type of an empty indexed array,
+                            // not a non-returning read. String keys keep the dynamic hash
+                            // shape above so nested append write-back can auto-vivify them.
+                            Ok(PhpType::Void)
                         } else {
                             Ok(*elem_ty.clone())
                         }

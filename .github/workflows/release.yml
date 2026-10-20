@@ -220,6 +220,19 @@ jobs:
       - name: Strip binary
         run: strip target/release/elephc
 
+      - name: Sign and notarize macOS binary
+        if: runner.os == 'macOS'
+        timeout-minutes: 40
+        uses: ./.github/actions/notarize-macos
+        with:
+          binary: target/release/elephc
+          certificate-p12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          signing-identity: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          apple-id: ${{ secrets.APPLE_ID }}
+          team-id: ${{ secrets.APPLE_TEAM_ID }}
+          app-password: ${{ secrets.APPLE_APP_PASSWORD }}
+
       - name: Copy mbstring data notices
         run: |
           mkdir -p target/release/mbstring-notices
@@ -256,6 +269,17 @@ jobs:
           else
             shasum -a 256 "$TARBALL" > "$TARBALL.sha256"
           fi
+
+      - name: Verify packaged macOS signature
+        if: runner.os == 'macOS'
+        env:
+          TARBALL: target/release/elephc-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+        run: |
+          VERIFY_DIR="$(mktemp -d "$RUNNER_TEMP/elephc-signature.XXXXXX")"
+          trap 'rm -rf "$VERIFY_DIR"' EXIT
+          tar xzf "$TARBALL" -C "$VERIFY_DIR" elephc
+          cmp target/release/elephc "$VERIFY_DIR/elephc"
+          codesign --verify --strict --verbose=2 "$VERIFY_DIR/elephc"
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v7

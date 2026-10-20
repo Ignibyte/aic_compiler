@@ -71,6 +71,8 @@ pub(super) struct PropertySlot {
     is_declared: bool,
     is_packed: bool,
     is_reference: bool,
+    /// Argument diagnostic prefix when this temporary slot models an inherited setter.
+    abstract_setter_type_error_prefix: Option<String>,
 }
 
 /// Declared-property candidate reachable from a `Mixed` object receiver.
@@ -168,6 +170,7 @@ mod property_compatibility;
 mod property_loads;
 mod property_fetch_for_write;
 mod property_stores;
+mod property_hook_writes;
 mod property_store_values;
 mod typed_property_guards;
 mod instanceof_helpers;
@@ -207,6 +210,7 @@ use named_property_writes::*;
 use instanceof_entry::*;
 #[allow(unused_imports)]
 use allocation_clone::*;
+pub(super) use allocation_clone::emit_object_allocation;
 #[allow(unused_imports)]
 use interface_layout::*;
 #[allow(unused_imports)]
@@ -217,6 +221,7 @@ use property_compatibility::*;
 use property_loads::*;
 #[allow(unused_imports)]
 use property_stores::*;
+use property_hook_writes::*;
 #[allow(unused_imports)]
 use property_store_values::*;
 #[allow(unused_imports)]

@@ -393,6 +393,7 @@ fn emit_preg_replace_callback_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov r11, QWORD PTR [r10]");                            // load current concat-buffer offset
     abi::emit_symbol_address(emitter, "rax", "_concat_buf");
     emitter.instruction("add rax, r11");                                        // compute the replacement output start pointer
+    emitter.instruction("mov r11, rax");                                        // keep the output write pointer in r11, which the done path saves even before any match
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rax", output_start_off)); // save final output start pointer
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rax", output_write_off)); // initialize final output write pointer
     emitter.instruction(&format!("mov rax, QWORD PTR [rsp + {}]", subject_cstr_off)); // load subject C-string start

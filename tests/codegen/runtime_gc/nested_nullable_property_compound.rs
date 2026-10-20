@@ -45,8 +45,6 @@ class Box { public int $n = 7; public ?Box $next = null; }
 function bad_value(): mixed { return "nope"; }
 function reject(Box $h): int {
     if ($h->next === null) { $h->next = new Box(); }
-    try { $h->next->n = "nope"; }
-    catch (TypeError $e) {}
     try { $h->next->n = bad_value(); }
     catch (TypeError $e) { return $h->next->n; }
     return 0;
@@ -63,6 +61,73 @@ echo $sum, "\n";
         "{}",
         out.stderr
     );
+}
+
+/// Repeats the nullable nested throwing store without EIR optimization.
+#[test]
+fn test_nested_nullable_property_throwing_write_is_heap_clean_no_ir_opt() {
+    without_ir_opt(test_nested_nullable_property_throwing_write_is_heap_clean);
+}
+
+/// A nullable static receiver keeps one unwind lease while a typed store rejects its RHS.
+#[test]
+fn test_static_nullable_property_throwing_write_is_heap_clean() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+class Box { public int $n = 7; }
+class Holder { public static ?Box $box = null; }
+function bad_value(): mixed { return "nope"; }
+Holder::$box = new Box();
+try { Holder::$box->n = bad_value(); }
+catch (TypeError $e) { echo Holder::$box->n, "\n"; }
+"#,
+    );
+    assert!(out.success, "stdout={:?}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(out.stdout, "7\n", "{}", out.stderr);
+    assert!(
+        out.stderr.contains("HEAP DEBUG: leak summary: clean"),
+        "{}",
+        out.stderr
+    );
+}
+
+/// Repeats the nullable static typed-store failure without EIR optimization.
+#[test]
+fn test_static_nullable_property_throwing_write_is_heap_clean_no_ir_opt() {
+    without_ir_opt(test_static_nullable_property_throwing_write_is_heap_clean);
+}
+
+/// A throwing magic setter does not consume the nullable static receiver's stored reference.
+#[test]
+fn test_static_nullable_magic_set_throw_keeps_receiver_alive() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+class Trap {
+    public int $calls = 0;
+    public function __set(string $name, mixed $value): void {
+        $this->calls++;
+        throw new Error("stop");
+    }
+}
+class Holder { public static ?Trap $trap = null; }
+Holder::$trap = new Trap();
+try { Holder::$trap->missing = 42; }
+catch (Error $e) { echo Holder::$trap->calls, "\n"; }
+"#,
+    );
+    assert!(out.success, "stdout={:?}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(out.stdout, "1\n", "{}", out.stderr);
+    assert!(
+        out.stderr.contains("HEAP DEBUG: leak summary: clean"),
+        "{}",
+        out.stderr
+    );
+}
+
+/// Repeats the nullable static magic-set failure without EIR optimization.
+#[test]
+fn test_static_nullable_magic_set_throw_keeps_receiver_alive_no_ir_opt() {
+    without_ir_opt(test_static_nullable_magic_set_throw_keeps_receiver_alive);
 }
 
 /// Retires a boxed string after the nullable-receiver store copies its payload.

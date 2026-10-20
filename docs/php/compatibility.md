@@ -10,7 +10,7 @@ sidebar:
 
 Baseline: **PHP 8.5.10** (CLI snapshot of 2026-09-04, 68 extensions, 2169 functions, 329 classes, 3180 constants).
 
-Overall coverage: functions **982 / 2169** (45%), classes **142 / 329** (43%), constants **1114 / 3180** (35%).
+Overall coverage: functions **982 / 2169** (45%), classes **171 / 329** (52%), constants **1173 / 3180** (37%).
 
 ## Coverage by PHP module
 
@@ -18,15 +18,15 @@ Each cell counts the PHP-visible symbols a compiled elephc program has, against 
 
 | PHP module | Functions | Classes | Constants |
 |---|---|---|---|
-| [`bcmath`](./bcmath.md#functions) | 14 / 14 · 100% | 0 / 1 · 0% | - |
+| [`bcmath`](./bcmath.md#functions) | 14 / 14 · 100% | 1 / 1 · 100% | - |
 | `bz2` | 0 / 10 · 0% | - | - |
 | [`calendar`](./calendar.md#functions) | 18 / 18 · 100% | - | 21 / 21 · 100% |
-| `core` | 62 / 62 · 100% | 21 / 40 · 52% | 37 / 89 · 42% |
+| `core` | 62 / 62 · 100% | 40 / 40 · 100% | 89 / 89 · 100% |
 | `ctype` | 4 / 11 · 36% | - | - |
 | [`curl`](./curl.md#functions) | 34 / 35 · 97% | 6 / 6 · 100% | 689 / 689 · 100% |
 | [`date`](./datetime.md#functions) | 48 / 48 · 100% | 15 / 15 · 100% | 3 / 17 · 18% |
 | `dba` | 0 / 15 · 0% | 0 / 1 · 0% | - |
-| `dom` | 0 / 2 · 0% | 0 / 50 · 0% | 0 / 61 · 0% |
+| [`dom`](./dom-html.md#functions) | 0 / 2 · 0% | 8 / 50 · 16% | 0 / 61 · 0% |
 | `enchant` | 0 / 25 · 0% | 0 / 2 · 0% | 0 / 3 · 0% |
 | [`exif`](./image.md#functions) | 4 / 4 · 100% | - | 1 / 1 · 100% |
 | `ffi` | - | 0 / 5 · 0% | - |
@@ -39,9 +39,9 @@ Each cell counts the PHP-visible symbols a compiled elephc program has, against 
 | `hash` | 9 / 20 · 45% | 1 / 1 · 100% | 0 / 40 · 0% |
 | [`iconv`](./iconv.md#functions) | 10 / 10 · 100% | - | 4 / 4 · 100% |
 | `intl` | 0 / 187 · 0% | 0 / 22 · 0% | 0 / 170 · 0% |
-| `json` | 5 / 5 · 100% | 2 / 2 · 100% | 27 / 29 · 93% |
+| `json` | 5 / 5 · 100% | 2 / 2 · 100% | 29 / 29 · 100% |
 | `ldap` | 0 / 55 · 0% | 0 / 3 · 0% | 0 / 92 · 0% |
-| `libxml` | 0 / 8 · 0% | 0 / 1 · 0% | 0 / 28 · 0% |
+| `libxml` | 0 / 8 · 0% | 0 / 1 · 0% | 5 / 28 · 18% |
 | `mbstring` | 65 / 65 · 100% | - | 9 / 9 · 100% |
 | [`mysqli`](./mysqli.md#functions) | 84 / 106 · 79% | 4 / 6 · 67% | 52 / 110 · 47% |
 | `odbc` | 0 / 48 · 0% | 0 / 2 · 0% | 0 / 57 · 0% |
@@ -70,7 +70,7 @@ Each cell counts the PHP-visible symbols a compiled elephc program has, against 
 | `sodium` | 0 / 104 · 0% | 0 / 1 · 0% | 0 / 94 · 0% |
 | [`spl`](./spl.md#functions) | 15 / 15 · 100% | 54 / 55 · 98% | - |
 | `sqlite3` | - | 0 / 4 · 0% | 0 / 12 · 0% |
-| `standard` | 384 / 545 · 70% | 2 / 6 · 33% | 163 / 400 · 41% |
+| `standard` | 384 / 545 · 70% | 3 / 6 · 50% | 163 / 400 · 41% |
 | `sysvmsg` | 0 / 7 · 0% | 0 / 1 · 0% | 0 / 5 · 0% |
 | `sysvsem` | 0 / 4 · 0% | 0 / 1 · 0% | - |
 | `sysvshm` | 0 / 7 · 0% | 0 / 1 · 0% | - |
@@ -87,7 +87,7 @@ Each cell counts the PHP-visible symbols a compiled elephc program has, against 
 
 The counts above are what a compiled program has. Exported backend support differs in these modules (compiled / eval()):
 
-- `core` constants: 37 / 34
+- `core` constants: 89 / 86
 - `exif` functions: 4 / 0
 - `exif` constants: 1 / 0
 - `gd` functions: 83 / 0

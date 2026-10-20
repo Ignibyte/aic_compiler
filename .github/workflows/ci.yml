@@ -60,6 +60,9 @@ jobs:
       - name: Test nextest artifact validation
         run: sh scripts/ci/test_validate_archived_nextest.sh
 
+      - name: Test macOS notarization gate
+        run: python3 -B -m unittest discover -s .github/scripts -p 'test_notarize_macos.py' -v
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, 2026-09-03
         with:
@@ -1800,6 +1803,9 @@ jobs:
 
       - name: Test Action pin checker
         run: python3 -m unittest discover -s .github/scripts -p 'test_check_action_pins.py' -v
+
+      - name: Test macOS notarization gate
+        run: python3 -B -m unittest discover -s .github/scripts -p 'test_notarize_macos.py' -v
 
       - name: Check workflow and composite Action refs
         run: ruby .github/scripts/check_action_pins.rb

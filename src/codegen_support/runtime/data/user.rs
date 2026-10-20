@@ -168,6 +168,11 @@ pub(crate) fn emit_runtime_data_user(
     super::instanceof::emit_instanceof_target_lookup_data(&mut out, &sorted_interfaces, &sorted_classes);
     emit_class_name_lookup_data(&mut out, max_class_id, &class_name_by_id);
     super::throwable_previous::emit_previous_slots(&mut out, max_class_id, &class_info_by_id);
+    let weak_map_retire = classes.get("WeakMap")
+        .filter(|class| class.is_internal)
+        .map(|class| source_static_vtable_entry(class, "__elephc_retire", classes))
+        .transpose()?.unwrap_or_else(|| "0".to_string());
+    out.push_str(&format!(".p2align 3\n.globl _weak_map_key_retire_fn\n_weak_map_key_retire_fn:\n    .quad {weak_map_retire}\n"));
     emit_name_lookup_data(
         &mut out,
         "_interface_names_count",
@@ -230,6 +235,9 @@ pub(crate) fn emit_runtime_data_user(
         ("_spl_out_of_bounds_exception_class_id", "OutOfBoundsException"),
         ("_spl_invalid_argument_exception_class_id", "InvalidArgumentException"),
         ("_spl_type_error_class_id", "TypeError"),
+        ("_error_exception_class_id", "ErrorException"),
+        ("_weak_reference_class_id", "WeakReference"),
+        ("_weak_map_class_id", "WeakMap"),
         ("_spl_value_error_class_id", "ValueError"),
         ("_spl_arithmetic_error_class_id", "ArithmeticError"),
         // Emitted for the `intdiv($a, 0)` / `$a % 0` zero-divisor guards, which
@@ -345,7 +353,26 @@ pub(crate) fn emit_runtime_data_user(
                 class_info_by_id.get(&class_id),
             ) {
                 (Some(class_name), Some(class_info)) if enums.contains_key(*class_name) => {
-                    enum_case_name_property_offset(class_info)
+                    enum_case_property_offset(class_info, "name")
+                }
+                _ => -1,
+            };
+            out.push_str(&format!("    .quad {}\n", offset));
+        }
+    }
+
+    // Backed JSON enum values use the checked layout instead of assuming a slot order.
+    out.push_str(".globl _class_enum_value_offsets\n_class_enum_value_offsets:\n");
+    if let Some(max_class_id) = max_class_id {
+        for class_id in 0..=max_class_id {
+            let offset = match (
+                class_name_by_id.get(&class_id),
+                class_info_by_id.get(&class_id),
+            ) {
+                (Some(class_name), Some(class_info))
+                    if enums.get(*class_name).is_some_and(|info| info.backing_type.is_some()) =>
+                {
+                    enum_case_property_offset(class_info, "value")
                 }
                 _ => -1,
             };
@@ -410,6 +437,25 @@ pub(crate) fn emit_runtime_data_user(
                     _ => 0,
                 };
             out.push_str(&format!("    .quad {}\n", payload_size));
+        }
+    }
+
+    // Construction metadata is allocation storage, not a declared property or dynamic hash.
+    for (symbol, allocation_size) in [("_class_throwable_line_offsets", false), ("_class_object_allocation_sizes", true)] {
+        out.push_str(&format!(".globl {symbol}\n{symbol}:\n"));
+        if let Some(max_class_id) = max_class_id {
+            for class_id in 0..=max_class_id {
+                let word = match (class_info_by_id.get(&class_id), class_name_by_id.get(&class_id)) {
+                    (Some(class), Some(name)) => {
+                        let offset = crate::codegen_support::throwable_layout::ordinary_creation_line_offset(name, classes);
+                        if allocation_size {
+                            class_object_payload_size(name, class) + usize::from(offset.is_some()) * 8
+                        } else { offset.unwrap_or(0) }
+                    }
+                    _ => 0,
+                };
+                out.push_str(&format!("    .quad {word}\n"));
+            }
         }
     }
 
@@ -604,11 +650,20 @@ pub(crate) fn emit_runtime_data_user(
         ("_class_unserialize_ptrs", "__unserialize"),
         ("_class_sleep_ptrs", "__sleep"),
         ("_class_wakeup_ptrs", "__wakeup"),
+        ("_class_serializable_serialize_ptrs", "serialize"),
+        ("_class_serializable_unserialize_ptrs", "unserialize"),
     ] {
         out.push_str(&format!(".globl {table}\n{table}:\n"));
         if let Some(max_class_id) = max_class_id {
             let method_key = php_symbol_key(method);
             for class_id in 0..=max_class_id {
+                if table.starts_with("_class_serializable_") {
+                    let active = class_info_by_id.get(&class_id).is_some_and(|class| {
+                        class.interfaces.iter().any(|name| name.eq_ignore_ascii_case("Serializable"))
+                            && (method != "serialize" || !class.methods.contains_key("__serialize"))
+                    });
+                    if !active { out.push_str("    .quad 0\n"); continue; }
+                }
                 // A class PHP refuses to serialize routes `__serialize` to the throwing helper,
                 // so the denial holds wherever the object is found: nested in an array, behind
                 // `mixed`, or reached through a subclass that declares its own `__serialize`.
@@ -629,6 +684,28 @@ pub(crate) fn emit_runtime_data_user(
                     .unwrap_or_else(|| "0".to_string());
                 out.push_str(&format!("    .quad {}\n", entry));
             }
+        }
+    }
+
+    for method in ["serialize", "unserialize"] {
+        out.push_str(&format!(".globl _class_serializable_{method}_return_abi\n_class_serializable_{method}_return_abi:\n"));
+        if let Some(max_class_id) = max_class_id {
+            for class_id in 0..=max_class_id {
+                let representation = class_info_by_id.get(&class_id)
+                    .and_then(|class| class.methods.get(method))
+                    .map_or(super::SerializableReturnAbi::Null, |signature| super::SerializableReturnAbi::of(&signature.return_type));
+                out.push_str(&format!("    .quad {}\n", representation as u8));
+            }
+        }
+    }
+    out.push_str(".globl _class_serializable_unserialize_boxed\n_class_serializable_unserialize_boxed:\n");
+    if let Some(max_class_id) = max_class_id {
+        for class_id in 0..=max_class_id {
+            let boxed = class_info_by_id.get(&class_id)
+                .and_then(|class| class.methods.get("unserialize"))
+                .and_then(|signature| signature.params.first())
+                .is_some_and(|(_, ty)| matches!(ty.codegen_repr(), PhpType::Mixed | PhpType::Union(_)));
+            out.push_str(&format!("    .quad {}\n", u8::from(boxed)));
         }
     }
 
@@ -836,7 +913,7 @@ pub(crate) fn emit_runtime_data_user(
         emit_eval_reflection_source_file_data(&mut out, source_path);
     }
     out.push_str(".p2align 3\n");
-    emit_classes_by_name_table(&mut out, &sorted_classes);
+    emit_classes_by_name_table(&mut out, &sorted_classes, classes);
     if emit_eval_reflection_metadata {
         out.push_str(".p2align 3\n");
         emit_eval_reflection_method_lookup_data(&mut out, &sorted_classes, &sorted_interfaces);
@@ -1063,7 +1140,7 @@ pub(crate) fn emit_runtime_data_user(
         // Per-property name strings used by the JSON descriptor below. We
         // emit them as labels before the descriptor so the descriptor
         // table holds plain (ptr, len) pairs.
-        let public_props: Vec<(usize, &(String, PhpType))> = class_info
+        let mut public_props: Vec<(usize, &(String, PhpType))> = class_info
             .properties
             .iter()
             .enumerate()
@@ -1079,6 +1156,10 @@ pub(crate) fn emit_runtime_data_user(
                     .map_or(true, |v| matches!(v, Visibility::Public))
             })
             .collect();
+        if enums.contains_key(class_name.as_str()) {
+            // PHP exposes enum names before backing values, independently of slot layout.
+            public_props.sort_by_key(|(_, (name, _))| name.as_str() != "name");
+        }
         for (prop_index, (prop_name, _)) in &public_props {
             out.push_str(&format!(
                 ".globl _class_json_pname_{}_{}\n_class_json_pname_{}_{}:\n    .ascii {:?}\n",
@@ -2760,14 +2841,15 @@ fn emit_callable_function_data(
 ///   [16..24) class_id   — runtime class id (matches the static
 ///                         `class_info.class_id` stamped by
 ///                         `__rt_heap_alloc` callers)
-///   [24..32) obj_size   — `8 + num_props*16 + dyn_props_slot`, the same
-///                         allocation size emit_new_object_core uses
+///   [24..32) obj_size: class id, properties, optional dynamic hash and
+///                         optional ordinary Throwable creation metadata
 ///
 /// The accompanying `_classes_by_name_count` symbol holds the entry count
 /// so the runtime helper can bound its linear scan.
 fn emit_classes_by_name_table(
     out: &mut String,
     sorted_classes: &[(&String, &ClassInfo)],
+    classes: &HashMap<String, ClassInfo>,
 ) {
     for (class_name, class_info) in sorted_classes {
         out.push_str(&format!(
@@ -2781,7 +2863,8 @@ fn emit_classes_by_name_table(
     out.push_str(&format!("    .quad {}\n", sorted_classes.len()));
     out.push_str(".globl _classes_by_name\n_classes_by_name:\n");
     for (class_name, class_info) in sorted_classes {
-        let obj_size = class_object_payload_size(class_name, class_info);
+        let obj_size = class_object_payload_size(class_name, class_info)
+            + usize::from(crate::codegen_support::throwable_layout::ordinary_creation_line_offset(class_name, classes).is_some()) * 8;
         out.push_str(&format!(
             "    .quad _class_by_name_str_{}\n",
             class_info.class_id
@@ -3200,7 +3283,7 @@ fn interface_method_table_symbol(
 /// The curl and PDO driver classes come from a prelude injected only for programs that use them,
 /// so a program that does not may declare its own `CurlHandle` or `Pdo\Sqlite`, and that class
 /// serializes like any user class. The same holds for a user class named after a PHP internal
-/// elephc does not model at all (`WeakMap`, `ReflectionType`), which the list never names. The
+/// elephc does not model at all (`ReflectionReference`, `ReflectionType`), which the list never names. The
 /// list names every refused class itself too, because elephc registers some of them without
 /// their PHP parents (`Phar` and `PharData` do not extend `SplFileInfo` here).
 ///
@@ -3736,20 +3819,14 @@ fn hoist_enum_name_row(rows: &mut Vec<VarDumpRow>) {
     }
 }
 
-/// Returns the byte offset of an enum class's `name` property slot, or `-1` when
-/// the class does not declare one.
-///
-/// Every PHP enum case exposes a readonly `name` holding the case identifier, and
-/// elephc materializes it as an ordinary declared string property — so the case
-/// name `enum(E::C)`, `E Enum` bodies and `\E::C` all print is just that slot's
-/// 16-byte `(ptr, len)` pair. A `-1` result makes the runtime treat the class as a
-/// plain object rather than reading a slot that may not exist.
-fn enum_case_name_property_offset(class_info: &ClassInfo) -> i64 {
+/// Returns the checked byte offset of an enum's name or backing value, or `-1`.
+/// The fallback matches the ordinary property descriptor layout when no offset is recorded.
+fn enum_case_property_offset(class_info: &ClassInfo, property_name: &str) -> i64 {
     class_info
         .properties
         .iter()
         .enumerate()
-        .find(|(_, (prop_name, _))| prop_name == "name")
+        .find(|(_, (prop_name, _))| prop_name == property_name)
         .map(|(layout_index, (prop_name, _))| {
             class_info
                 .property_offsets
@@ -4506,7 +4583,7 @@ mod tests {
 
     /// Every name the serializers refuse is a catalogued builtin class spelled as PHP declares it,
     /// so a user class that merely shares the name of a PHP internal elephc does not model
-    /// (`WeakMap`) is never refused.
+    /// (`ReflectionReference`) is never refused.
     #[test]
     fn test_refused_classes_are_catalogued_builtins() {
         for name in NOT_SERIALIZABLE_BUILTIN_CLASSES {

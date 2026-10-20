@@ -292,7 +292,18 @@ pub(super) fn eval_reflection_property_hook_method_object(
     context: &mut ElephcEvalContext,
     values: &mut impl RuntimeValueOps,
 ) -> Result<RuntimeCellHandle, EvalStatus> {
-    let metadata = eval_reflection_property_hook_method_metadata(declaring_class, property, hook);
+    let metadata = if matches!(hook, EvalReflectionPropertyHook::Set) && property.requires_set_hook()
+        && !property.is_abstract() && !property.has_set_hook()
+    {
+        let (owner, parameter_type) = eval_inherited_abstract_setter_contract(
+            declaring_class, property.name(), context,
+        ).unwrap_or_else(|| (declaring_class.to_string(), property.settable_type().cloned()));
+        let contract = property.clone().with_type(parameter_type).with_set_hook_type(None)
+            .with_abstract_hook_contract(false, true);
+        eval_reflection_property_hook_method_metadata(&owner, &contract, hook)
+    } else {
+        eval_reflection_property_hook_method_metadata(declaring_class, property, hook)
+    };
     eval_reflection_member_object_result(
         EVAL_REFLECTION_OWNER_METHOD,
         &hook.reflected_method_name(property.name()),

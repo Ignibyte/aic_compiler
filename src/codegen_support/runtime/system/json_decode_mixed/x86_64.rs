@@ -24,7 +24,7 @@ use crate::codegen_support::abi;
 /// Behavior:
 ///   1. Skips leading whitespace, captures the first non-whitespace byte.
 ///   2. Trims the raw slice to the exact JSON value (strips trailing ws).
-///   3. Calls `__rt_json_decode` (legacy path) for string unescaping; result
+///   3. Only the validated string branch calls `__rt_json_decode` for unescaping; result
 ///      parked at `[rbp-32]` (ptr) and `[rbp-40]` (len).
 ///   4. Classifies on the first byte and dispatches to the appropriate helper:
 ///      `"` → string   `t` → true   `f` → false   `n` → null
@@ -94,13 +94,6 @@ pub(super) fn emit(emitter: &mut Emitter) {
     emitter.instruction("sub r11, rcx");                                        // trimmed raw length = right edge - left edge
     emitter.instruction("mov QWORD PTR [rbp - 88], r11");                       // park the trimmed raw length
 
-    // Run the legacy decoder on the trimmed slice for string unescaping.
-    emitter.instruction("mov rax, QWORD PTR [rbp - 80]");                       // trimmed raw pointer for the legacy decoder
-    emitter.instruction("mov rdx, QWORD PTR [rbp - 88]");                       // trimmed raw length for the legacy decoder
-    emitter.instruction("call __rt_json_decode");                               // legacy decoder: returns rax=ptr, rdx=len of the decoded slice
-    emitter.instruction("mov QWORD PTR [rbp - 32], rax");                       // park the decoded pointer for the boxing dispatch
-    emitter.instruction("mov QWORD PTR [rbp - 40], rdx");                       // park the decoded length for the boxing dispatch
-
     // Classify the value based on the saved first byte.
     emitter.instruction("movzx r8, BYTE PTR [rbp - 24]");                       // reload the saved first byte
     emitter.instruction("cmp r8, 34");                                          // '"' → string
@@ -127,9 +120,8 @@ pub(super) fn emit(emitter: &mut Emitter) {
     emitter.label("__rt_json_decode_mixed_syntax_error");
     emitter.instruction("mov rax, QWORD PTR [rbp - 80]");                       // load the trimmed raw slice pointer for location reporting
     emitter.instruction("add rax, QWORD PTR [rbp - 88]");                       // report syntax errors at the end of the offending slice
-    emitter.instruction("call __rt_json_set_error_location");                   // store one-based line/column metadata for the JSON error
-    emitter.instruction("mov rax, 4");                                          // JSON_ERROR_SYNTAX
-    emitter.instruction("call __rt_json_throw_error");                          // record syntax error and throw when requested
+    emitter.instruction("call __rt_json_note_error_candidate");                 // record the candidate byte without scanning the source
+    emitter.instruction("call __rt_json_decode_syntax_error");                  // record syntax error and throw when requested
     emitter.instruction("xor rax, rax");                                        // return null-signal to the json_decode wrapper
     emitter.instruction("jmp __rt_json_decode_mixed_done");                     // continue in the JSON decoder control path
 
@@ -137,7 +129,7 @@ pub(super) fn emit(emitter: &mut Emitter) {
     emitter.instruction("xor rax, rax");                                        // propagate an error already recorded by a nested parser
     emitter.instruction("jmp __rt_json_decode_mixed_done");                     // continue in the JSON decoder control path
 
-    // -- validate and box a decoded JSON string --
+    // -- validate the raw string before unescaping and boxing --
     emitter.label("__rt_json_decode_mixed_string");
     emitter.instruction("mov rax, QWORD PTR [rbp - 80]");                       // trimmed raw string pointer
     abi::emit_store_reg_to_symbol(emitter, "rax", "_json_validate_ptr", 0);     // publish validator source pointer
@@ -150,6 +142,13 @@ pub(super) fn emit(emitter: &mut Emitter) {
     abi::emit_load_symbol_to_reg(emitter, "r10", "_json_validate_idx", 0);      // validator cursor after the decoded string
     emitter.instruction("cmp r10, QWORD PTR [rbp - 88]");                       // did the string parser consume the whole JSON value?
     emitter.instruction("jne __rt_json_decode_mixed_syntax_error");             // trailing bytes after the string are invalid
+    // -- unescape only a validated string token --
+    emitter.instruction("mov rax, QWORD PTR [rbp - 80]");                       // trimmed raw pointer for the legacy decoder
+    emitter.instruction("mov rdx, QWORD PTR [rbp - 88]");                       // trimmed raw length for the legacy decoder
+    emitter.instruction("call __rt_json_decode");                               // legacy decoder: returns rax=ptr, rdx=len of the decoded slice
+    emitter.instruction("mov QWORD PTR [rbp - 32], rax");                       // park the decoded pointer for the boxing dispatch
+    emitter.instruction("mov QWORD PTR [rbp - 40], rdx");                       // park the decoded length for the boxing dispatch
+
     emitter.instruction("mov rax, 1");                                          // tag = string
     emitter.instruction("mov rdi, QWORD PTR [rbp - 32]");                       // lo = decoded ptr
     emitter.instruction("mov rsi, QWORD PTR [rbp - 40]");                       // hi = decoded len
@@ -159,7 +158,7 @@ pub(super) fn emit(emitter: &mut Emitter) {
     // -- array dispatch: depth-check, then decode empty or recursive array --
     emitter.label("__rt_json_decode_mixed_array");
     emitter.instruction("mov rax, QWORD PTR [rbp - 80]");                       // use this array's opening bracket as a possible depth-error location
-    emitter.instruction("call __rt_json_set_error_location");                   // preseed line/column metadata before depth validation
+    emitter.instruction("call __rt_json_note_error_candidate");                 // record the opening token without scanning the source
     emitter.instruction("call __rt_json_depth_enter");                          // enforce json_decode depth before parsing the container
     abi::emit_load_symbol_to_reg(emitter, "r10", "_json_last_error", 0);        // load any depth error recorded by depth_enter
     emitter.instruction("test r10, r10");                                       // non-zero means the container exceeded depth
@@ -205,7 +204,7 @@ pub(super) fn emit(emitter: &mut Emitter) {
     // -- object dispatch: depth-check, then decode empty or recursive object --
     emitter.label("__rt_json_decode_mixed_object");
     emitter.instruction("mov rax, QWORD PTR [rbp - 80]");                       // use this object's opening brace as a possible depth-error location
-    emitter.instruction("call __rt_json_set_error_location");                   // preseed line/column metadata before depth validation
+    emitter.instruction("call __rt_json_note_error_candidate");                 // record the opening token without scanning the source
     emitter.instruction("call __rt_json_depth_enter");                          // enforce json_decode depth before parsing the container
     abi::emit_load_symbol_to_reg(emitter, "r10", "_json_last_error", 0);        // load any depth error recorded by depth_enter
     emitter.instruction("test r10, r10");                                       // non-zero means the container exceeded depth
@@ -340,8 +339,8 @@ pub(super) fn emit(emitter: &mut Emitter) {
     abi::emit_load_symbol_to_reg(emitter, "r10", "_json_validate_idx", 0);      // validator cursor after the number
     emitter.instruction("cmp r10, QWORD PTR [rbp - 88]");                       // did the number parser consume the whole JSON value?
     emitter.instruction("jne __rt_json_decode_mixed_syntax_error");             // trailing bytes after the number are invalid
-    emitter.instruction("mov rax, QWORD PTR [rbp - 32]");                       // decoded ptr
-    emitter.instruction("mov rdx, QWORD PTR [rbp - 40]");                       // decoded len
+    emitter.instruction("mov rax, QWORD PTR [rbp - 80]");                       // trimmed raw ptr
+    emitter.instruction("mov rdx, QWORD PTR [rbp - 88]");                       // trimmed raw len
     emitter.instruction("xor rcx, rcx");                                        // scan index
     emitter.instruction("xor r9, r9");                                          // is_float flag
     emitter.label("__rt_json_decode_mixed_number_scan");
@@ -370,8 +369,8 @@ pub(super) fn emit(emitter: &mut Emitter) {
     // numerically. On overflow, JSON_BIGINT_AS_STRING selects between the
     // preserved-digit Mixed(string) (flag set) and PHP's default Mixed(float)
     // coercion (flag clear).
-    emitter.instruction("mov rax, QWORD PTR [rbp - 32]");                       // decoded ptr (length/lex input)
-    emitter.instruction("mov rdx, QWORD PTR [rbp - 40]");                       // decoded len
+    emitter.instruction("mov rax, QWORD PTR [rbp - 80]");                       // trimmed raw ptr (length/lex input)
+    emitter.instruction("mov rdx, QWORD PTR [rbp - 88]");                       // trimmed raw len
     emitter.instruction("movzx r8, BYTE PTR [rax]");                            // first byte: '-' selects negative thresholds
     emitter.instruction("cmp r8, 45");                                          // '-' (ASCII 45)
     emitter.instruction("je __rt_json_decode_mixed_number_overflow_neg");       // negative threshold path
@@ -414,18 +413,18 @@ pub(super) fn emit(emitter: &mut Emitter) {
     emitter.instruction("test r10, 2");                                         // JSON_BIGINT_AS_STRING bit
     emitter.instruction("jne __rt_json_decode_mixed_number_bigint_string");     // flag set → preserve digits as string
     emitter.instruction("jmp __rt_json_decode_mixed_number_float");             // flag clear → fall back to float (PHP default)
-    // -- box the saved decoded slice as Mixed(string) --
+    // -- box the saved trimmed raw slice as Mixed(string) --
     emitter.label("__rt_json_decode_mixed_number_bigint_string");
     emitter.instruction("mov rax, 1");                                          // tag = string
-    emitter.instruction("mov rdi, QWORD PTR [rbp - 32]");                       // ptr = decoded slice (original digits)
-    emitter.instruction("mov rsi, QWORD PTR [rbp - 40]");                       // len = decoded slice
+    emitter.instruction("mov rdi, QWORD PTR [rbp - 80]");                       // ptr = trimmed raw slice (original digits)
+    emitter.instruction("mov rsi, QWORD PTR [rbp - 88]");                       // len = trimmed raw slice
     emitter.instruction("call __rt_mixed_from_value");                          // box & persist the digits as a Mixed(string) cell
     emitter.instruction("jmp __rt_json_decode_mixed_done");                     // continue in the JSON decoder control path
 
     // Integer path: __rt_atoi expects rax=ptr, rdx=len → returns rax
     emitter.label("__rt_json_decode_mixed_number_int_atoi");
-    emitter.instruction("mov rax, QWORD PTR [rbp - 32]");                       // decoded ptr (atoi input)
-    emitter.instruction("mov rdx, QWORD PTR [rbp - 40]");                       // decoded len
+    emitter.instruction("mov rax, QWORD PTR [rbp - 80]");                       // trimmed raw ptr (atoi input)
+    emitter.instruction("mov rdx, QWORD PTR [rbp - 88]");                       // trimmed raw len
     emitter.instruction("call __rt_atoi");                                      // parse the decimal slice as a 64-bit integer
     emitter.instruction("mov rdi, rax");                                        // payload = parsed integer
     emitter.instruction("mov rax, 0");                                          // tag = int
@@ -433,11 +432,11 @@ pub(super) fn emit(emitter: &mut Emitter) {
     emitter.instruction("call __rt_mixed_from_value");                          // box as Mixed(int)
     emitter.instruction("jmp __rt_json_decode_mixed_done");                     // continue in the JSON decoder control path
 
-    // Float path: copy the decoded slice into a 32-byte stack buffer with a
+    // Float path: copy the trimmed raw slice into a 32-byte stack buffer with a
     // trailing NUL, then call libc atof which expects a C string.
     emitter.label("__rt_json_decode_mixed_number_float");
-    emitter.instruction("mov rax, QWORD PTR [rbp - 32]");                       // decoded ptr
-    emitter.instruction("mov rdx, QWORD PTR [rbp - 40]");                       // decoded len
+    emitter.instruction("mov rax, QWORD PTR [rbp - 80]");                       // trimmed raw ptr
+    emitter.instruction("mov rdx, QWORD PTR [rbp - 88]");                       // trimmed raw len
     emitter.instruction("lea r10, [rbp - 72]");                                 // scratch buffer base (32 bytes)
     emitter.instruction("xor rcx, rcx");                                        // update the JSON decoder cursor or counter
     emitter.label("__rt_json_decode_mixed_float_copy");

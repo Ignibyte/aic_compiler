@@ -32,6 +32,24 @@
       "internal": true,
       "kind": "class",
       "module": "elephc",
+      "name": "__ElephcDOMNodeListIterator",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": false,
+      "eval": {
+        "reason": "internal-compiler-surface",
+        "supported": false
+      },
+      "extension": false,
+      "internal": true,
+      "kind": "class",
+      "module": "elephc",
       "name": "__ElephcMysqliResultIterator",
       "php_manual": null,
       "since": null
@@ -107,6 +125,42 @@
       "name": "__ElephcSessionState",
       "php_manual": null,
       "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": false,
+      "eval": {
+        "reason": "internal-compiler-surface",
+        "supported": false
+      },
+      "extension": false,
+      "internal": true,
+      "kind": "class",
+      "module": "elephc",
+      "name": "__ElephcWeakMapIterator",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "AllowDynamicProperties",
+      "php_manual": null,
+      "since": "8.2"
     },
     {
       "aot": {
@@ -236,6 +290,42 @@
     },
     {
       "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "Attribute",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "checker-injected",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "interface",
+      "module": "core",
+      "name": "BackedEnum",
+      "php_manual": null,
+      "since": "8.1"
+    },
+    {
+      "aot": {
         "kind": "checker-injected",
         "supported": true
       },
@@ -269,6 +359,24 @@
       "name": "BadMethodCallException",
       "php_manual": null,
       "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "bcmath",
+      "name": "BcMath\\Number",
+      "php_manual": null,
+      "since": "8.4"
     },
     {
       "aot": {
@@ -776,6 +884,24 @@
     },
     {
       "aot": {
+        "kind": "checker-injected",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "ClosedGeneratorException",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
         "kind": "language-intrinsic",
         "supported": true
       },
@@ -789,6 +915,24 @@
       "kind": "class",
       "module": "core",
       "name": "Closure",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "checker-injected",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "CompileError",
       "php_manual": null,
       "since": null
     },
@@ -1208,6 +1352,42 @@
     },
     {
       "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "DelayedTargetValidation",
+      "php_manual": null,
+      "since": "8.5"
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "Deprecated",
+      "php_manual": null,
+      "since": "8.4"
+    },
+    {
+      "aot": {
         "kind": "checker-injected",
         "supported": true
       },
@@ -1262,6 +1442,150 @@
     },
     {
       "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "dom",
+      "name": "DOMCharacterData",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "dom",
+      "name": "DOMComment",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "dom",
+      "name": "DOMDocument",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "dom",
+      "name": "DOMElement",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "dom",
+      "name": "DOMNode",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "dom",
+      "name": "DOMNodeList",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "dom",
+      "name": "DOMProcessingInstruction",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "dom",
+      "name": "DOMText",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
         "kind": "checker-injected",
         "supported": true
       },
@@ -1293,6 +1617,24 @@
       "kind": "class",
       "module": "core",
       "name": "Error",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "ErrorException",
       "php_manual": null,
       "since": null
     },
@@ -2054,6 +2396,24 @@
     },
     {
       "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "NoDiscard",
+      "php_manual": null,
+      "since": "8.5"
+    },
+    {
+      "aot": {
         "kind": "checker-injected",
         "supported": true
       },
@@ -2144,6 +2504,24 @@
     },
     {
       "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "Override",
+      "php_manual": null,
+      "since": "8.3"
+    },
+    {
+      "aot": {
         "kind": "checker-injected",
         "supported": true
       },
@@ -2157,6 +2535,24 @@
       "kind": "class",
       "module": "spl",
       "name": "ParentIterator",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "checker-injected",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "ParseError",
       "php_manual": null,
       "since": null
     },
@@ -2932,6 +3328,60 @@
       "extension": false,
       "internal": false,
       "kind": "class",
+      "module": "core",
+      "name": "RequestParseBodyException",
+      "php_manual": null,
+      "since": "8.4"
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "ReturnTypeWillChange",
+      "php_manual": null,
+      "since": "8.1"
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "enum",
+      "module": "standard",
+      "name": "RoundingMode",
+      "php_manual": null,
+      "since": "8.4"
+    },
+    {
+      "aot": {
+        "kind": "checker-injected",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
       "module": "spl",
       "name": "RuntimeException",
       "php_manual": null,
@@ -2952,6 +3402,60 @@
       "kind": "interface",
       "module": "spl",
       "name": "SeekableIterator",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "SensitiveParameter",
+      "php_manual": null,
+      "since": "8.2"
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "SensitiveParameterValue",
+      "php_manual": null,
+      "since": "8.2"
+    },
+    {
+      "aot": {
+        "kind": "checker-injected",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "interface",
+      "module": "core",
+      "name": "Serializable",
       "php_manual": null,
       "since": null
     },
@@ -3453,9 +3957,63 @@
       },
       "extension": false,
       "internal": false,
+      "kind": "interface",
+      "module": "core",
+      "name": "UnitEnum",
+      "php_manual": null,
+      "since": "8.1"
+    },
+    {
+      "aot": {
+        "kind": "checker-injected",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
       "kind": "class",
       "module": "core",
       "name": "ValueError",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "WeakMap",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "core",
+      "name": "WeakReference",
       "php_manual": null,
       "since": null
     },
@@ -16415,6 +16973,26 @@
       },
       "extension": false,
       "internal": false,
+      "module": "core",
+      "name": "DEFAULT_INCLUDE_PATH",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
       "module": "standard",
       "name": "DIRECTORY_SEPARATOR",
       "route": "predefined",
@@ -16892,6 +17470,24 @@
       "route": "predefined",
       "since": null,
       "value": 2
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "FALSE",
+      "route": "predefined",
+      "since": null,
+      "value": false
     },
     {
       "aot": {
@@ -18986,6 +19582,24 @@
       "extension": false,
       "internal": false,
       "module": "json",
+      "name": "JSON_ERROR_NON_BACKED_ENUM",
+      "route": "predefined",
+      "since": "8.1",
+      "value": 11
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "json",
       "name": "JSON_ERROR_RECURSION",
       "route": "predefined",
       "since": null,
@@ -19328,6 +19942,24 @@
       "extension": false,
       "internal": false,
       "module": "json",
+      "name": "JSON_UNESCAPED_LINE_TERMINATORS",
+      "route": "predefined",
+      "since": null,
+      "value": 2048
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "json",
       "name": "JSON_UNESCAPED_SLASHES",
       "route": "predefined",
       "since": null,
@@ -19350,6 +19982,96 @@
       "route": "predefined",
       "since": null,
       "value": 256
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "libxml",
+      "name": "LIBXML_COMPACT",
+      "route": "predefined",
+      "since": null,
+      "value": 65536
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "libxml",
+      "name": "LIBXML_HTML_NODEFDTD",
+      "route": "predefined",
+      "since": null,
+      "value": 4
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "libxml",
+      "name": "LIBXML_NOBLANKS",
+      "route": "predefined",
+      "since": null,
+      "value": 256
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "libxml",
+      "name": "LIBXML_NOERROR",
+      "route": "predefined",
+      "since": null,
+      "value": 32
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "libxml",
+      "name": "LIBXML_NOXMLDECL",
+      "route": "predefined",
+      "since": null,
+      "value": 2
     },
     {
       "aot": {
@@ -20697,6 +21419,24 @@
       },
       "extension": false,
       "internal": false,
+      "module": "core",
+      "name": "NULL",
+      "route": "predefined",
+      "since": null,
+      "value": null
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
       "module": "openssl",
       "name": "OPENSSL_DONT_ZERO_PAD_KEY",
       "route": "predefined",
@@ -20842,10 +21582,248 @@
       "extension": false,
       "internal": false,
       "module": "core",
+      "name": "PEAR_EXTENSION_DIR",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PEAR_INSTALL_DIR",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_BINARY",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_BINDIR",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_BUILD_DATE",
+      "route": "predefined",
+      "since": "8.5",
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_BUILD_PROVIDER",
+      "route": "predefined",
+      "since": "8.5",
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_CLI_PROCESS_TITLE",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "bool"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_CONFIG_FILE_PATH",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_CONFIG_FILE_SCAN_DIR",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_DATADIR",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_DEBUG",
+      "route": "predefined",
+      "since": null,
+      "value": false
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
       "name": "PHP_EOL",
       "route": "predefined",
       "since": null,
       "value": "\n"
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_EXTENSION_DIR",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
     },
     {
       "aot": {
@@ -20866,6 +21844,44 @@
       "value": {
         "target_dependent": "str"
       }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_FD_SETSIZE",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "int"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_FLOAT_DIG",
+      "route": "predefined",
+      "since": null,
+      "value": 15
     },
     {
       "aot": {
@@ -20988,7 +22004,87 @@
       "extension": false,
       "internal": false,
       "module": "core",
+      "name": "PHP_LIBDIR",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_LOCALSTATEDIR",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
       "name": "PHP_MAJOR_VERSION",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "int"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_MANDIR",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_MAXPATHLEN",
       "route": "predefined",
       "since": null,
       "value": {
@@ -21049,6 +22145,278 @@
       "internal": false,
       "module": "core",
       "name": "PHP_OS_FAMILY",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_CLEAN",
+      "route": "predefined",
+      "since": null,
+      "value": 2
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_CLEANABLE",
+      "route": "predefined",
+      "since": null,
+      "value": 16
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_CONT",
+      "route": "predefined",
+      "since": null,
+      "value": 0
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_DISABLED",
+      "route": "predefined",
+      "since": null,
+      "value": 8192
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_END",
+      "route": "predefined",
+      "since": null,
+      "value": 8
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_FINAL",
+      "route": "predefined",
+      "since": null,
+      "value": 8
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_FLUSH",
+      "route": "predefined",
+      "since": null,
+      "value": 4
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_FLUSHABLE",
+      "route": "predefined",
+      "since": null,
+      "value": 32
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_PROCESSED",
+      "route": "predefined",
+      "since": null,
+      "value": 16384
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_REMOVABLE",
+      "route": "predefined",
+      "since": null,
+      "value": 64
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_START",
+      "route": "predefined",
+      "since": null,
+      "value": 1
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_STARTED",
+      "route": "predefined",
+      "since": null,
+      "value": 4096
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_STDFLAGS",
+      "route": "predefined",
+      "since": null,
+      "value": 112
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_OUTPUT_HANDLER_WRITE",
+      "route": "predefined",
+      "since": null,
+      "value": 0
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_PREFIX",
       "route": "predefined",
       "since": null,
       "value": {
@@ -21179,6 +22547,26 @@
       },
       "extension": false,
       "internal": false,
+      "module": "core",
+      "name": "PHP_SBINDIR",
+      "route": "predefined",
+      "since": "8.4",
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
       "module": "session",
       "name": "PHP_SESSION_ACTIVE",
       "route": "predefined",
@@ -21220,6 +22608,46 @@
       "route": "predefined",
       "since": null,
       "value": 1
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_SHLIB_SUFFIX",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_SYSCONFDIR",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
     },
     {
       "aot": {
@@ -21404,6 +22832,24 @@
       "value": {
         "target_dependent": "int"
       }
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "PHP_ZTS",
+      "route": "predefined",
+      "since": null,
+      "value": false
     },
     {
       "aot": {
@@ -23154,6 +24600,168 @@
       },
       "extension": false,
       "internal": false,
+      "module": "core",
+      "name": "TRUE",
+      "route": "predefined",
+      "since": null,
+      "value": true
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "UPLOAD_ERR_CANT_WRITE",
+      "route": "predefined",
+      "since": null,
+      "value": 7
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "UPLOAD_ERR_EXTENSION",
+      "route": "predefined",
+      "since": null,
+      "value": 8
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "UPLOAD_ERR_FORM_SIZE",
+      "route": "predefined",
+      "since": null,
+      "value": 2
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "UPLOAD_ERR_INI_SIZE",
+      "route": "predefined",
+      "since": null,
+      "value": 1
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "UPLOAD_ERR_NO_FILE",
+      "route": "predefined",
+      "since": null,
+      "value": 4
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "UPLOAD_ERR_NO_TMP_DIR",
+      "route": "predefined",
+      "since": null,
+      "value": 6
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "UPLOAD_ERR_OK",
+      "route": "predefined",
+      "since": null,
+      "value": 0
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "UPLOAD_ERR_PARTIAL",
+      "route": "predefined",
+      "since": null,
+      "value": 3
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
       "module": "xml",
       "name": "XML_ERROR_ASYNC_ENTITY",
       "route": "predefined",
@@ -23645,6 +25253,62 @@
       "route": "predefined",
       "since": null,
       "value": "libxml"
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "ZEND_DEBUG_BUILD",
+      "route": "predefined",
+      "since": null,
+      "value": false
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "ZEND_THREAD_SAFE",
+      "route": "predefined",
+      "since": null,
+      "value": false
+    },
+    {
+      "aot": {
+        "kind": "language-intrinsic",
+        "supported": true
+      },
+      "bundled": true,
+      "eval": {
+        "kind": "interpreter",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "module": "core",
+      "name": "ZEND_VM_KIND",
+      "route": "predefined",
+      "since": null,
+      "value": {
+        "target_dependent": "str"
+      }
     }
   ]
 }

@@ -194,6 +194,7 @@ pub(crate) struct LoweringSnapshot {
     reference_call_context: Option<ReferenceCallContext>,
     refusals: usize,
     call_argument_evaluation_scopes: Vec<CallArgumentEvaluationScope>,
+    append_update_cell_aliases: HashSet<String>,
     pending_static_callable_result: Option<StaticCallableBinding>,
     closure_counter: usize,
     hidden_temp_counter: usize,
@@ -276,6 +277,7 @@ pub(crate) struct LoweringContext<'m, 'f> {
     pub(crate) reference_call_context: Option<ReferenceCallContext>,
     /// Nested owner ledgers for source-order call argument evaluation.
     pub(crate) call_argument_evaluation_scopes: Vec<CallArgumentEvaluationScope>,
+    pub(crate) append_update_cell_aliases: HashSet<String>,
     initialized_slots: HashSet<LocalSlotId>,
     pub functions: &'m HashMap<String, FunctionSig>,
     pub extern_functions: &'m HashMap<String, ExternFunctionSig>,
@@ -574,6 +576,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
             expression_depth: 0,
             reference_call_context: None,
             call_argument_evaluation_scopes: Vec::new(),
+            append_update_cell_aliases: HashSet::new(),
             argument_guards: HashMap::new(),
             argument_guard_scopes: Vec::new(),
             write_operand_is_borrowed: false,
@@ -630,6 +633,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
             // always lowered again for real, and that pass records its refusals again.
             refusals: crate::ir_lower::diagnostics::mark(),
             call_argument_evaluation_scopes: self.call_argument_evaluation_scopes.clone(),
+            append_update_cell_aliases: self.append_update_cell_aliases.clone(),
             argument_guards: self.argument_guards.clone(),
             argument_guard_scopes: self.argument_guard_scopes.clone(),
             eval_barrier_active: self.eval_barrier_active,
@@ -705,6 +709,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         self.reference_call_context = snapshot.reference_call_context;
         crate::ir_lower::diagnostics::rollback_to(snapshot.refusals);
         self.call_argument_evaluation_scopes = snapshot.call_argument_evaluation_scopes;
+        self.append_update_cell_aliases = snapshot.append_update_cell_aliases;
         self.argument_guards = snapshot.argument_guards;
         self.argument_guard_scopes = snapshot.argument_guard_scopes;
         self.eval_barrier_active = snapshot.eval_barrier_active;
@@ -814,6 +819,27 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         result
     }
 
+    /// Classifies a receiver lease independently of the borrowed RHS of a container write.
+    pub(crate) fn with_independent_write_receiver<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let previous = self.write_operand_is_borrowed;
+        self.write_operand_is_borrowed = false;
+        let result = f(self);
+        self.write_operand_is_borrowed = previous;
+        result
+    }
+
+    /// Makes a borrowed write operand explicit so backend consumers cannot adopt its temp slot.
+    pub(crate) fn borrow_write_operand_if_needed(&mut self, value: LoweredValue, span: Span) -> LoweredValue {
+        let ty = self.builder.value_php_type(value.value);
+        if !self.write_operand_is_borrowed || !Ownership::php_type_needs_lifetime_tracking(&ty) {
+            return value;
+        }
+        let borrowed = self.emit_value(Op::Borrow, vec![value.value], None, ty,
+            Op::Borrow.default_effects(), Some(span));
+        self.builder.set_value_ownership(borrowed.value, Ownership::Borrowed);
+        borrowed
+    }
+
     /// Returns the storage type for a `global` alias name.
     ///
     /// Under `--web`, request superglobals resolve to their fixed
@@ -837,7 +863,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
     pub(crate) fn constant_value(&self, name: &str) -> Option<(ExprKind, PhpType)> {
         self.constants
             .get(name)
-            .or_else(|| self.constants.get(name.trim_start_matches('\\')))
+            .or_else(|| self.constants.get(elephc_builtin_contract::canonical_constant_name(name)))
             .cloned()
     }
 
@@ -2087,6 +2113,9 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         span: Option<Span>,
         reset_array_cursor: bool,
     ) -> LoweredValue {
+        if self.append_update_cell_aliases.contains(name) {
+            return crate::ir_lower::expr::store_append_update_cell(self, name, value, span);
+        }
         self.clear_static_callable_local(name);
         self.clear_reflection_class_local(name);
         self.clear_reflection_function_local(name);
@@ -3738,11 +3767,11 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         self.value_needs_release_after_use(value)
     }
 
-    /// Includes provisional string unboxes in cleanup without claiming their ownership can move.
+    /// Includes provisional string and callable unboxes without claiming their ownership can move.
     ///
-    /// A later store can widen a string local to Mixed after a consumer is lowered. Reading
-    /// that slot then allocates a detached string. Emit its release provisionally and let
-    /// builder finalization prune it when the final slot still lends a concrete string.
+    /// A later store or eval barrier can widen a local to Mixed after a consumer is lowered.
+    /// Reading it then allocates a detached string or retains its callable payload. Emit a
+    /// provisional release and let finalization prune it when storage still lends the value.
     pub(crate) fn value_needs_release_after_use(&self, value: LoweredValue) -> bool {
         if self.write_operand_is_borrowed {
             return false;
@@ -3750,7 +3779,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         if self.value_is_owning_temporary(value) {
             return true;
         }
-        if self.builder.value_php_type(value.value).codegen_repr() != PhpType::Str {
+        if !matches!(self.builder.value_php_type(value.value).codegen_repr(), PhpType::Str | PhpType::Callable) {
             return false;
         }
         let Some(inst) = self.builder.value_defining_instruction(value.value) else {
@@ -3835,7 +3864,8 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
                 })
             }
             Some(Immediate::RuntimeCall(
-                crate::ir::RuntimeCallTarget::ArrayFetchForWrite,
+                crate::ir::RuntimeCallTarget::ArrayFetchForWrite
+                    | crate::ir::RuntimeCallTarget::PendingAppendFetchForWrite,
             )) => matches!(inst.result_php_type.codegen_repr(), PhpType::Mixed | PhpType::Union(_)),
             Some(Immediate::RuntimeCall(crate::ir::RuntimeCallTarget::Function(target))) => {
                 matches!(
@@ -4585,6 +4615,9 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
 
     /// Emits an `is_truthy` conversion when a value is not already I64.
     pub(crate) fn truthy(&mut self, input: LoweredValue, span: Option<Span>) -> LoweredValue {
+        if let Some(value) = super::expr::object_operators::lower_object_truthy(self, input, span) {
+            return value;
+        }
         if input.ir_type == IrType::I64 {
             return input;
         }
@@ -5072,7 +5105,8 @@ fn runtime_call_may_invoke_implicit_user_code(
         return false;
     };
     match target {
-        crate::ir::RuntimeCallTarget::ArrayFetchForWrite => true,
+        crate::ir::RuntimeCallTarget::ArrayFetchForWrite
+        | crate::ir::RuntimeCallTarget::PendingAppendFetchForWrite => true,
         crate::ir::RuntimeCallTarget::Pcntl(
             crate::ir::PcntlRuntime::Signal | crate::ir::PcntlRuntime::SignalDispatch,
         ) => true,

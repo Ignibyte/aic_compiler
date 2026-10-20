@@ -10,7 +10,6 @@
 //! - Public INI wrappers and eval invocation are separate integration surfaces.
 
 use super::*;
-use std::process::Command;
 
 /// Preserves scalar/array string identities through boxing, PHP aliases, casts, and final cleanup.
 #[test]
@@ -61,16 +60,9 @@ echo "done\n";
         ("ini_test_retired", "_ini_fixture_retired")] {
         patched = replace_function(&patched, name, &format!("{jump} {native}\n"));
     }
-    let provider = directory.join("provider.c");
-    let provider_asm = directory.join("provider.s");
-    std::fs::write(&provider, include_str!("ini_materialize/provider.c")).unwrap();
-    let mut compiler = Command::new("cc");
-    compiler.args(["-S", "-O2", "-Wall", "-Wextra", "-Werror"]);
-    if target().arch == Arch::X86_64 { compiler.arg("-masm=intel"); }
-    let built = compiler.arg(&provider).arg("-o").arg(&provider_asm).output().unwrap();
-    assert!(built.status.success(), "{}: {}", directory.display(), String::from_utf8_lossy(&built.stderr));
+    let provider_asm = compile_c_fixture_asm(&directory, "provider", include_str!("ini_materialize/provider.c"), &[]);
     patched.push_str(&shims());
-    append_c_provider_asm(&mut patched, &std::fs::read_to_string(provider_asm).unwrap());
+    append_c_fixture_asm(&mut patched, &provider_asm);
     std::fs::write(directory.join("caller.s"), &patched).unwrap();
     let output = assemble_and_run_capture(&patched, &runtime_obj_for_asm(&runtime), &directory,
         &libraries, &default_link_paths(), &[]);
