@@ -11,6 +11,7 @@ mod allocation_guards;
 mod fill_boxed_integers;
 mod size_bounds;
 mod assoc;
+mod assoc_nullable_int_values;
 mod append_history;
 mod append_writes;
 mod append_cancellation_review;

@@ -191,6 +191,11 @@ impl PhpType {
                 PhpType::TaggedScalar
             }
             PhpType::Union(_) => PhpType::Mixed,
+            // A hash entry has no `?int` payload (`TaggedScalar`): `hash_set` boxes such a value
+            // into a Mixed cell, so the hash itself is Mixed-valued and reads unbox from there.
+            PhpType::AssocArray { key, value } if value.codegen_repr() == PhpType::TaggedScalar => {
+                PhpType::AssocArray { key: key.clone(), value: Box::new(PhpType::Mixed) }
+            }
             PhpType::False => PhpType::Bool,
             PhpType::Resource(_) => PhpType::Int,
             PhpType::Never => PhpType::Void, // never should not be materialized; fallback to void sentinel
