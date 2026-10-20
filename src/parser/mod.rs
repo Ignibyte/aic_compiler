@@ -83,6 +83,11 @@ pub(crate) fn next_anonymous_class_name() -> String {
     format!("class@anonymous#{}", id)
 }
 
+/// Returns whether `name` is a synthetic anonymous-class name from `next_anonymous_class_name`.
+pub(crate) fn is_anonymous_class_name(name: &str) -> bool {
+    name.trim_start_matches('\\').starts_with("class@anonymous#")
+}
+
 /// Runs `parse` with anonymous classes named after `file` and their position in it (see
 /// `next_anonymous_class_name`), restoring the previous naming afterwards, so a nested include
 /// keeps its own count.

@@ -54,8 +54,11 @@ pub(super) fn parse_file(
         .map_err(|e| e.with_file(file.clone()))?;
 
     // Both resolver passes parse this file; naming its anonymous classes after the file keeps the
-    // declaration discovery found and the body resolution inlines referring to one class.
-    let parsed = parser::with_anonymous_class_scope(&path.to_string_lossy(), || {
+    // declaration discovery found and the body resolution inlines referring to one class. The
+    // canonical path names them, as discovery merges includes by it: two spellings of one path
+    // must agree too.
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let parsed = parser::with_anonymous_class_scope(&canonical.to_string_lossy(), || {
         parser::parse_with_mode(&tokens, mode)
     })
     .map_err(|e| e.with_file(file))?;

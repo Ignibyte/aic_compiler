@@ -495,3 +495,44 @@ fn test_anonymous_class_in_included_file() {
     );
     assert_eq!(out, "[included][main]");
 }
+
+/// Verifies a file with an anonymous class required twice: each require runs the body and
+/// constructs an object, where the two parses' identical declarations collided as duplicates.
+#[test]
+fn test_anonymous_class_in_file_required_twice() {
+    let out = compile_and_run_files(
+        &[
+            (
+                "main.php",
+                "<?php\n$objects = [];\nrequire __DIR__ . '/lib/make.php';\nrequire __DIR__ . '/lib/make.php';\necho count($objects), ':', $objects[0]->n() + $objects[1]->n();\n",
+            ),
+            (
+                "lib/make.php",
+                "<?php\n$objects[] = new class () { public function n(): int { return 7; } };\n",
+            ),
+        ],
+        "main.php",
+    );
+    assert_eq!(out, "2:14");
+}
+
+/// Verifies an anonymous class in a file required under two spellings of its path. Discovery
+/// merges the two by canonical path, so both must name the class alike, or the branch that
+/// spells the path differently constructs a class that was never declared.
+#[test]
+fn test_anonymous_class_in_file_required_under_two_path_spellings() {
+    let out = compile_and_run_files(
+        &[
+            (
+                "main.php",
+                "<?php\nif ($argc > 1) {\n    require __DIR__ . '/lib/sink.php';\n} else {\n    require __DIR__ . '/lib/../lib/sink.php';\n}\n$sink->write('main');\n",
+            ),
+            (
+                "lib/sink.php",
+                "<?php\n$sink = new class () { public function write(string $s): void { echo '[', $s, ']'; } };\n$sink->write('included');\n",
+            ),
+        ],
+        "main.php",
+    );
+    assert_eq!(out, "[included][main]");
+}
