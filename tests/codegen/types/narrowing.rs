@@ -872,3 +872,97 @@ fn test_instanceof_narrowed_receiver_reads_class_property() {
     );
     assert_eq!(out, "hi|other|yo|none");
 }
+
+/// Verifies a ternary whose arm is `$map[$k] ?? null` over a map of objects keeps the object,
+/// so the narrowed result can call its method; the merge slot was typed as a tagged `?int`.
+#[test]
+fn test_ternary_of_coalesced_map_object_keeps_the_object() {
+    let out = compile_and_run(
+        r#"<?php
+interface Cmd { public function run(): int; }
+final class Ping implements Cmd { public function run(): int { echo "pong\n"; return 0; } }
+final class Console
+{
+    /** @param array<string, Cmd> $commands */
+    public function __construct(private array $commands) {}
+    public function run(array $argv): int
+    {
+        $name = $argv[1] ?? null;
+        $command = is_string($name) ? $this->commands[$name] ?? null : null;
+        if (!$command instanceof Cmd) {
+            return 2;
+        }
+        return $command->run();
+    }
+}
+echo (new Console(['ping' => new Ping()]))->run(['aic', 'ping']), "\n";
+"#,
+    );
+    assert_eq!(out, "pong\n0\n");
+}
+
+/// Verifies an early exit inside an `if` narrows only the paths through it: after the enclosing
+/// `if`, which either returned or never ran the inner guard, `$value` is `mixed` again.
+#[test]
+fn test_early_exit_narrowing_stays_inside_its_enclosing_if() {
+    let out = compile_and_run(
+        r#"<?php
+final class H { public int $h = 7; }
+function f(int $kind, mixed $value): int {
+    if ($kind === 3) {
+        if (!is_array($value)) { throw new Exception("x"); }
+        return count($value);
+    }
+    return $value->h;
+}
+function g(int $kind, mixed $value): string {
+    if ($kind === 3) {
+        if (!is_array($value)) { return "scalar"; }
+        echo count($value), ":";
+    }
+    return is_object($value) ? "object" : "array";
+}
+echo f(1, new H()), "|", f(3, [1, 2]), "|", g(1, new H()), "|", g(3, [1]), "\n";
+"#,
+    );
+    assert_eq!(out, "7|2|object|1:array\n");
+}
+
+/// Verifies an `is_array()` guard on the left of `&&` narrows a `mixed` value in the guarded body,
+/// so it can be returned as `array` there.
+#[test]
+fn test_is_array_conjunction_narrows_a_mixed_value() {
+    let out = compile_and_run(
+        r#"<?php
+function asList(mixed $v): array
+{
+    if (is_array($v) && count($v) > 0) {
+        return $v;
+    }
+    return [];
+}
+$data = json_decode('[1,2,3]', true);
+echo count(asList($data)), "\n";
+"#,
+    );
+    assert_eq!(out, "3\n");
+}
+
+/// Verifies a `for` condition guard (`is_array($row)`) narrows the loop body, as a `while`
+/// condition does.
+#[test]
+fn test_for_condition_guard_narrows_the_body() {
+    let out = compile_and_run(
+        r#"<?php
+function width(array $row): int { return count($row); }
+$rows = [[1, 2], [3], 'x'];
+$i = 0;
+$total = 0;
+for ($row = $rows[$i] ?? null; is_array($row); $row = $rows[++$i] ?? null) {
+    $total += width($row);
+}
+echo $total, "\n";
+"#,
+    );
+    assert_eq!(out, "3\n");
+}

@@ -443,3 +443,26 @@ echo count2($picked), "\n";
     );
     assert_eq!(out, "2\n");
 }
+
+/// Verifies a `throw` arm of a ternary or a `throw` default of `??` adds nothing to the result
+/// type, so the non-null side can be returned as `string`.
+#[test]
+fn test_throw_arm_adds_nothing_to_a_ternary_or_coalesce_result() {
+    let out = compile_and_run(
+        r#"<?php
+function need(?string $v): string
+{
+    return $v !== null ? $v : throw new InvalidArgumentException('missing');
+}
+function have(?string $v): string
+{
+    return $v ?? throw new InvalidArgumentException('none');
+}
+function shout(string $s): string { return strtoupper($s); }
+echo shout(need('ok')), "|", shout(have('yes')), "|";
+try { need(null); } catch (InvalidArgumentException $e) { echo $e->getMessage(), "|"; }
+try { have(null); } catch (InvalidArgumentException $e) { echo $e->getMessage(), "\n"; }
+"#,
+    );
+    assert_eq!(out, "OK|YES|missing|none\n");
+}

@@ -195,6 +195,30 @@ impl Checker {
         Ok(Some(right_env))
     }
 
+    /// Undoes the narrowings kept by `if`s inside a body that has just been checked, newest
+    /// first: each local still holding the kept type gets back the type it had before that
+    /// `if`'s guard. A local reassigned since keeps its new type. `mark` is the log length
+    /// taken before the body.
+    pub(crate) fn undo_kept_narrowings_since(&mut self, mark: usize, env: &mut TypeEnv) {
+        if mark >= self.kept_narrowings.len() {
+            return;
+        }
+        let undone = self.kept_narrowings.split_off(mark);
+        for kept in undone.into_iter().rev() {
+            if env.get(&kept.var) != Some(&kept.narrowed) {
+                continue;
+            }
+            match kept.original {
+                Some(ty) => {
+                    env.insert(kept.var, ty);
+                }
+                None => {
+                    env.remove(&kept.var);
+                }
+            }
+        }
+    }
+
     /// Synthetic `TypeEnv` key for a narrowed simple property access `$var->prop` (`None` for a
     /// more complex receiver). The `\x01` sigil bytes cannot appear in a real variable name, so
     /// this key never collides with a variable binding — a normal property read only picks it up
@@ -375,6 +399,10 @@ impl Checker {
                 }
             }
             _ if guard_matches(current, target) => current.clone(),
+            // An array guard on a value of unknown shape (`is_array($mixed)`) gives the type a
+            // bare `array` declaration has. On a concrete non-array type the branch is dead, and
+            // the conservative fallback keeps a reassignment there legal.
+            PhpType::Mixed if matches!(target, GuardTarget::AnyArray) => PhpType::php_array(),
             _ => target.fallback_type(),
         }
     }
