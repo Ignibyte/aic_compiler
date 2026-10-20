@@ -46,6 +46,8 @@ mod conditionals;
 mod loops;
 mod array_write_core;
 mod nested_array_writes;
+mod nested_write_guards;
+mod nested_scalar_writes;
 mod array_write_storage;
 mod typed_foreach;
 mod switches;
@@ -54,8 +56,10 @@ mod exceptions;
 mod control_exit;
 mod declarations;
 mod instance_property_writes;
+mod readonly_receiver_guard;
 mod static_property_writes;
 mod property_array_writes;
+pub(crate) mod property_write_receiver;
 mod metadata_control;
 mod nested_append;
 mod return_coercions;
@@ -83,6 +87,7 @@ use return_coercions::*;
 use static_property_helpers::*;
 
 pub(crate) use control_exit::{lower_throw_access_error, lower_throw_access_error_expr};
+pub(crate) use control_exit::terminate_return;
 // Shared with `crate::ir_lower::expr::unset`, which needs the same runtime-subclass accessor peel
 // for `__unset` that the write path needs for `__set`.
 pub(crate) use instance_property_writes::{
@@ -100,6 +105,7 @@ pub(crate) use array_write_core::{
 };
 pub(crate) use property_array_writes::lower_property_array_assign_with_diagnosed_key;
 pub(crate) use static_property_writes::lower_static_property_array_assign_with_diagnosed_key;
+pub(crate) use nested_array_writes::lower_nested_array_assign_after_read;
 pub(super) use array_write_storage::{
     finish_indexed_array_local_write, load_array_local_for_write, prepare_indexed_array_local_write,
     ref_bound_mixed_indexed_array_write,
@@ -231,7 +237,11 @@ fn lower_stmt_once(ctx: &mut LoweringContext<'_, '_>, stmt: &Stmt) {
         // before mutation; every other synthetic group keeps ordinary block lowering.
         StmtKind::Synthetic(body) => match nested_append::recognize(ctx, body) {
             Some(group) => nested_append::lower(ctx, &group, stmt.span),
-            None => lower_block(ctx, body),
+            None => {
+                if !lower_synthetic_readonly_coalesce(ctx, body) {
+                    lower_block(ctx, body);
+                }
+            }
         },
         StmtKind::Try {
             try_body,
@@ -315,3 +325,6 @@ fn local_slot_is_convertible_here(ctx: &LoweringContext<'_, '_>, name: &str) -> 
             .get(name)
             .is_some_and(|slot| ctx.slot_is_initialized(*slot))
 }
+
+/// Exposes captured writable parent cells to compiler-generated append expressions.
+pub(crate) use nested_array_writes::lower_nested_assign_parent;

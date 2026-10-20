@@ -1,18 +1,18 @@
 //! Purpose:
-//! Transfers fresh checked-numeric boxes into assignment copies without allocating
+//! Transfers fresh numeric boxes into assignment copies without allocating
 //! a second Mixed cell or releasing the transferred owner.
 //!
 //! Called from:
 //! - `driver::optimize_module()` after the ordinary optimization fixed point.
 //!
 //! Key details:
-//! - Only checked integer add/sub/mul results are known independent numeric cells.
+//! - Checked integer and dynamic numeric add/sub/mul return independent numeric cells.
 //! - The source must be used only by the clone and its adjacent release.
 //! - No integer-sink specialization runs after this ownership-only rewrite.
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ir::{DataPool, Function, IrHeapKind, IrType, Op, Ownership, ValueDef};
+use crate::ir::{DataPool, Function, Immediate, IrHeapKind, IrType, MixedNumericOp, Op, Ownership, ValueDef};
 
 use super::driver::IrPass;
 use super::rewrite::{count_value_uses, neutralize_to_nop, replace_all_uses};
@@ -68,8 +68,10 @@ impl IrPass for FreshMixedTransfer {
                     continue;
                 };
                 let producer = &function.instructions[producer_id.as_raw() as usize];
-                if !matches!(producer.op, Op::ICheckedAdd | Op::ICheckedSub | Op::ICheckedMul)
-                    || !preceding.contains(&producer_id)
+                let fresh_numeric = matches!(producer.op, Op::ICheckedAdd | Op::ICheckedSub | Op::ICheckedMul)
+                    || (producer.op == Op::MixedNumericBinop && matches!(producer.immediate,
+                        Some(Immediate::MixedNumericOp(MixedNumericOp::Add | MixedNumericOp::Sub | MixedNumericOp::Mul))));
+                if !fresh_numeric || !preceding.contains(&producer_id)
                 {
                     continue;
                 }

@@ -15,6 +15,67 @@ $arr[1] = 99;          // modify
 $arr[] = 40;           // push
 ```
 
+Empty dimensions are write-only. Assignment expressions such as `($arr[] = 2)`
+return the assigned value; compound appends such as `$arr[] += 2` start from a
+fresh null element, not an existing array value. This also applies to object and
+static array properties. Nested writes such as `$arr[]['key'] = 'value'` and
+`$arr[][] = 1` build new containers. `++$arr[]` appends `1` and returns `1`,
+whereas `$arr[]++` appends `1` and evaluates to null. Explicit nested integer
+keys remain sparse: `$arr[][1] = 'x'` creates only key `1`, not an extra key `0`.
+
+Bare reads, `isset`, `empty`, and `??=` with an empty dimension report
+`Cannot use [] for reading`, as PHP does. Decrement on an append dimension is
+not supported: `$arr[]--` reports
+`Post-decrement on an append dimension is not supported`, and `--$arr[]` reports
+`Pre-decrement on an append dimension is not supported`.
+
+Property writes on a fresh append, such as `$arr[]->x = 1`, `$arr[]->x++`, or
+`++$arr[]->x->y`, append null and then throw a catchable `Error`, as PHP does.
+Computed property selectors and an assignment's right-hand side run before
+the null is appended. Nested property chains name the first property in the
+`Attempt to modify property` error.
+
+Arrays of variadic reference arguments keep the caller's storage when reached
+through a local reference alias. Negative and sparse integer writes add only
+the requested key, preserving the other references without inserting null gaps.
+Reads and JSON encoding observe each referenced argument's current value.
+
+Nested keyed writes also retain the selected scalar element's storage. A string
+element supports PHP string-offset assignment, including a single warning for a
+leading-numeric offset such as `"1abc"`; invalid nonnumeric offsets throw
+`TypeError`. A `false` element is converted to an array with an `E_DEPRECATED`
+diagnostic. Both paths preserve copy-on-write aliases and caller references.
+
+A compound append such as `$items[]['k'] += 1` stops if its missing-key handler
+detaches the selected array and no PHP owner keeps that array alive. The expression
+then yields null without inserting the leaf or evaluating the operator, including
+division by zero. Appending an unrelated root sibling does not cancel the operation.
+A saved root-array copy can keep the old target live and receive its pending write.
+If a root mutation detaches the selected cell while a separately boxed child copy
+is the only remaining payload owner, that child copy receives the pending write and
+remains safe for later appends. Two or more independent child copies cancel the write
+instead, leaving every copy unchanged. Multiple copies of the same root array can
+still share a single selected child slot and keep the operation active. When the
+original cell and an independent payload copy both survive, PHP also cancels the
+stale target. A cancelled prefix increment still returns `1`.
+Each missing intermediate key emits its own warning before it is autovivified, unless
+key conversion has already abandoned that dimension before its read.
+
+Losing an intermediate selection is different from losing the final place. For example,
+if the first key handler replaces `$items` during `$items[][1.5][2.5] += 7`, PHP still
+converts the second key, diagnoses its missing leaf, and returns `7` on private temporary
+storage. It does not change the replacement root or saved copies of the abandoned parent.
+If only the final `2.5` conversion loses the place, the expression instead yields null
+without reading the missing leaf or applying the operator.
+
+Plain nested writes with converted keys publish their parents before key diagnostics.
+For `$items[][1.5] = rhs()`, `rhs()` runs first, then a deprecation handler sees `[[]]`.
+A throwing handler leaves that published parent in place. A returning handler may preserve
+the selection through a saved child copy; if it instead abandons the final selected parent, the
+assignment yields null and does not insert the leaf. Plain writes do not emit missing-key
+warnings while creating those parents. Abandoning only an intermediate plain-write parent
+still evaluates the remaining keys and returns the assigned value on private storage.
+
 ## String arrays
 ```php
 <?php

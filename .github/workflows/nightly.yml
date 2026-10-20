@@ -135,7 +135,7 @@ jobs:
     needs: gate
     if: needs.gate.outputs.build == 'true'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       # One broken target should still leave the other two downloadable; the
       # publish job refuses to ship a partial set.
@@ -219,6 +219,31 @@ jobs:
       - name: Strip binary
         run: strip target/release/elephc
 
+      # The selected green compiler commit may predate the signing action.
+      # Load CI tooling from this workflow's immutable revision in a separate
+      # checkout, keeping the compiler sources on the selected candidate SHA.
+      - name: Load macOS notarization action
+        if: runner.os == 'macOS'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .notarization-ci
+          sparse-checkout: .github/actions/notarize-macos
+          persist-credentials: false
+
+      - name: Sign and notarize macOS binary
+        if: runner.os == 'macOS'
+        timeout-minutes: 40
+        uses: ./.notarization-ci/.github/actions/notarize-macos
+        with:
+          binary: target/release/elephc
+          certificate-p12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          signing-identity: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          apple-id: ${{ secrets.APPLE_ID }}
+          team-id: ${{ secrets.APPLE_TEAM_ID }}
+          app-password: ${{ secrets.APPLE_APP_PASSWORD }}
+
       # Packed by glob rather than by name. `release.yml` needs the explicit
       # list because its Homebrew formula installs the archives one by one, and
       # keeping two hand-written lists in step is what left
@@ -245,6 +270,17 @@ jobs:
             shasum -a 256 "$TARBALL" > "$TARBALL.sha256"
           fi
           tar tzf "$TARBALL"
+
+      - name: Verify packaged macOS signature
+        if: runner.os == 'macOS'
+        env:
+          TARBALL: target/release/elephc-nightly-${{ matrix.target }}.tar.gz
+        run: |
+          VERIFY_DIR="$(mktemp -d "$RUNNER_TEMP/elephc-signature.XXXXXX")"
+          trap 'rm -rf "$VERIFY_DIR"' EXIT
+          tar xzf "$TARBALL" -C "$VERIFY_DIR" elephc
+          cmp target/release/elephc "$VERIFY_DIR/elephc"
+          codesign --verify --strict --verbose=2 "$VERIFY_DIR/elephc"
 
       - name: Upload nightly artifact
         uses: actions/upload-artifact@v7

@@ -56,6 +56,9 @@ pub mod transcribe;
 #[cfg(test)]
 pub mod print;
 
+#[cfg(test)]
+pub(crate) mod oracle;
+
 use crate::names::{Name, NameKind};
 use crate::parser::ast::{
     Attribute, AttributeGroup, BinOp, CType, CastType, CatchClause, ClassConst, ClassMethod,
@@ -389,16 +392,7 @@ pub fn e_dyn_prop(object: Expr, property: Expr) -> Expr {
 /// `StmtKind` (`s_assign`, `s_prop_assign`); this is the general form the parser falls back to
 /// for targets those do not cover, such as a dynamic property.
 pub fn e_assign(target: Expr, value: Expr) -> Expr {
-    Expr::new(
-        ExprKind::Assignment {
-            target: Box::new(target),
-            value: Box::new(value),
-            result_target: None,
-            prelude: Vec::new(),
-            conditional_value_temp: None,
-        },
-        Span::dummy(),
-    )
+    crate::parser::expr::plain_assignment_expression(target, value, Span::synthetic())
 }
 
 /// A reference to a global constant (`PHP_INT_MIN`, `STDERR`, …).
@@ -1115,6 +1109,10 @@ fn walk_stmt(stmt: &Stmt, out: &mut Vec<String>) {
         StmtKind::Assign { name, value } => {
             out.push(name.clone());
             walk_expr(value, out);
+        }
+        StmtKind::RefAssign { target, source } => {
+            out.push(target.clone());
+            walk_expr(source, out);
         }
         StmtKind::StaticPropertyAssign { value, .. }
         | StmtKind::StaticPropertyArrayPush { value, .. } => walk_expr(value, out),
@@ -1867,6 +1865,7 @@ fn audit_stmt(stmt: &Stmt, out: &mut Vec<String>) {
         StmtKind::Assign { value, .. } | StmtKind::TypedAssign { value, .. } => {
             audit_expr(value, out)
         }
+        StmtKind::RefAssign { source, .. } => audit_expr(source, out),
         StmtKind::StaticPropertyAssign { value, .. }
         | StmtKind::StaticPropertyArrayPush { value, .. } => audit_expr(value, out),
         StmtKind::StaticPropertyArrayAssign { index, value, .. } => {
@@ -2007,6 +2006,16 @@ fn audit_stmt(stmt: &Stmt, out: &mut Vec<String>) {
                 }
             }
         }
+        StmtKind::EnumDecl { cases, methods, constants, .. } => {
+            for case in cases {
+                if let Some(value) = &case.value { audit_expr(value, out); }
+            }
+            for constant in constants { audit_expr(&constant.value, out); }
+            for method in methods {
+                audit_params(&method.params, out);
+                for inner in &method.body { audit_stmt(inner, out); }
+            }
+        }
         // An interface declares SIGNATURES, which carry no call sites; only a constant's
         // initializer can hold one.
         StmtKind::InterfaceDecl {
@@ -2022,7 +2031,7 @@ fn audit_stmt(stmt: &Stmt, out: &mut Vec<String>) {
         StmtKind::ConstDecl { value, .. } => audit_expr(value, out),
         // A namespace body is just declarations, and the audit has to reach them: the PDO
         // driver subclasses all live inside one, and stopping here would exempt them.
-        StmtKind::NamespaceBlock { body, .. } => {
+        StmtKind::NamespaceBlock { body, .. } | StmtKind::Synthetic(body) => {
             for inner in body {
                 audit_stmt(inner, out);
             }

@@ -5,7 +5,7 @@
 //! - `cargo test` through Rust's test harness.
 //!
 //! Key details:
-//! - Exports platform, compiler, runner, and project helpers used by end-to-end codegen fixtures.
+//! - Exports platform, compiler, runner, C fixture, and project helpers used by end-to-end codegen fixtures.
 
 #![allow(dead_code)]
 
@@ -36,6 +36,7 @@ pub(crate) static TEST_TARGET: OnceLock<Target> = OnceLock::new();
 
 mod platform;
 mod runner;
+mod c_fixture;
 mod compiler;
 mod curl_native;
 mod native_cache;
@@ -46,6 +47,7 @@ pub(crate) mod xml_native;
 
 pub(crate) use platform::*;
 pub(crate) use runner::*;
+pub(crate) use c_fixture::*;
 pub(crate) use compiler::*;
 pub(crate) use curl_native::*;
 pub(crate) use native_projects::*;

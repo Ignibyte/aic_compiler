@@ -4,6 +4,7 @@
 //!
 //! Called from:
 //! - `crate::parser::expr::pratt` when parsing assignment expressions.
+//! - `crate::synthetic_class::e_assign()` when building equivalent internal expressions.
 //!
 //! Key details:
 //! - Target dependencies are tracked so PHP evaluation order is preserved during lowering.
@@ -16,6 +17,84 @@ use crate::parser::stmt::{
     update_dimension_base_is_snapshotted, update_index_needs_snapshot,
 };
 use crate::span::Span;
+
+/// Recognizes property and indexed traversal rooted in a delayed static-property load.
+pub(super) fn static_property_receiver_chain(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::StaticPropertyAccess { .. } => true,
+        ExprKind::PropertyAccess { object, .. }
+        | ExprKind::DynamicPropertyAccess { object, .. } => static_property_receiver_chain(object),
+        ExprKind::ArrayAccess { array, .. } => static_property_receiver_chain(array),
+        _ => false,
+    }
+}
+
+/// Recognizes writes whose static owner must be fetched after the RHS settles.
+pub(super) fn delayed_static_assignment_target(target: &Expr) -> bool {
+    match &target.kind {
+        ExprKind::StaticPropertyAccess { .. } => true,
+        ExprKind::PropertyAccess { object, .. }
+        | ExprKind::DynamicPropertyAccess { object, .. } => static_property_receiver_chain(object),
+        ExprKind::ArrayAccess { array, .. } => delayed_static_assignment_target(array),
+        _ => false,
+    }
+}
+
+/// Builds a plain assignment with the same capture and result rules for parsed and built ASTs.
+pub(crate) fn plain_assignment_expression(target: Expr, value: Expr, span: Span) -> Expr {
+    if !is_non_local_assignment_target(&target) {
+        return Expr::new(
+            ExprKind::Assignment {
+                target: Box::new(target),
+                value: Box::new(value),
+                result_target: None,
+                prelude: Vec::new(),
+                conditional_value_temp: None,
+            },
+            span,
+        );
+    }
+    let mut lowerer = AssignmentExpressionLowerer::new(span);
+    let target = lowerer.stabilize_non_local_target(target, &value);
+    // A syntactically replayable property read can still call a hook that replaces the owner.
+    // Capture it after computed dimensions, before either the write or result uses it.
+    let value = if delayed_static_assignment_target(&target) {
+        lowerer.bind_result_value(value)
+    } else {
+        lowerer.bind_value(&target, value)
+    };
+    Expr::new(
+        ExprKind::Assignment {
+            target: Box::new(target),
+            value: Box::new(value.clone()),
+            result_target: Some(Box::new(value)),
+            prelude: lowerer.finish(),
+            conditional_value_temp: None,
+        },
+        span,
+    )
+}
+
+/// Builds a compound expression whose captured dimensions are shared by its read and write.
+pub(crate) fn compound_assignment_expression(target: Expr, op: BinOp, rhs: Expr, span: Span) -> Expr {
+    let mut lowerer = AssignmentExpressionLowerer::new(span);
+    let target = lowerer.stabilize_non_local_target(target, &rhs);
+    let rhs = if delayed_static_assignment_target(&target) {
+        lowerer.bind_result_value(rhs)
+    } else {
+        lowerer.bind_value(&target, rhs)
+    };
+    let target = lowerer.snapshot_update_dimension(target);
+    let value = Expr::new(ExprKind::BinaryOp {
+        left: Box::new(target.clone()), op, right: Box::new(rhs),
+    }, span);
+    let result = lowerer.bind_result_value(value);
+    Expr::new(ExprKind::Assignment {
+        target: Box::new(target), value: Box::new(result.clone()),
+        result_target: Some(Box::new(result)), prelude: lowerer.finish(),
+        conditional_value_temp: None,
+    }, span)
+}
 
 /// Desugars `++$place` / `$place++` into a read-modify-write an expression can carry.
 ///
@@ -63,6 +142,7 @@ pub(super) fn desugar_lvalue_incdec(
             &array.kind,
             ExprKind::Variable(_)
                 | ExprKind::PropertyAccess { .. }
+                | ExprKind::DynamicPropertyAccess { .. }
                 | ExprKind::StaticPropertyAccess { .. }
         ) {
             let old_name = crate::names::generated_local_name(&format!(
@@ -271,6 +351,16 @@ impl AssignmentExpressionLowerer {
                         ExprKind::PropertyAccess {
                             object: Box::new(self.stabilize_receiver(*object, rhs)),
                             property,
+                        },
+                        array_span,
+                    ),
+                    Expr {
+                        kind: ExprKind::DynamicPropertyAccess { object, property },
+                        span: array_span,
+                    } => Expr::new(
+                        ExprKind::DynamicPropertyAccess {
+                            object: Box::new(self.stabilize_receiver(*object, rhs)),
+                            property: Box::new(self.stabilize_dimension_index(*property, rhs)),
                         },
                         array_span,
                     ),

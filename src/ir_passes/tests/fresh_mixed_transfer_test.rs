@@ -1,5 +1,5 @@
 //! Purpose:
-//! Tests ownership transfer of fresh checked-numeric assignment boxes.
+//! Tests ownership transfer of fresh checked and dynamic numeric assignment boxes.
 //!
 //! Called from:
 //! - The library test harness through `ir_passes::tests`.
@@ -10,7 +10,7 @@
 
 use crate::ir::{
     validate_function, Builder, DataPool, Function, FunctionParam, Immediate, IrHeapKind, IrType, LocalKind,
-    Module, Op, Ownership, Terminator, ValueId,
+    MixedNumericOp, Module, Op, Ownership, Terminator, ValueId,
 };
 use crate::ir_passes::driver::{optimize_module, IrPass};
 use crate::ir_passes::fresh_mixed_transfer::FreshMixedTransfer;
@@ -69,6 +69,24 @@ fn fresh_mixed_transfer_checked_numeric_results() {
         assert!(matches!(function.blocks[0].terminator, Some(Terminator::Return { value: Some(v) }) if v == source));
         assert!(validate_function(&function).is_ok());
         assert!(!transfer(&mut function));
+    }
+}
+
+/// Dynamic arithmetic boxes are fresh too, but an unreviewed operation keeps its copy.
+#[test]
+fn fresh_mixed_transfer_dynamic_numeric_results() {
+    for operation in [MixedNumericOp::Add, MixedNumericOp::Sub, MixedNumericOp::Mul, MixedNumericOp::Pow] {
+        for (extra, gap, owner) in [(false, false, Ownership::Owned),
+            (true, false, Ownership::Owned), (false, true, Ownership::Owned),
+            (false, false, Ownership::Borrowed), (false, false, Ownership::MaybeOwned)]
+        {
+            let mut function = fixture(Op::MixedNumericBinop, owner, extra, gap);
+            function.instructions[2].immediate = Some(Immediate::MixedNumericOp(operation));
+            assert!(validate_function(&function).is_ok());
+            let eligible = operation != MixedNumericOp::Pow && !extra && !gap && owner == Ownership::Owned;
+            assert_eq!(transfer(&mut function), eligible, "{operation:?}, extra={extra}, gap={gap}, owner={owner:?}");
+            assert!(validate_function(&function).is_ok());
+        }
     }
 }
 

@@ -13,6 +13,8 @@
 
 use crate::support::*;
 
+mod json_enums;
+
 /// Asserts an eval failure stayed inside the C ABI/error-status contract.
 fn assert_no_rust_panic_leaked(stderr: &str) {
     assert!(
@@ -22774,7 +22776,7 @@ EvalPromotedAsymBase::$privateValue from global scope"
     );
 }
 
-/// Verifies eval-declared inherited properties preserve PHP redeclaration invariants.
+/// Compatible eval redeclarations retain inherited setter access and the readonly modifier.
 #[test]
 fn test_eval_declared_inherited_property_redeclaration_contracts() {
     let out = compile_and_run(
@@ -22790,18 +22792,18 @@ class EvalPropertyRelativeBase {
     public EvalPropertyRelativeBase $parentValue;
 }
 class EvalPropertyRelativeChild extends EvalPropertyRelativeBase {
-    public self $selfValue;
+    public EvalPropertyRelativeBase $selfValue;
     public parent $parentValue;
 }
-class EvalPropertyReadonlyAddBase {
-    public int $count = 0;
+class EvalPropertyReadonlyPreserveBase {
+    public public(set) readonly int $count;
 }
-class EvalPropertyReadonlyAddChild extends EvalPropertyReadonlyAddBase {
-    public readonly int $count;
+class EvalPropertyReadonlyPreserveChild extends EvalPropertyReadonlyPreserveBase {
+    public public(set) readonly int $count;
     public function __construct() { $this->count = 7; }
 }
 class EvalPropertyReadonlyWidenBase {
-    protected int $count = 0;
+    protected readonly int $count;
     public function count() { return $this->count; }
 }
 class EvalPropertyReadonlyWidenChild extends EvalPropertyReadonlyWidenBase {
@@ -22810,13 +22812,17 @@ class EvalPropertyReadonlyWidenChild extends EvalPropertyReadonlyWidenBase {
 }
 $box = new EvalPropertyRedeclareChild();
 $box->value = "ok";
-$readonly = new EvalPropertyReadonlyAddChild();
+$readonly = new EvalPropertyReadonlyPreserveChild();
 $widened = new EvalPropertyReadonlyWidenChild();
 echo $box->value . ":" . $readonly->count . ":" . $widened->count . ":" . $widened->count();');
 "#,
     );
     assert_eq!(out, "ok:7:9:9");
+}
 
+/// A changed inherited property type fails in its own bounded eval compilation.
+#[test]
+fn test_eval_declared_inherited_property_redeclaration_contracts_rejects_type() {
     let err = compile_and_run_expect_failure(
         r#"<?php
 eval('class EvalPropertyTypeBase {
@@ -22831,7 +22837,11 @@ class EvalPropertyStringChild extends EvalPropertyTypeBase {
         err.contains("Fatal error: eval() runtime failed"),
         "stderr did not contain eval runtime fatal diagnostic: {err}"
     );
+}
 
+/// Narrowing read visibility retains its declaration-time eval rejection.
+#[test]
+fn test_eval_declared_inherited_property_redeclaration_contracts_rejects_read_visibility() {
     let err = compile_and_run_expect_failure(
         r#"<?php
 eval('class EvalPropertyPublicBase {
@@ -22846,7 +22856,11 @@ class EvalPropertyProtectedChild extends EvalPropertyPublicBase {
         err.contains("Fatal error: eval() runtime failed"),
         "stderr did not contain eval runtime fatal diagnostic: {err}"
     );
+}
 
+/// Introducing a declared type on an inherited untyped slot remains incompatible.
+#[test]
+fn test_eval_declared_inherited_property_redeclaration_contracts_rejects_declared_type() {
     let err = compile_and_run_expect_failure(
         r#"<?php
 eval('class EvalPropertyUntypedBase {
@@ -22861,7 +22875,11 @@ class EvalPropertyTypedChild extends EvalPropertyUntypedBase {
         err.contains("Fatal error: eval() runtime failed"),
         "stderr did not contain eval runtime fatal diagnostic: {err}"
     );
+}
 
+/// Static storage cannot be redeclared as instance storage by an eval child.
+#[test]
+fn test_eval_declared_inherited_property_redeclaration_contracts_rejects_storage() {
     let err = compile_and_run_expect_failure(
         r#"<?php
 eval('class EvalPropertyStaticBase {
@@ -22876,7 +22894,11 @@ class EvalPropertyInstanceChild extends EvalPropertyStaticBase {
         err.contains("Fatal error: eval() runtime failed"),
         "stderr did not contain eval runtime fatal diagnostic: {err}"
     );
+}
 
+/// Removing readonly remains forbidden independently of the property's setter metadata.
+#[test]
+fn test_eval_declared_inherited_property_redeclaration_contracts_rejects_readonly_removal() {
     let err = compile_and_run_expect_failure(
         r#"<?php
 eval('class EvalPropertyReadonlyBase {

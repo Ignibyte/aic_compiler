@@ -105,3 +105,77 @@ fn test_fresh_mixed_transfer_all_target_eir() {
     }
     fs::remove_dir_all(dir).expect("remove target fixture");
 }
+
+/// Dynamic closure arithmetic keeps PHP overflow and value/reference ownership semantics.
+#[test]
+fn test_fresh_mixed_transfer_dynamic_closure_arithmetic() {
+    let source = r#"<?php
+function arithmetic($seed): void {
+    $f = function($x) { return $x + 1; };
+    $sum = $seed;
+    for ($i = 0; $i < 3; $i++) { $sum += $f($i); }
+    $copy = $sum;
+    $sum += 2;
+    echo gettype($sum), '|', $sum, '|', $copy, "\n";
+    $reference =& $sum;
+    $reference *= 2;
+    echo gettype($sum), '|', $sum, '|', $copy, "\n";
+}
+
+
+arithmetic($argc);
+arithmetic(1.5);
+arithmetic(PHP_INT_MAX);
+$left = json_decode('2');
+$right = json_decode('3');
+$difference = $left - $right;
+$product = $left * $right;
+echo $difference, '|', $product, '|', $left, '|', $right, "\n";
+"#;
+    let (plain, plain_heap) = run_fixture(source, false);
+    let (optimized, optimized_heap) = run_fixture(source, true);
+    assert_eq!(optimized, plain);
+    assert!(optimized.starts_with("integer|9|7\ninteger|18|7\ndouble|9.5|7.5\ndouble|19|7.5\n"), "{optimized}");
+    assert!(optimized.ends_with("-1|6|2|3\n"), "{optimized}");
+    assert!(optimized_heap.contains("HEAP DEBUG: leak summary: clean"), "{optimized_heap}");
+    assert!(plain_heap.contains("HEAP DEBUG: leak summary: clean"), "{plain_heap}");
+}
+
+/// Every target keeps dynamic arithmetic while the finalizer removes only its assignment copy.
+#[test]
+fn test_fresh_mixed_transfer_dynamic_all_target_eir() {
+    let dir = make_cli_test_dir("elephc_dynamic_transfer_targets");
+    let path = dir.join("main.php");
+    fs::write(&path, "<?php function add($x) { $sum = $x + 1; return $sum; } echo add($argc);")
+        .expect("write dynamic transfer fixture");
+    for target in ["macos-aarch64", "ios-arm64", "ios-sim-arm64", "linux-aarch64", "linux-x86_64"] {
+        for mode in ["on", "off"] {
+            let result = elephc_cli_command(&dir).args(["--emit-ir", "--target", target,
+                &format!("--ir-opt={mode}")]).arg(&path).output().expect("emit dynamic target EIR");
+            assert!(result.status.success(), "{target}: {}", String::from_utf8_lossy(&result.stderr));
+            let ir = String::from_utf8(result.stdout).expect("UTF-8 EIR");
+            let function = ir.split("function add(").nth(1).expect("add EIR")
+                .split("\n  }\n").next().unwrap();
+            let numeric_tail = function.split(" = mixed_numeric_binop ").nth(1).expect("dynamic arithmetic");
+            assert_eq!(numeric_tail.contains(" = mixed_clone "), mode == "off", "{target}, {mode}: {function}");
+        }
+    }
+    fs::remove_dir_all(dir).expect("remove dynamic target fixture");
+}
+
+/// A dynamic accumulator allocates its result and raw-operand box without an assignment copy.
+#[test]
+fn test_fresh_mixed_transfer_dynamic_allocation_budget() {
+    let source = r#"<?php
+function accumulate($seed, int $n): int {
+    $sum = $seed;
+    for ($i = 0; $i < $n; $i++) { $sum += $i; }
+    return (int)$sum;
+}
+echo accumulate($argc, 1000);
+"#;
+    let (out, heap) = run_fixture(source, true);
+    assert_eq!(out, "499501");
+    assert!(allocations(&heap) <= 2024, "{heap}");
+    assert!(heap.contains("HEAP DEBUG: leak summary: clean"), "{heap}");
+}

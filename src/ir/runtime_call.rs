@@ -65,6 +65,14 @@ pub enum RuntimeArgumentLayout {
 /// Typed runtime operation selected by backend-neutral EIR lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuntimeCallTarget {
+    /// Returns an owned string naming the currently running executable.
+    ExecutablePath,
+    /// Returns the unique live weak wrapper for an object, acquiring its returned owner.
+    WeakReferenceCreate,
+    /// Reads the stable identity of a validated boxed object or Closure.
+    WeakObjectId,
+    /// Returns a freshly boxed nullable referent without retaining it in the wrapper.
+    WeakReferenceGet,
     /// Initializes a builtin Throwable constructor without assuming a compact receiver layout.
     ThrowableInitialize,
     /// Appends an exception to the END of another's `previous` chain, as php-src's
@@ -76,6 +84,23 @@ pub enum RuntimeCallTarget {
     /// Fetches an intermediate array element in write context, installing an
     /// empty child container when the addressed parent slot is missing or null.
     ArrayFetchForWrite,
+    /// Fetches a parent whose key conversion was diagnosed by the preceding compound read.
+    ArrayFetchForWriteAlreadyDiagnosed,
+    /// Fetches through a pending append parent, preserving a payload-only survivor selected
+    /// before a diagnostic callback instead of separating it through ordinary COW.
+    PendingAppendFetchForWrite,
+    /// Fetches through a pending append parent after the compound read diagnosed its key.
+    PendingAppendFetchForWriteAlreadyDiagnosed,
+    /// Retains the concrete cell behind PHP wrappers and boxed caller-reference markers.
+    MixedCellResolveForWrite,
+    /// Checks whether exactly one of the selected array cell and its payload survives beyond
+    /// the pending compiler lease. Non-array cells stay active; older compiler ancestor leases
+    /// must already be retired.
+    MixedArrayCellHasLiveOwner,
+    /// Converts a PHP string-write offset, preserving catchable errors and conversion warnings.
+    StringWriteOffset,
+    /// Sends one complete PHP warning or deprecation line through the shared handler dispatcher.
+    WriteDiagnostic,
     /// Borrows a boxed PHP array and returns an independently owned hash for literal unpacking.
     /// Rejects non-array values without mutating the original cell or its payload.
     ArrayUnpackToHash,
@@ -126,6 +151,22 @@ impl RuntimeCallTarget {
     /// Returns the logical signature shared by EIR validation and backend lowering.
     pub fn signature(self) -> Option<RuntimeCallSignature> {
         match self {
+            RuntimeCallTarget::WeakObjectId => Some(RuntimeCallSignature::Fixed {
+                parameters: &[IrType::Heap(IrHeapKind::Mixed)],
+                result: IrType::I64,
+            }),
+            RuntimeCallTarget::WeakReferenceCreate => Some(RuntimeCallSignature::Fixed {
+                parameters: &[IrType::Heap(IrHeapKind::Mixed)],
+                result: IrType::Heap(IrHeapKind::Object),
+            }),
+            RuntimeCallTarget::WeakReferenceGet => Some(RuntimeCallSignature::Fixed {
+                parameters: &[IrType::Heap(IrHeapKind::Object)],
+                result: IrType::Heap(IrHeapKind::Mixed),
+            }),
+            RuntimeCallTarget::ExecutablePath => Some(RuntimeCallSignature::Fixed {
+                parameters: &[],
+                result: IrType::Str,
+            }),
             RuntimeCallTarget::ThrowableInitialize => Some(RuntimeCallSignature::Fixed {
                 parameters: &[IrType::Heap(IrHeapKind::Object), IrType::Str, IrType::I64, IrType::Heap(IrHeapKind::Mixed)],
                 result: IrType::Void,
@@ -134,9 +175,21 @@ impl RuntimeCallTarget {
                 parameters: &[IrType::Heap(IrHeapKind::Object), IrType::Heap(IrHeapKind::Object)],
                 result: IrType::Void,
             }),
-            RuntimeCallTarget::ArrayFetchForWrite => Some(RuntimeCallSignature::Polymorphic {
+            RuntimeCallTarget::ArrayFetchForWrite
+            | RuntimeCallTarget::ArrayFetchForWriteAlreadyDiagnosed
+            | RuntimeCallTarget::PendingAppendFetchForWrite
+            | RuntimeCallTarget::PendingAppendFetchForWriteAlreadyDiagnosed => Some(RuntimeCallSignature::Polymorphic {
                 min_operands: 2,
                 max_operands: Some(2),
+            }),
+            RuntimeCallTarget::StringWriteOffset => Some(RuntimeCallSignature::Polymorphic {
+                min_operands: 1, max_operands: Some(1),
+            }),
+            RuntimeCallTarget::WriteDiagnostic => Some(RuntimeCallSignature::Fixed {
+                parameters: &[IrType::Str], result: IrType::Void,
+            }),
+            RuntimeCallTarget::MixedArrayCellHasLiveOwner => Some(RuntimeCallSignature::Fixed {
+                parameters: &[IrType::Heap(IrHeapKind::Mixed)], result: IrType::I64,
             }),
             RuntimeCallTarget::MixedCellPromoteToHash(_)
             | RuntimeCallTarget::MixedCellPromoteAttachedToHash(_)
@@ -146,7 +199,7 @@ impl RuntimeCallTarget {
                     result: IrType::Heap(IrHeapKind::Hash),
                 })
             }
-            RuntimeCallTarget::MixedCellClone => Some(RuntimeCallSignature::Fixed {
+            RuntimeCallTarget::MixedCellClone | RuntimeCallTarget::MixedCellResolveForWrite => Some(RuntimeCallSignature::Fixed {
                 parameters: &[IrType::Heap(IrHeapKind::Mixed)],
                 result: IrType::Heap(IrHeapKind::Mixed),
             }),
@@ -199,9 +252,22 @@ impl RuntimeCallTarget {
     /// Returns the stable backend-neutral spelling used by textual EIR.
     pub fn as_eir(self) -> &'static str {
         match self {
+            RuntimeCallTarget::WeakObjectId => "object.weak_identity",
+            RuntimeCallTarget::WeakReferenceCreate => "object.weak_reference_create",
+            RuntimeCallTarget::WeakReferenceGet => "object.weak_reference_get",
+            RuntimeCallTarget::ExecutablePath => "process.executable_path",
             RuntimeCallTarget::ThrowableInitialize => "object.throwable_initialize",
             RuntimeCallTarget::ExceptionChain => "object.exception_chain",
             RuntimeCallTarget::ArrayFetchForWrite => "array.fetch_for_write",
+            RuntimeCallTarget::ArrayFetchForWriteAlreadyDiagnosed => "array.fetch_for_write_already_diagnosed",
+            RuntimeCallTarget::PendingAppendFetchForWrite => "array.pending_append_fetch_for_write",
+            RuntimeCallTarget::PendingAppendFetchForWriteAlreadyDiagnosed => {
+                "array.pending_append_fetch_for_write_already_diagnosed"
+            }
+            RuntimeCallTarget::StringWriteOffset => "string.write_offset",
+            RuntimeCallTarget::MixedCellResolveForWrite => "array.mixed_cell_resolve_for_write",
+            RuntimeCallTarget::MixedArrayCellHasLiveOwner => "array.mixed_cell_has_live_owner",
+            RuntimeCallTarget::WriteDiagnostic => "diagnostic.write",
             RuntimeCallTarget::ArrayUnpackToHash => "array.unpack_to_hash",
             RuntimeCallTarget::MixedCellPromoteToHash(ArrayKeySort::Ascending) => {
                 "array.mixed_cell_promote_to_hash_ksort"

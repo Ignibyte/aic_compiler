@@ -1443,7 +1443,7 @@ echo json_validate(123) ? "I" : "B";
 "#;
     assert_eq!(
         compile_and_run_ir_backend("json_validation_builtins", source),
-        "JDFok:T:4:Syntax error:0:C:M:I"
+        "JDFok:T:4:Syntax error near location 1:1:0:C:M:I"
     );
 }
 
@@ -1480,7 +1480,7 @@ echo gettype(json_decode("{}", null, 512, JSON_OBJECT_AS_ARRAY));
 "#;
     assert_eq!(
         compile_and_run_ir_backend("json_decode_builtins", source),
-        "JADFarray|array:Ada:2|object:Ada|42|4:Syntax error near location 1:9|array"
+        "JADFarray|array:Ada:2|object:Ada|42|4:Syntax error near location 1:1|array"
     );
 }
 
@@ -4386,7 +4386,7 @@ emit_fields(["name" => "Ada", "email" => "ada@example.test"]);
     );
 }
 
-/// Verifies indexed writes into Mixed arrays box concrete values before storage.
+/// Verifies Mixed writes box values while sparse integer keys do not materialize null gaps.
 #[test]
 fn ir_backend_handles_mixed_indexed_array_set() {
     let source = r#"<?php
@@ -4408,7 +4408,7 @@ echo is_null($a[5]) ? "N" : "bad";
 "#;
     assert_eq!(
         compile_and_run_ir_backend("mixed_indexed_array_set", source),
-        "6:7:z:ok:G:N"
+        "4:7:z:ok:G:N"
     );
 }
 

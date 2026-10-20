@@ -205,7 +205,10 @@ fn value_is_scratch_string(ctx: &FunctionContext<'_>, value: ValueId) -> Result<
     if inst.op == Op::RuntimeCall {
         let result_is_releasable = match inst.immediate {
             Some(crate::ir::Immediate::RuntimeCall(
-                crate::ir::RuntimeCallTarget::ArrayFetchForWrite,
+                crate::ir::RuntimeCallTarget::ArrayFetchForWrite
+                    | crate::ir::RuntimeCallTarget::ArrayFetchForWriteAlreadyDiagnosed
+                    | crate::ir::RuntimeCallTarget::PendingAppendFetchForWrite
+                    | crate::ir::RuntimeCallTarget::PendingAppendFetchForWriteAlreadyDiagnosed,
             )) => false,
             Some(crate::ir::Immediate::RuntimeCall(
                 crate::ir::RuntimeCallTarget::Function(target),
@@ -219,6 +222,9 @@ fn value_is_scratch_string(ctx: &FunctionContext<'_>, value: ValueId) -> Result<
             ) || matches!(target, crate::ir::RuntimeFnId::GetClass | crate::ir::RuntimeFnId::GetParentClass),
             Some(crate::ir::Immediate::RuntimeCall(
                 crate::ir::RuntimeCallTarget::UnaryString(_),
+            )) => true,
+            Some(crate::ir::Immediate::RuntimeCall(
+                crate::ir::RuntimeCallTarget::ExecutablePath,
             )) => true,
             Some(crate::ir::Immediate::RuntimeCall(
                 crate::ir::RuntimeCallTarget::Pcntl(target),

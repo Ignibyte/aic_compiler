@@ -12,6 +12,9 @@
 //!   immediately after the foreign call returns.
 //! - Callable extern parameters lower to C function pointers. Descriptor-backed
 //!   callables use generated trampolines when the callable signature is known.
+//! - Extern returns are normalized before the EIR store: a C `int` sign-extends from
+//!   32 bits and a C `bool` keeps only its low byte, because both ABIs leave the upper
+//!   return-register bits unspecified.
 
 use crate::codegen::abi;
 use crate::codegen::callable_descriptor;
@@ -537,7 +540,11 @@ fn normalize_extern_return(ctx: &mut FunctionContext<'_>, return_ty: &PhpType) -
             emit_sign_extend_i32_result(ctx);
             Ok(())
         }
-        PhpType::Bool | PhpType::Float | PhpType::Pointer(_) => Ok(()),
+        PhpType::Bool => {
+            emit_zero_extend_bool_result(ctx);
+            Ok(())
+        }
+        PhpType::Float | PhpType::Pointer(_) => Ok(()),
         PhpType::Str => {
             abi::emit_call_label(ctx.emitter, "__rt_cstr_to_str");
             Ok(())
@@ -617,6 +624,21 @@ fn emit_sign_extend_i32_result(ctx: &mut FunctionContext<'_>) {
         }
         Arch::X86_64 => {
             ctx.emitter.instruction("movsxd rax, eax");                         // sign-extend the C int return into PHP's 64-bit integer result
+        }
+    }
+}
+
+/// Zero-extends a C `bool` return into the target integer result register.
+///
+/// Both supported ABIs define only the low byte of a `bool` return; the upper register
+/// bits are whatever the callee left there, so PHP truthiness must never see them.
+fn emit_zero_extend_bool_result(ctx: &mut FunctionContext<'_>) {
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.emitter.instruction("and w0, w0, #0xff");                       // keep only the C bool byte; writing w0 clears the upper half of x0
+        }
+        Arch::X86_64 => {
+            ctx.emitter.instruction("movzx eax, al");                           // keep only the C bool byte; writing eax clears the upper half of rax
         }
     }
 }

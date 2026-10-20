@@ -1004,3 +1004,97 @@ mod tests {
         assert!(!is_generated_local_name(SYNTHETIC_PLACE_LOCAL_STEM));
     }
 }
+
+/// Identifies compiler-only aliases to ordinary stored cells during append updates.
+const APPEND_UPDATE_ALIAS_PREFIX: &str = "__elephc_append_update_cell_";
+
+/// Constructs an unforgeable temporary-cell alias and records its write role and storage shape.
+pub(crate) fn generated_append_update_alias(
+    span: crate::span::Span,
+    index: usize,
+    leaf: bool,
+    associative_parent: bool,
+) -> String {
+    let role = if leaf {
+        "leaf"
+    } else if associative_parent {
+        "parent_hash"
+    } else {
+        "parent"
+    };
+    generated_local_name(&format!("{}{}_{}_{}_{}_{}", APPEND_UPDATE_ALIAS_PREFIX, span.source_id(), span.line, span.col, index, role))
+}
+
+/// Returns the compiler cell-alias role; PHP source cannot spell the generated-local suffix.
+pub(crate) fn append_update_alias_kind(name: &str) -> Option<bool> {
+    let stem = name.strip_suffix(GENERATED_LOCAL_MARKER)?;
+    if !stem.starts_with(APPEND_UPDATE_ALIAS_PREFIX) { return None; }
+    if stem.ends_with("_leaf") { Some(true) }
+    else if stem.ends_with("_parent") || stem.ends_with("_parent_hash") { Some(false) }
+    else { None }
+}
+
+/// Returns whether a pending parent must begin in associative storage before callbacks run.
+pub(crate) fn append_update_alias_prefers_hash(name: &str) -> bool {
+    name.strip_suffix(GENERATED_LOCAL_MARKER)
+        .is_some_and(|stem| stem.starts_with(APPEND_UPDATE_ALIAS_PREFIX) && stem.ends_with("_parent_hash"))
+}
+
+/// Distinguishes continuation after an intermediate loss from final-place cancellation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AppendLiveGuardRole { ParentPre, ParentPost, FinalPre, FinalPost }
+
+impl AppendLiveGuardRole {
+    /// Encodes the role in the existing unforgeable generated-local protocol.
+    fn suffix(self) -> &'static str {
+        match self {
+            Self::ParentPre => "parent_pre", Self::ParentPost => "parent_post",
+            Self::FinalPre => "final_pre", Self::FinalPost => "final_post",
+        }
+    }
+
+    /// Only loss of the final selected place cancels the PHP expression.
+    pub(crate) fn is_final(self) -> bool { matches!(self, Self::FinalPre | Self::FinalPost) }
+}
+
+/// Constructs an unread marker around conversion or a diagnosed parent read.
+pub(crate) fn generated_append_live_guard(
+    span: crate::span::Span, index: usize, role: AppendLiveGuardRole,
+) -> String {
+    generated_local_name(&format!(
+        "__elephc_append_live_guard_{}_{}_{}_{}_{}",
+        span.source_id(), span.line, span.col, index, role.suffix(),
+    ))
+}
+
+/// Decodes only a compiler-generated marker whose complete role is known.
+pub(crate) fn append_live_guard_role(name: &str) -> Option<AppendLiveGuardRole> {
+    if !is_append_live_guard(name) { return None; }
+    let stem = name.strip_suffix(GENERATED_LOCAL_MARKER)?;
+    [AppendLiveGuardRole::ParentPre, AppendLiveGuardRole::ParentPost,
+        AppendLiveGuardRole::FinalPre, AppendLiveGuardRole::FinalPost]
+        .into_iter().find(|role| stem.ends_with(role.suffix()))
+}
+
+/// Recognizes only compiler-generated guards, never a PHP variable with a similar name.
+pub(crate) fn is_append_live_guard(name: &str) -> bool {
+    name.strip_suffix(GENERATED_LOCAL_MARKER)
+        .is_some_and(|stem| stem.starts_with("__elephc_append_live_guard_"))
+}
+
+/// Constructs the unforgeable result local for a prefix increment of an append target.
+pub(crate) fn generated_append_prefix_increment_result(
+    span: crate::span::Span,
+    index: usize,
+) -> String {
+    generated_local_name(&format!(
+        "__elephc_append_prefix_result_{}_{}_{}_{}",
+        span.source_id(), span.line, span.col, index,
+    ))
+}
+
+/// Recognizes only parser-generated prefix-increment append result locals.
+pub(crate) fn is_append_prefix_increment_result(name: &str) -> bool {
+    name.strip_suffix(GENERATED_LOCAL_MARKER)
+        .is_some_and(|stem| stem.starts_with("__elephc_append_prefix_result_"))
+}

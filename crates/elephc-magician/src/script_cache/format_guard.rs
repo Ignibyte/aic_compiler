@@ -90,7 +90,11 @@ mod tests {
     /// now retain member PHPDoc types that earlier parsers silently omitted.
     /// BUMPED TO 16 with the same fingerprint: complete-list lookahead preserves class
     /// comparisons, invalidating stored parse failures without changing the serialized shape.
-    const RECORDED_FINGERPRINT: u64 = 2604479976000790958;
+    /// BUMPED TO 18: retained readonly setter contracts coexist with generic declarations.
+    /// Format 17 belongs to the distinct native deferred-default expression layout.
+    /// BUMPED TO 19: retained readonly setter contracts and main's caller-scope access
+    /// mask need a fresh cache identity for their combined serialized layout.
+    const RECORDED_FINGERPRINT: u64 = 13881816518370807753;
 
     /// Returns a stable fingerprint of every source the stored format depends on.
     ///

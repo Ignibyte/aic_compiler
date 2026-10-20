@@ -31,7 +31,7 @@ extern "SDL2" {
 |---|---|---|
 | `int` | `int64_t` / `long` | integer argument register |
 | `float` | `double` | floating-point argument register |
-| `bool` | `int` (0/1) | integer argument register |
+| `bool` | `bool` (`_Bool`, one byte) | integer argument register |
 | `string` | `char*` (auto null-terminated) | integer argument register |
 | `ptr` | `void*` | integer argument register |
 | `ptr<T>` | `T*` | integer argument register |
@@ -42,6 +42,10 @@ Argument registers follow the selected target's C ABI: AArch64 uses
 `x0`-`x7` for integers/pointers and `d0`-`d7` for doubles, while Linux
 x86_64 uses the System V registers (`rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`
 for integers/pointers and `xmm0`-`xmm7` for doubles).
+
+A C `bool` return keeps only the low byte of the return register. Both ABIs
+leave the upper bits unspecified, so a callee may leave anything there and
+elephc zero-extends the byte before the value is used as a PHP `bool`.
 
 `callable` in an `extern function` signature is a special FFI-only path. The
 call site can provide either a string-literal elephc function name (resolved

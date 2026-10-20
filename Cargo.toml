@@ -61,7 +61,7 @@ sha2 = "0.10"
 # `elephc monitor https://…` verifies the certificate before speaking the probe
 # protocol. Same rustls/ring pair the TLS bridge already pins, so the workspace
 # keeps one TLS stack and stays musl-friendly for the Docker test images.
-rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
+rustls = { version = "0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
 webpki-roots = "0.26"
 toml = "0.9"
 toml_edit = "0.25"
@@ -117,7 +117,7 @@ flate2 = "1"
 serde_json = "1"
 # The streams codegen tests host a local HTTPS fixture so https:// wrapper
 # success coverage does not depend on outbound network access.
-rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }
+rustls = { version = "0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
 rustls-pemfile = "2"
 
 [features]
@@ -167,12 +167,6 @@ pdo-cubrid = ["elephc-pdo/cubrid"]
 # process), and what makes `cargo build --example gen_builtins --features curl`
 # export the curl rows into the generated builtin documentation.
 curl = ["elephc-magician/curl", "elephc-builtin-contract/curl"]
-
-# PDO needs two mysql client controls that upstream 28.0.0 does not expose:
-# caller-supplied authentication RSA keys and rustls cipher-suite selection.
-# Keep the small audited patch in-tree until those options land upstream.
-[patch.crates-io]
-mysql = { path = "vendor/mysql-28.0.0" }
 
 # Local test-speed tuning. The dev profile (which `test` inherits) keeps full
 # `debug = 2` info by default, which inflates both rustc codegen and the link of

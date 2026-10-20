@@ -17,6 +17,7 @@ mod codegen_support;
 mod compiler_stack;
 mod conditional;
 mod curl_prelude;
+mod dom_html_prelude;
 mod errors;
 mod eval_aot;
 mod exports;
@@ -25,6 +26,8 @@ mod func_args;
 mod generics;
 mod global_decls;
 mod hash_prelude;
+mod core_prelude;
+mod bcmath_prelude;
 mod image_prelude;
 mod intrinsics;
 #[allow(dead_code, unused_imports)]

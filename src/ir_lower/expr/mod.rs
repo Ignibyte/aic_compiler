@@ -38,12 +38,17 @@ mod ref_place_args;
 mod boxed_user_sort;
 mod scalar_literals;
 mod numeric_binary;
+pub(crate) mod object_operators;
 mod string_concat;
 mod comparisons;
 mod unary_logic;
 mod lazy_branches;
 mod pipe;
 mod assignments;
+mod assignment_rhs_capture;
+mod weak_map_places;
+mod static_property_updates;
+use static_property_updates::{finish_static_compound_receiver, guard_static_compound_property_read};
 mod function_calls;
 mod eval_barriers;
 mod lazy_isset;
@@ -62,6 +67,8 @@ mod builtin_special_args;
 mod call_arg_coercion;
 mod positional_spreads;
 mod dynamic_spreads;
+mod dynamic_constructors;
+use dynamic_constructors::*;
 mod named_args;
 mod named_spreads;
 mod variadic_args;
@@ -70,6 +77,9 @@ mod indexed_array_literals;
 mod array_cast_source;
 mod assoc_array_literals;
 mod match_expr;
+/// Scoped stored-cell leases for compiler-generated compound append updates.
+mod append_updates;
+pub(crate) use append_updates::store_alias as store_append_update_cell;
 mod array_access;
 mod array_access_types;
 mod ternary_cast;
@@ -78,6 +88,7 @@ mod closure_calls;
 mod descriptor_calls;
 mod object_construction;
 mod property_access;
+mod property_probes;
 mod reference_returns;
 use reference_returns::{
     begin_reference_return_call, finish_reference_return_call, finish_reference_return_value,
@@ -154,6 +165,7 @@ use closure_calls::*;
 use descriptor_calls::*;
 use object_construction::*;
 use property_access::*;
+use property_probes::*;
 use method_calls::*;
 use reflection_class_calls::*;
 use reflection_method_calls::*;
@@ -176,8 +188,11 @@ pub(crate) use callable_resolution::{
     is_bound_closure_assignment_shape, lower_bound_closure_for_assignment,
 };
 pub(crate) use call_operand_owners::{
-    pin_in_flight_owners, retire_owned_call_operand, root_owned_call_operand, unpin_in_flight_owners,
+    pin_in_flight_owners, register_owned_call_operand, retire_owned_call_operand,
+    root_owned_call_operand, unpin_in_flight_owners, unregister_owned_call_operand,
+    PinnedInFlightOwner,
 };
+pub(crate) use property_access::singular_object_class;
 pub(crate) use callable_tracking::{
     lower_callable_array_for_assignment, reflection_arg_array_binding_for_expr,
     reflection_class_binding_for_expr, reflection_function_binding_for_expr,
@@ -192,10 +207,15 @@ pub(crate) use indexed_array_literals::{
 };
 pub(crate) use array_access::{
     array_access_element_result_type, index_expr_key_type,
-    lower_array_access_from_lowered_receiver, lower_by_ref_foreach_element_source,
+    lower_array_access_from_lowered_receiver,
+    lower_by_ref_foreach_element_source,
 };
 pub(crate) use array_access_types::type_satisfies_array_access_for_ir;
 pub(crate) use assignments::lower_null_coalesce_update_stmt;
+pub(crate) use weak_map_places::lower_weak_map_incdec_stmt;
+pub(crate) use weak_map_places::lower_weak_map_append;
+pub(crate) use weak_map_places::lower_weak_map_denied_append;
+use weak_map_places::lower_weak_map_incdec_expression;
 pub(crate) use instanceof_coercions::{
     coerce_array_key_to_int_at_span, coerce_to_int_at_span,
 };
@@ -206,6 +226,8 @@ pub(crate) use property_access::{
     prepare_scoped_addressable_ref_array_receiver, static_property_result_type,
 };
 pub(crate) use property_fetch_for_write::{
+    is_static_property_write_chain, lower_static_property_write_chain,
+    lower_static_property_write_chain_with_operands,
     by_ref_foreach_property_source_is_addressable, lower_by_ref_foreach_property_source,
     lower_nested_assignment_property_source,
 };
@@ -711,15 +733,7 @@ fn lower_initialized_property_empty(
 
     ctx.builder.position_at_end(read_block);
     let read_value = lower_property_get_from_value(ctx, object, property, Op::PropGet, arg);
-    let construct_name = ctx.intern_function_name(construct);
-    let empty_value = ctx.emit_value(
-        Op::LanguageConstructCall,
-        vec![read_value.value],
-        Some(Immediate::Data(construct_name)),
-        PhpType::Bool,
-        effects_lookup::language_construct_effects(construct),
-        Some(arg.span),
-    );
+    let empty_value = lazy_isset::lower_empty_of_probed_value(ctx, read_value, construct, arg);
     store_value_into_temp(ctx, &temp_name, PhpType::Bool, empty_value, arg.span);
     branch_to(ctx, merge);
 
@@ -771,15 +785,7 @@ fn lower_initialized_static_property_empty(
 
     ctx.builder.position_at_end(read_block);
     let read_value = lower_static_property_get(ctx, receiver, property, arg);
-    let construct_name = ctx.intern_function_name(construct);
-    let empty_value = ctx.emit_value(
-        Op::LanguageConstructCall,
-        vec![read_value.value],
-        Some(Immediate::Data(construct_name)),
-        PhpType::Bool,
-        effects_lookup::language_construct_effects(construct),
-        Some(arg.span),
-    );
+    let empty_value = lazy_isset::lower_empty_of_probed_value(ctx, read_value, construct, arg);
     store_value_into_temp(ctx, &temp_name, PhpType::Bool, empty_value, arg.span);
     branch_to(ctx, merge);
 
@@ -872,266 +878,6 @@ fn rewrite_literal_param_bindings(sig: &FunctionSig, args: &[Expr]) -> Option<Ve
     rewritten
 }
 
-/// Lowers `new $class(...)` as a class-name dispatch chain when the call shape needs
-/// per-class argument planning.
-///
-/// Returns `None` when the raw operand list is already correct for every class the
-/// runtime dispatch could select, which keeps today's operand ABI for the common
-/// exact-arity positional call. Otherwise the class name is evaluated once into a hidden
-/// temporary, compared case-insensitively against each candidate class, and each matching
-/// branch lowers a fixed-class `new` so named arguments, defaults for omitted optional
-/// parameters, and runtime spreads all go through `plan_call_args`. The final `else`
-/// branch keeps the generic dynamic-new opcode so runtime-registry classes, the eval
-/// bridge, and PHP's class-not-found fatal behave exactly as before.
-fn lower_new_dynamic_planned_dispatch(
-    ctx: &mut LoweringContext<'_, '_>,
-    name_expr: &Expr,
-    args: &[Expr],
-    expr: &Expr,
-) -> Option<LoweredValue> {
-    let candidates = dynamic_new_planned_candidate_classes(ctx, args);
-    if candidates.is_empty() {
-        return None;
-    }
-
-    let name_value = lower_expr(ctx, name_expr);
-    let name_type = match ctx.builder.value_php_type(name_value.value).codegen_repr() {
-        PhpType::Str => PhpType::Str,
-        _ => PhpType::Mixed,
-    };
-    let name_temp = ctx.declare_owned_hidden_temp(name_type.clone());
-    store_value_into_temp(ctx, &name_temp, name_type.clone(), name_value, expr.span);
-    let name_var = Expr::new(ExprKind::Variable(name_temp.clone()), name_expr.span);
-
-    let result_temp = ctx.declare_owned_hidden_temp(PhpType::Mixed);
-    let merge = ctx
-        .builder
-        .create_named_block("new.dynamic.planned.merge", Vec::new());
-
-    for class_name in &candidates {
-        let match_block = ctx
-            .builder
-            .create_named_block("new.dynamic.planned.match", Vec::new());
-        let next_block = ctx
-            .builder
-            .create_named_block("new.dynamic.planned.next", Vec::new());
-        let condition = dynamic_new_class_name_match_expr(
-            &name_var,
-            class_name,
-            name_type == PhpType::Str,
-            name_expr.span,
-        );
-        let condition = lower_expr(ctx, &condition);
-        let condition = coerce_to_int_at_span(ctx, condition, Some(expr.span));
-        ctx.builder.terminate(Terminator::CondBr {
-            cond: condition.value,
-            then_target: match_block,
-            then_args: Vec::new(),
-            else_target: next_block,
-            else_args: Vec::new(),
-        });
-
-        ctx.builder.position_at_end(match_block);
-        let class = Name::unqualified(class_name.clone());
-        let object = lower_new_object(ctx, &class, args, expr);
-        store_value_into_temp(ctx, &result_temp, PhpType::Mixed, object, expr.span);
-        branch_to(ctx, merge);
-
-        ctx.builder.position_at_end(next_block);
-    }
-
-    let name_value = ctx.load_local(&name_temp, Some(expr.span));
-    let fallback = lower_new_dynamic_generic(ctx, name_value, args, expr);
-    store_value_into_temp(ctx, &result_temp, PhpType::Mixed, fallback, expr.span);
-    branch_to(ctx, merge);
-
-    ctx.builder.position_at_end(merge);
-    ctx.clear_owned_hidden_temp(&name_temp, Some(expr.span));
-    Some(take_owned_temp(ctx, &result_temp, expr.span))
-}
-
-/// Builds the case-insensitive class-name test for one dispatch-chain branch.
-///
-/// PHP class names are case-insensitive, so the comparison goes through `strcasecmp`.
-/// A class-name expression that is not statically a string is guarded by `is_string`
-/// first: `new $object()` and other non-string operands must keep falling through to the
-/// generic dynamic-new opcode instead of being stringified here.
-fn dynamic_new_class_name_match_expr(
-    name_var: &Expr,
-    class_name: &str,
-    name_is_string: bool,
-    span: Span,
-) -> Expr {
-    let compare = Expr::new(
-        ExprKind::BinaryOp {
-            left: Box::new(Expr::new(
-                ExprKind::FunctionCall {
-                    name: Name::unqualified("strcasecmp"),
-                    args: vec![
-                        name_var.clone(),
-                        Expr::new(ExprKind::StringLiteral(class_name.to_string()), span),
-                    ],
-                },
-                span,
-            )),
-            op: BinOp::StrictEq,
-            right: Box::new(Expr::new(ExprKind::IntLiteral(0), span)),
-        },
-        span,
-    );
-    if name_is_string {
-        return compare;
-    }
-    Expr::new(
-        ExprKind::BinaryOp {
-            left: Box::new(Expr::new(
-                ExprKind::FunctionCall {
-                    name: Name::unqualified("is_string"),
-                    args: vec![name_var.clone()],
-                },
-                span,
-            )),
-            op: BinOp::And,
-            right: Box::new(compare),
-        },
-        span,
-    )
-}
-
-/// Returns the classes whose constructor would receive different arguments than the raw
-/// dynamic-new operand list, in deterministic order.
-///
-/// Only classes that EIR can construct as a fixed class are considered: compiler-internal
-/// classes, runtime-managed builtin classes, and classes without an emitted constructor body
-/// keep the generic opcode. A class qualifies when the shared call-argument rules accept the
-/// call for its constructor, `lower_args_with_signature` is known to resolve it to exactly one
-/// operand per declared parameter, *and* the result differs from the raw source arguments —
-/// that is exactly the set of classes the generic opcode's exact-arity candidate match would
-/// otherwise silently skip or feed in source order.
-fn dynamic_new_planned_candidate_classes(
-    ctx: &LoweringContext<'_, '_>,
-    args: &[Expr],
-) -> Vec<String> {
-    if args.is_empty() {
-        return Vec::new();
-    }
-    let constructor_key = php_symbol_key("__construct");
-    let mut candidates = ctx
-        .classes
-        .iter()
-        .filter(|(class_name, class_info)| {
-            dynamic_new_class_is_planning_candidate(
-                ctx,
-                class_name,
-                class_info,
-                &constructor_key,
-                args,
-            )
-        })
-        .map(|(class_name, _)| class_name.clone())
-        .collect::<Vec<_>>();
-    candidates.sort();
-    candidates
-}
-
-/// Returns true when a dynamic `new` should construct `class_name` through a fixed-class
-/// branch instead of the generic dynamic-new opcode.
-fn dynamic_new_class_is_planning_candidate(
-    ctx: &LoweringContext<'_, '_>,
-    class_name: &str,
-    class_info: &crate::types::ClassInfo,
-    constructor_key: &str,
-    args: &[Expr],
-) -> bool {
-    if class_info.is_abstract || ctx.enums.contains_key(class_name) {
-        return false;
-    }
-    if php_symbol_key(class_name).starts_with("__elephc") {
-        return false;
-    }
-    if crate::codegen_support::dynamic_new::known_dynamic_new_builtin_class_names()
-        .contains(&class_name)
-    {
-        return false;
-    }
-    // Runtime-registered builtin classes carry no source constructor body, so a fixed-class
-    // `ObjectNew` branch would reference a method symbol EIR never emits.
-    if class_info.declaration_span == Span::dummy() {
-        return false;
-    }
-    if !class_info
-        .method_decls
-        .iter()
-        .any(|method| php_symbol_key(&method.name) == constructor_key && method.has_body)
-    {
-        return false;
-    }
-    let Some(sig) = class_info.methods.get(constructor_key) else {
-        return false;
-    };
-    if sig.variadic.is_some() {
-        return false;
-    }
-    if !dynamic_new_args_need_planning(sig, args) {
-        return false;
-    }
-    dynamic_new_args_lower_to_exact_arity(ctx, sig, args)
-}
-
-/// Returns true when a constructor signature would reshape the source argument list.
-///
-/// The generic dynamic-new opcode forwards operands positionally and only selects a
-/// candidate whose constructor arity matches the operand count exactly, so any named
-/// argument, spread, or omitted optional parameter needs the planned path.
-fn dynamic_new_args_need_planning(sig: &FunctionSig, args: &[Expr]) -> bool {
-    crate::types::call_args::has_named_args(args)
-        || args.iter().any(is_spread_arg)
-        || sig.params.len() != args.len()
-}
-
-/// Returns true when `lower_args_with_signature` resolves this call to exactly one operand
-/// per declared constructor parameter.
-///
-/// The fixed-class `ObjectNew` opcode is arity-exact, and the shared argument lowering falls
-/// back to a raw source-order operand list for call shapes it cannot resolve (dynamic
-/// associative spreads, multiple spreads, spreads that do not feed the parameter tail). Those
-/// shapes must keep the generic dynamic-new opcode rather than produce a mis-arity call.
-fn dynamic_new_args_lower_to_exact_arity(
-    ctx: &LoweringContext<'_, '_>,
-    sig: &FunctionSig,
-    args: &[Expr],
-) -> bool {
-    let regular_param_count = crate::types::call_args::regular_param_count(sig);
-    if crate::types::call_args::has_named_args(args) {
-        let Ok(plan) =
-            crate::types::call_args::plan_call_args_with_regular_param_count_and_assoc_spreads(
-                sig,
-                args,
-                args[0].span,
-                regular_param_count,
-                false,
-                true,
-                &assoc_spread_sources(ctx, args),
-            )
-        else {
-            return false;
-        };
-        return !plan.has_spread_args() && plan.regular_args.len() == sig.params.len();
-    }
-    if args.iter().any(is_spread_arg) {
-        return single_trailing_indexed_spread_arg(ctx, args)
-            .is_some_and(|spread_idx| spread_idx <= regular_param_count);
-    }
-    if args.len() > sig.params.len() {
-        return false;
-    }
-    (args.len()..sig.params.len()).all(|index| {
-        sig.defaults
-            .get(index)
-            .is_some_and(|default| default.is_some())
-    })
-}
-
 /// Lowers one of PHP's six internal-array-pointer builtins as a cursor-slot operation.
 ///
 /// The builtin is selected through the registry's typed
@@ -1210,28 +956,6 @@ fn lower_array_internal_pointer(
         effects_lookup::runtime_effects(),
         Some(expr.span),
     ))
-}
-
-/// Emits the generic runtime class-name dispatch for `new $class(...)`.
-///
-/// The class-name operand is already lowered so both the direct path and the
-/// planned-dispatch fallback branch can share it.
-fn lower_new_dynamic_generic(
-    ctx: &mut LoweringContext<'_, '_>,
-    name_value: LoweredValue,
-    args: &[Expr],
-    expr: &Expr,
-) -> LoweredValue {
-    let mut operands = vec![name_value.value];
-    operands.extend(lower_args(ctx, args));
-    ctx.emit_value(
-        Op::DynamicObjectNewMixed,
-        operands,
-        None,
-        PhpType::Mixed,
-        Op::DynamicObjectNewMixed.default_effects(),
-        Some(expr.span),
-    )
 }
 
 pub(crate) use indexed_array_literals::ir_array_storage_type;

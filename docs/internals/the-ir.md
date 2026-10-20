@@ -1815,12 +1815,15 @@ finished. `--ir-opt=off` skips `optimize_module`, so the copy lowered for the
 assignment stays in the module.
 
 The rewrite removes a `MixedClone` of a fresh owned `ICheckedAdd`,
-`ICheckedSub`, or `ICheckedMul` result when that source is an owned
+`ICheckedSub`, `ICheckedMul`, or dynamic `MixedNumericBinop` add/sub/mul result.
+The dynamic helpers always box a new integer or float result, including PHP
+overflow promotion; `Pow` and other producers remain outside this proof.
+The source must be an owned
 `Heap(Mixed)` value with exactly two uses: the clone, and the next non-`nop`
 instruction in the same block, which must be a `Release` of the source with no
 immediate. The producer has to precede the clone in that block. The clone result
 is also an owned `Heap(Mixed)` value. Uses of the clone result are redirected to
-the source, and the clone and that release become `nop`. The checked operation
+the source, and the clone and that release become `nop`. The arithmetic operation
 stays in place, so an overflow still promotes through the boxed result. Borrowed
 sources, acquired sources, shared sources, any other extra observation, and a
 release in another block keep the copy.
