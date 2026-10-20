@@ -399,6 +399,10 @@ impl Checker {
                 }
             }
             _ if guard_matches(current, target) => current.clone(),
+            // An array guard on a value of unknown shape (`is_array($mixed)`) gives the type a
+            // bare `array` declaration has. On a concrete non-array type the branch is dead, and
+            // the conservative fallback keeps a reassignment there legal.
+            PhpType::Mixed if matches!(target, GuardTarget::AnyArray) => PhpType::php_array(),
             _ => target.fallback_type(),
         }
     }

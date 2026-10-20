@@ -927,3 +927,42 @@ echo f(1, new H()), "|", f(3, [1, 2]), "|", g(1, new H()), "|", g(3, [1]), "\n";
     );
     assert_eq!(out, "7|2|object|1:array\n");
 }
+
+/// Verifies an `is_array()` guard on the left of `&&` narrows a `mixed` value in the guarded body,
+/// so it can be returned as `array` there.
+#[test]
+fn test_is_array_conjunction_narrows_a_mixed_value() {
+    let out = compile_and_run(
+        r#"<?php
+function asList(mixed $v): array
+{
+    if (is_array($v) && count($v) > 0) {
+        return $v;
+    }
+    return [];
+}
+$data = json_decode('[1,2,3]', true);
+echo count(asList($data)), "\n";
+"#,
+    );
+    assert_eq!(out, "3\n");
+}
+
+/// Verifies a `for` condition guard (`is_array($row)`) narrows the loop body, as a `while`
+/// condition does.
+#[test]
+fn test_for_condition_guard_narrows_the_body() {
+    let out = compile_and_run(
+        r#"<?php
+function width(array $row): int { return count($row); }
+$rows = [[1, 2], [3], 'x'];
+$i = 0;
+$total = 0;
+for ($row = $rows[$i] ?? null; is_array($row); $row = $rows[++$i] ?? null) {
+    $total += width($row);
+}
+echo $total, "\n";
+"#,
+    );
+    assert_eq!(out, "3\n");
+}

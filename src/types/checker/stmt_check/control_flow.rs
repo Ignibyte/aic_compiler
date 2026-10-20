@@ -1162,7 +1162,35 @@ impl Checker {
         if let Some(s) = update {
             self.check_stmt(s, env)?;
         }
+        // As for `while`: the condition is tested before every iteration, so its guard holds on
+        // entry to the body (`for ($row = …; is_array($row); …)`), and is dropped afterwards.
+        let guard = match condition {
+            Some(c) => self.guard_narrowing(c, env)?,
+            None => None,
+        };
+        let saved = guard
+            .as_ref()
+            .map(|g| (g.var.clone(), env.get(&g.var).cloned()));
+        let saved_origin = guard
+            .as_ref()
+            .map(|g| self.enter_flow_narrowing(&g.var, env.get(&g.var), &g.then_ty));
+        if let Some(g) = &guard {
+            env.insert(g.var.clone(), g.then_ty.clone());
+        }
         let errors = self.check_break_continue_target_body(body, env);
+        if let Some(saved_origin) = saved_origin {
+            self.exit_flow_narrowing(saved_origin);
+        }
+        if let Some((var, previous)) = saved {
+            match previous {
+                Some(ty) => {
+                    env.insert(var, ty);
+                }
+                None => {
+                    env.remove(&var);
+                }
+            }
+        }
         if errors.is_empty() {
             Ok(())
         } else {
