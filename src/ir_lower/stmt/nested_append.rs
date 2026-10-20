@@ -219,10 +219,11 @@ pub(super) fn lower(ctx: &mut LoweringContext<'_, '_>, group: &NestedAppendGroup
         IrType::Heap(IrHeapKind::Hash) => Op::HashIsset,
         IrType::Heap(IrHeapKind::Array) => Op::ArrayIsset,
         // Anything else (a `Mixed` property, an object) is out of scope: fall open to today's
-        // lowering, which is what the parser's desugar already produces. Its read runs with quiet
-        // array reads: PHP auto-vivifies the missing bucket of `$c[$k][] = $v` without the
-        // "Undefined array key" warning a plain `$tmp = $c[$k]` gives, and the miss still reads
-        // back the null the push vivifies.
+        // lowering, which is what the parser's desugar already produces. Its bucket read is
+        // quiet: PHP auto-vivifies the missing bucket of `$c[$k][] = $v` without the "Undefined
+        // array key" warning a plain `$tmp = $c[$k]` gives, and the miss still reads back the
+        // null the push vivifies. Only the bucket fetch is quiet: a read inside `$k` warns
+        // before the right-hand side runs, as in PHP.
         _ => {
             if ctx.value_is_owning_temporary(container) {
                 crate::ir_lower::ownership::release_if_owned(ctx, container, Some(span));
