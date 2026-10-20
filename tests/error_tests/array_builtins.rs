@@ -208,12 +208,13 @@ fn test_error_array_slice_preserve_keys_boxed_source() {
     );
 }
 
-/// Verifies that error array merge wrong args.
+/// Verifies that a non-array operand among more than two `array_merge()` arguments is still
+/// rejected once the call is folded into pairwise merges.
 #[test]
-fn test_error_array_merge_wrong_args() {
+fn test_error_array_merge_rejects_a_non_array_among_many() {
     expect_error(
-        "<?php $a = [1]; array_merge($a);",
-        "array_merge() takes exactly 2 arguments",
+        "<?php $a = [1]; array_merge($a, 5, [2]);",
+        "array_merge() second argument must be array",
     );
 }
 

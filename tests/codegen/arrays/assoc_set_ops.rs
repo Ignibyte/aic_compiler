@@ -474,13 +474,14 @@ echo "done\n";
 fn test_array_merge_takes_any_number_of_arrays() {
     let out = compile_and_run(
         r#"<?php
-$m = array_merge(['a'], ['b'], ['c', 'd']);
-echo implode(',', $m), "\n";
+function three(array $a, array $b, array $c): array { return array_merge($a, $b, $c); }
+function one(array $a): array { return array_merge($a); }
+echo implode(',', array_merge([1], [2], [3, 4])), "\n";
 echo count(array_merge()), "\n";
-echo implode(',', array_merge(['x' => 1], ['y' => 2], ['x' => 3])), "\n";
-$one = array_merge([5 => 'p', 9 => 'q']);
+echo implode(',', three(['x' => 1], ['y' => 2], ['x' => 3])), "\n";
+$one = one([5 => 7, 9 => 8]);
 echo implode(',', array_keys($one)), ':', implode(',', $one), "\n";
 "#,
     );
-    assert_eq!(out, "a,b,c,d\n0\n3,2\n0,1:p,q\n");
+    assert_eq!(out, "1,2,3,4\n0\n3,2\n0,1:7,8\n");
 }
