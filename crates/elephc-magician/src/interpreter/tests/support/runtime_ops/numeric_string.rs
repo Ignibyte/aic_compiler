@@ -276,6 +276,11 @@ macro_rules! impl_fake_numeric_string_ops {
         Ok(())
     }
 
+    /// Accepts `flush()`: the fake runtime has no response head to send.
+    fn flush(&mut self) -> Result<(), EvalStatus> {
+        Ok(())
+    }
+
     };
 }
 

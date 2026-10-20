@@ -387,8 +387,9 @@ pub(crate) struct LoweringContext<'m, 'f> {
     array_conversions: HashMap<String, PhpType>,
     /// Whether the current statement lowering is a disposable discovery pass.
     speculating: bool,
-    /// While set, an ordinary array read lowers without the missing-key warning (the read of a
-    /// fallen-open nested append, which PHP auto-vivifies silently).
+    /// While set, the next array read lowers without the missing-key warning (the bucket read of
+    /// a fallen-open nested append, which PHP auto-vivifies silently). That read clears it, so
+    /// its receiver and key still warn.
     quiet_array_reads: bool,
     pub return_type: IrType,
     pub return_php_type: PhpType,
@@ -971,12 +972,13 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         std::mem::replace(&mut self.speculating, speculating)
     }
 
-    /// Returns whether ordinary array reads currently lower without the missing-key warning.
-    pub(crate) fn quiet_array_reads(&self) -> bool {
-        self.quiet_array_reads
+    /// Returns whether the next array read lowers without the missing-key warning, and clears
+    /// the setting so the reads inside it (its receiver, its key) warn as usual.
+    pub(crate) fn take_quiet_array_read(&mut self) -> bool {
+        std::mem::take(&mut self.quiet_array_reads)
     }
 
-    /// Sets whether ordinary array reads lower without the missing-key warning, and returns the
+    /// Sets whether the next array read lowers without the missing-key warning, and returns the
     /// previous setting so the caller can restore it.
     pub(crate) fn set_quiet_array_reads(&mut self, quiet: bool) -> bool {
         std::mem::replace(&mut self.quiet_array_reads, quiet)

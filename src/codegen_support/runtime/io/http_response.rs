@@ -4,7 +4,7 @@
 //!
 //! Called from:
 //! - `crate::codegen_support::runtime::emitters::emit_runtime()` via `crate::codegen_support::runtime::io`.
-//! - The EIR lowering of the `http_response_code` / `header` builtins calls these labels.
+//! - The EIR lowering of the `http_response_code` / `header` / `flush` builtins calls these labels.
 //!
 //! Key details:
 //! - Web builds forward status/header operations through their bridge setters.
@@ -15,6 +15,8 @@
 //! - `__rt_header`: the four `header()` C-ABI args are already in the integer
 //!   argument registers (`x0`=line ptr, `x1`=len, `x2`=replace, `x3`=code; x86_64
 //!   `rdi`/`rsi`/`rdx`/`rcx`); the routine forwards them unchanged. No result.
+//! - `__rt_flush`: no arguments, no result. Freezes the headers as the first output
+//!   would, and under `--web` sends them before any body.
 
 use crate::codegen_support::emit::Emitter;
 use crate::codegen_support::platform::Arch;
@@ -112,4 +114,54 @@ fn emit_header_x86_64(emitter: &mut Emitter, web: bool) {
     }
 
     emitter.instruction("ret");                                                 // return to the caller (header() is void)
+}
+
+/// Emits the `__rt_flush` runtime helper behind PHP `flush()`.
+///
+/// Terminal output is written unbuffered, so the only thing left to flush is the response
+/// head. Mbstring builds commit their header metadata as the first output does, so a later
+/// `header()` reports that headers were already sent; web builds call `elephc_web_flush`,
+/// which sends the status and headers to the client before any body. Otherwise a no-op.
+pub fn emit_flush(emitter: &mut Emitter, web: bool, mbstring: bool) {
+    emitter.blank();
+    emitter.comment("--- runtime: flush ---");
+    emitter.label_global("__rt_flush");
+    if emitter.target.arch == Arch::AArch64 {
+        emitter.instruction("stp x29, x30, [sp, #-16]!");                       // keep the caller linkage across the bridge calls
+        emitter.instruction("mov x29, sp");                                     // establish the helper frame
+        if mbstring {
+            emitter.instruction("mov x0, #1");                                  // commit as a nonempty terminal write would
+            emitter.bl_c("elephc_mbstring_response_commit_v1");
+            emitter.instruction("cbnz x0, __rt_flush_fatal");                   // stop after an invalid request-state boundary
+        }
+        if web {
+            emitter.bl_c("elephc_web_flush");                                   // send the status and headers if no output has yet
+        }
+        emitter.instruction("ldp x29, x30, [sp], #16");                         // restore the caller linkage
+        emitter.instruction("ret");                                             // return without a PHP value
+        if mbstring {
+            emitter.label("__rt_flush_fatal");
+            emitter.instruction("mov x0, #1");                                  // preserve a nonzero exit status for a fatal bridge failure
+            emitter.bl_c("exit");
+        }
+    } else {
+        emitter.instruction("push rbp");                                        // keep the caller frame and align rsp for the bridge calls
+        emitter.instruction("mov rbp, rsp");                                    // establish the helper frame
+        if mbstring {
+            emitter.instruction("mov edi, 1");                                  // commit as a nonempty terminal write would
+            emitter.bl_c("elephc_mbstring_response_commit_v1");
+            emitter.instruction("test eax, eax");                               // detect a fatal request-state boundary
+            emitter.instruction("jnz __rt_flush_fatal");                        // stop rather than continue without response state
+        }
+        if web {
+            emitter.bl_c("elephc_web_flush");                                   // send the status and headers if no output has yet
+        }
+        emitter.instruction("pop rbp");                                         // restore the caller frame
+        emitter.instruction("ret");                                             // return without a PHP value
+        if mbstring {
+            emitter.label("__rt_flush_fatal");
+            emitter.instruction("mov edi, 1");                                  // preserve a nonzero exit status for a fatal bridge failure
+            emitter.bl_c("exit");
+        }
+    }
 }

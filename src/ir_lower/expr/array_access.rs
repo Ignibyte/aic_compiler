@@ -9,15 +9,15 @@
 
 use super::*;
 
-/// Lowers array, hash, string, or ArrayAccess indexing; silently while the context asks for
-/// quiet array reads.
+/// Lowers array, hash, string, or ArrayAccess indexing; silently when the context asks for one
+/// quiet array read, which this read takes so that its receiver and key still warn.
 pub(super) fn lower_array_access(
     ctx: &mut LoweringContext<'_, '_>,
     array: &Expr,
     index: &Expr,
     expr: &Expr,
 ) -> LoweredValue {
-    let warn_on_missing = !ctx.quiet_array_reads();
+    let warn_on_missing = !ctx.take_quiet_array_read();
     lower_array_access_with_missing_warning(ctx, array, index, expr, warn_on_missing)
 }
 

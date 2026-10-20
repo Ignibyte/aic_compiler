@@ -593,6 +593,8 @@ unsafe extern "C" {
         -> i64;
     /// Updates native implicit-flush behavior from the supplied boolean flag.
     pub(super) fn __elephc_eval_ob_implicit_flush(enable: i64);
+    /// Runs the compiled runtime's `flush()`, which may send the response head.
+    pub(super) fn __elephc_eval_flush();
     /// Releases a string returned by an output-buffer contents adapter.
     pub(super) fn __elephc_eval_ob_release_string(ptr: *const u8);
     /// Returns chunk size, operation flags, and started state for a buffer slot.

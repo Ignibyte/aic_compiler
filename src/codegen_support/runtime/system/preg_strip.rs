@@ -46,10 +46,12 @@ pub(crate) fn emit_preg_strip(emitter: &mut Emitter) {
     // -- check that the pattern starts with a PHP regex delimiter --
     emitter.instruction("str x11, [sp, #24]");                                  // preserve x11, which holds the closing delimiter during the scan
     emitter.instruction("ldrb w9, [x1]");                                       // load first byte
-    emitter.instruction("cmp w9, #33");                                         // delimiters are printable: reject control bytes and space
-    emitter.instruction("b.lo __rt_preg_strip_done");                           // not delimited, return as-is
-    emitter.instruction("cmp w9, #126");                                        // reject DEL and non-ASCII bytes
-    emitter.instruction("b.hi __rt_preg_strip_done");                           // not delimited, return as-is
+    emitter.instruction("cbz w9, __rt_preg_strip_done");                        // a NUL byte cannot delimit a pattern
+    emitter.instruction("cmp w9, #32");                                         // is the first byte a space?
+    emitter.instruction("b.eq __rt_preg_strip_done");                           // whitespace cannot delimit a pattern
+    emitter.instruction("sub w12, w9, #9");                                     // offset the byte from '\t' to test for \t, \n, \v, \f and \r
+    emitter.instruction("cmp w12, #4");                                         // is the first byte one of those whitespace controls?
+    emitter.instruction("b.ls __rt_preg_strip_done");                           // whitespace cannot delimit a pattern
     emitter.instruction("cmp w9, #92");                                         // a backslash cannot delimit a pattern
     emitter.instruction("b.eq __rt_preg_strip_done");                           // not delimited, return as-is
     emitter.instruction("sub w12, w9, #48");                                    // offset the byte from '0' to test for a digit
@@ -149,10 +151,13 @@ fn emit_preg_strip_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("test rdx, rdx");                                       // skip delimiter stripping when the pattern string is empty
     emitter.instruction("jz __rt_preg_strip_done_linux_x86_64");                // empty patterns already behave like raw undelimited regex payloads
     emitter.instruction("movzx r8d, BYTE PTR [rax]");                           // load the first pattern byte so delimiter detection can inspect the opening character
-    emitter.instruction("cmp r8d, 33");                                         // delimiters are printable: reject control bytes and space
-    emitter.instruction("jb __rt_preg_strip_done_linux_x86_64");                // return the original pattern unchanged when it is not delimited
-    emitter.instruction("cmp r8d, 126");                                        // reject DEL and non-ASCII bytes
-    emitter.instruction("ja __rt_preg_strip_done_linux_x86_64");                // return the original pattern unchanged when it is not delimited
+    emitter.instruction("test r8d, r8d");                                       // a NUL byte cannot delimit a pattern
+    emitter.instruction("jz __rt_preg_strip_done_linux_x86_64");                // return the original pattern unchanged when it is not delimited
+    emitter.instruction("cmp r8d, 32");                                         // is the first byte a space?
+    emitter.instruction("je __rt_preg_strip_done_linux_x86_64");                // whitespace cannot delimit a pattern
+    emitter.instruction("lea r9d, [r8 - 9]");                                   // offset the byte from '\t' to test for \t, \n, \v, \f and \r
+    emitter.instruction("cmp r9d, 4");                                          // is the first byte one of those whitespace controls?
+    emitter.instruction("jbe __rt_preg_strip_done_linux_x86_64");               // whitespace cannot delimit a pattern
     emitter.instruction("cmp r8d, 92");                                         // a backslash cannot delimit a pattern
     emitter.instruction("je __rt_preg_strip_done_linux_x86_64");                // return the original pattern unchanged when it is not delimited
     emitter.instruction("lea r9d, [r8 - 48]");                                  // offset the byte from '0' to test for a digit

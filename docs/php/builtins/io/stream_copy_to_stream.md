@@ -2,7 +2,7 @@
 title: "stream_copy_to_stream()"
 description: "Copies data from one stream to another."
 sidebar:
-  order: 367
+  order: 368
 ---
 
 ## stream_copy_to_stream()

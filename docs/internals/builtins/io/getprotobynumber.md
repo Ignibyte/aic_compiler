@@ -2,7 +2,7 @@
 title: "getprotobynumber() - internals"
 description: "Compiler internals for getprotobynumber(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 337
+  order: 338
 ---
 
 ## `getprotobynumber()` - internals

@@ -2290,6 +2290,17 @@ echo implode(',', preg_split('~,~', 'x,y,z'));
     assert_eq!(out, "111111110|1Ada|Adabbb|a<1>b<22>|x,y,z");
 }
 
+/// Verifies a control byte other than whitespace (DEL) and a byte above ASCII delimit a pattern,
+/// as in PHP, which rejects only alphanumerics, backslash, NUL and whitespace.
+#[test]
+fn test_preg_functions_accept_non_printable_delimiters() {
+    let out = compile_and_run(
+        "<?php\necho preg_match(\"\\x7f^a$\\x7f\", 'a'), preg_match(\"\\xa7^a$\\xa7i\", 'A'), \"|\";\n\
+         echo preg_replace(\"\\x01b\\x01\", 'c', 'abc');\n",
+    );
+    assert_eq!(out, "11|acc");
+}
+
 /// Verifies `preg_replace_callback` exposes both complete match `$matches[0]` and numbered
 /// capture groups `$matches[1]`, `$matches[2]` to the closure.
 #[test]

@@ -2,7 +2,7 @@
 title: "stream_select() - internals"
 description: "Compiler internals for stream_select(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 379
+  order: 380
 ---
 
 ## `stream_select()` - internals

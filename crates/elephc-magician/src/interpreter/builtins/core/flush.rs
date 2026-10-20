@@ -5,8 +5,9 @@
 //! - `crate::interpreter::builtins::core` direct and by-value dispatch.
 //!
 //! Key details:
-//! - A no-op, as in AOT code: elephc's writes are unbuffered, so there is no system write
-//!   buffer to flush, and `flush()` never touches the `ob_*` buffers.
+//! - Runs the compiled runtime's `flush()` through the bridge, as in AOT code: writes are
+//!   unbuffered, so it only freezes the response headers and, under `--web`, sends them.
+//!   `flush()` never touches the `ob_*` buffers.
 
 use super::super::super::*;
 
@@ -25,6 +26,7 @@ pub(in crate::interpreter) fn eval_builtin_flush(
     if !args.is_empty() {
         return Err(EvalStatus::RuntimeFatal);
     }
+    values.flush()?;
     values.null()
 }
 
@@ -36,5 +38,6 @@ pub(in crate::interpreter) fn eval_flush_values_result(
     if !evaluated_args.is_empty() {
         return Err(EvalStatus::RuntimeFatal);
     }
+    values.flush()?;
     values.null()
 }

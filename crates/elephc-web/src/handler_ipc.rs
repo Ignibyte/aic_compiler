@@ -34,6 +34,8 @@ const RESPONSE_START: u8 = 1;
 const RESPONSE_CHUNK: u8 = 2;
 /// Response frame marking successful handler completion.
 const RESPONSE_END: u8 = 3;
+/// Response frame asking the worker to send what it holds now (PHP `flush()`).
+const RESPONSE_FLUSH: u8 = 4;
 
 /// Owned HTTP request snapshot transferred to the single-threaded broker.
 pub(crate) struct HandlerRequest {
@@ -60,6 +62,8 @@ pub(crate) struct ResponseStart {
 pub(crate) enum ResponseFrame {
     Start(ResponseStart),
     Chunk(Vec<u8>),
+    /// `flush()` after the start: send the head (and any held body bytes) without waiting.
+    Flush,
     End,
 }
 
@@ -285,6 +289,11 @@ pub(crate) unsafe fn write_response_chunks(fd: RawFd, mut body: &[u8]) -> bool {
     true
 }
 
+/// Writes the frame that asks the worker to send the committed head and held bytes now.
+pub(crate) unsafe fn write_response_flush(fd: RawFd) -> bool {
+    write_all_fd(fd, &[RESPONSE_FLUSH])
+}
+
 /// Writes the successful end-of-response frame.
 pub(crate) unsafe fn write_response_end(fd: RawFd) -> bool {
     write_all_fd(fd, &[RESPONSE_END])
@@ -339,6 +348,7 @@ pub(crate) async fn read_response_frame(
             Ok(ResponseFrame::Chunk(bytes))
         }
         RESPONSE_END => Ok(ResponseFrame::End),
+        RESPONSE_FLUSH => Ok(ResponseFrame::Flush),
         _ => Err(invalid_data("unknown broker response frame")),
     }
 }

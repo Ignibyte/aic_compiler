@@ -144,7 +144,9 @@ In the default `worker` model, calling `header()` (or `setcookie()`) **after**
 producing output is accepted because the whole response is buffered until the
 handler returns. In `pool` and `request`, output streams immediately: the first
 body byte commits status and headers, and later header/status mutations are
-ignored with PHP-style "headers already sent" diagnostics.
+ignored with PHP-style "headers already sent" diagnostics. `flush()` commits them
+the same way without writing a body, so the client gets the status and headers
+before a slow handler produces output (see `examples/web-flush/`).
 
 ```php
 <?php

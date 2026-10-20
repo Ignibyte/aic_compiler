@@ -2,7 +2,7 @@
 title: "cairo_scale()"
 description: "Scales the context's transformation by the given x and y factors."
 sidebar:
-  order: 433
+  order: 434
 ---
 
 ## cairo_scale()

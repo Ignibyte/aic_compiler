@@ -1754,6 +1754,93 @@ echo "done";
     );
 }
 
+/// Serves `src` under pool isolation with gzip enabled and returns what each of two requests
+/// (plain, then accepting gzip) received in the 700 ms after it was sent, lowercased.
+fn web_flush_early_heads(src: &str, prefix: &str) -> Vec<String> {
+    let dir = make_test_dir(prefix);
+    let bin = compile_isolated_web(&dir, src, "app", "pool");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let mut child = spawn_server_with_args(&bin, &addr, "1", &["--gzip"]);
+
+    let mut heads = Vec::new();
+    for accept_encoding in ["", "Accept-Encoding: gzip\r\n"] {
+        let mut stream = TcpStream::connect(&addr).expect("connect flushing client");
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("set bounded flushing read timeout");
+        let request = format!(
+            "GET / HTTP/1.1\r\nHost: {addr}\r\n{accept_encoding}Connection: close\r\n\r\n"
+        );
+        stream
+            .write_all(request.as_bytes())
+            .expect("send flushing request");
+
+        let deadline = Instant::now() + Duration::from_millis(700);
+        let mut early = Vec::new();
+        while Instant::now() < deadline && !early.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let mut chunk = [0u8; 8192];
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => early.extend_from_slice(&chunk[..read]),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(error) => panic!("flushing response read failed: {error}"),
+            }
+        }
+        heads.push(String::from_utf8_lossy(&early).to_ascii_lowercase());
+        // Let the handler finish before the next request needs it.
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set draining read timeout");
+        let mut rest = Vec::new();
+        let _ = stream.read_to_end(&mut rest);
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    heads
+}
+
+/// Asserts each early read holds the complete head with `X-Ready` and no body, and that the
+/// gzip request kept its compression.
+fn assert_flushed_heads(heads: &[String]) {
+    for head in heads {
+        assert!(
+            head.contains("\r\n\r\n") && head.contains("x-ready: yes"),
+            "flush() left the response head queued until handler completion: {head:?}"
+        );
+        assert!(!head.contains("done"), "the body arrived before the handler slept: {head:?}");
+    }
+    assert!(heads[1].contains("content-encoding: gzip"), "gzip was dropped: {:?}", heads[1]);
+}
+
+/// Verifies `flush()` sends the status and headers before any body output, as PHP's built-in
+/// server does: the client sees the head while the handler is still running, with and without
+/// the worker's gzip (which otherwise waits for a body prefix).
+#[test]
+fn web_flush_sends_headers_before_body_output() {
+    let heads = web_flush_early_heads(
+        "<?php\nheader(\"X-Ready: yes\");\nflush();\nusleep(1000000);\necho \"done\";\n",
+        "web_flush_headers",
+    );
+    assert_flushed_heads(&heads);
+}
+
+/// Verifies `flush()` called from eval'd code sends the head too: eval reaches the compiled
+/// runtime's flush through the bridge.
+#[test]
+fn web_eval_flush_sends_headers_before_body_output() {
+    let heads = web_flush_early_heads(
+        "<?php\nheader(\"X-Ready: yes\");\neval('flush();');\nusleep(1000000);\necho \"done\";\n",
+        "web_eval_flush_headers",
+    );
+    assert_flushed_heads(&heads);
+}
+
 /// Verifies the server shuts down cleanly (exit code 0) on SIGTERM, promptly.
 #[test]
 fn web_sigterm_shuts_down_cleanly() {

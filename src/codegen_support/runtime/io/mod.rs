@@ -166,7 +166,7 @@ pub(crate) use fopen::emit_fopen;
 pub(crate) use fputcsv::emit_fputcsv;
 pub(crate) use fread::emit_fread;
 pub(crate) use fwrite::emit_fwrite;
-pub(crate) use http_response::{emit_header, emit_http_response_code};
+pub(crate) use http_response::{emit_flush, emit_header, emit_http_response_code};
 pub(crate) use php_input::emit_php_input;
 pub(crate) use stdout_write::emit_stdout_write;
 pub(crate) use phar_read::emit_phar_read;

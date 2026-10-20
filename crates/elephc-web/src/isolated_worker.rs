@@ -485,6 +485,23 @@ async fn run_handler_isolated(
                         };
                     }
                 }
+                // `flush()` wants the head out now: stop waiting for a full gzip prefix.
+                Ok(ResponseFrame::Flush) => {
+                    headers.retain(|(name, _)| !name.eq_ignore_ascii_case("content-length"));
+                    headers.push(("content-encoding".to_string(), "gzip".to_string()));
+                    return HandlerResult {
+                        status,
+                        headers,
+                        body: stream_body(
+                            response,
+                            prefix,
+                            true,
+                            response_write_secs,
+                            max_requests,
+                            recycle.clone(),
+                        ),
+                    };
+                }
                 Ok(ResponseFrame::End) => {
                     record_completed_request(max_requests, recycle);
                     return HandlerResult {
@@ -511,6 +528,19 @@ async fn run_handler_isolated(
             body: stream_body(
                 response,
                 chunk,
+                false,
+                response_write_secs,
+                max_requests,
+                recycle.clone(),
+            ),
+        },
+        // `flush()` before any body: send the head now and stream whatever follows.
+        Ok(ResponseFrame::Flush) => HandlerResult {
+            status,
+            headers,
+            body: stream_body(
+                response,
+                Vec::new(),
                 false,
                 response_write_secs,
                 max_requests,
@@ -662,6 +692,8 @@ async fn pump_response(
                     break;
                 }
             }
+            // Chunks are already sent (and gzip flushed) as they arrive.
+            Ok(ResponseFrame::Flush) => {}
             Ok(ResponseFrame::End) => {
                 if let Some(encoder) = encoder.take() {
                     if let Ok(final_bytes) = encoder.finish() {
