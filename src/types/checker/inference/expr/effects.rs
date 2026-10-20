@@ -149,6 +149,7 @@ impl Checker {
                     merge_array_storage_effects(env, &default_env);
                     default_ty
                 };
+                let default_ty = branch_value_type(default, default_ty);
                 Ok(null_coalesce_result_type(
                     self,
                     value_is_never_null,
@@ -185,9 +186,11 @@ impl Checker {
                     else_env.insert(guard.var, guard.else_ty);
                 }
                 let then_ty = self.infer_type_with_assignment_effects(then_expr, &mut then_env)?;
+                let then_ty = branch_value_type(then_expr, then_ty);
                 merge_array_storage_effects(env, &then_env);
                 merge_array_storage_effects(&mut else_env, &then_env);
                 let else_ty = self.infer_type_with_assignment_effects(else_expr, &mut else_env)?;
+                let else_ty = branch_value_type(else_expr, else_ty);
                 merge_array_storage_effects(env, &else_env);
                 Ok(merge_match_arm_result_type(self, then_ty, else_ty))
             }
@@ -733,6 +736,17 @@ fn type_may_be_pdo_statement(ty: &PhpType) -> bool {
         PhpType::Object(class) => class.trim_start_matches('\\') == "PDOStatement",
         PhpType::Union(members) => members.iter().any(type_may_be_pdo_statement),
         _ => false,
+    }
+}
+
+/// Returns the type a branch contributes to a ternary or `??` result: a `throw` arm yields no
+/// value, so it is `Never` (the other side's type stands), not the `Void` its checker type shares
+/// with `null`.
+fn branch_value_type(branch: &Expr, ty: PhpType) -> PhpType {
+    if matches!(branch.kind, ExprKind::Throw(_)) {
+        PhpType::Never
+    } else {
+        ty
     }
 }
 
