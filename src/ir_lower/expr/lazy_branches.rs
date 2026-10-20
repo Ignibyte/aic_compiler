@@ -116,8 +116,15 @@ pub(super) fn null_coalesce_result_type(
     value: ValueId,
     default: &Expr,
 ) -> PhpType {
-    let value_ty = strip_void_from_union(ctx.builder.value_php_type(value)).codegen_repr();
-    let default_ty = materialized_expr_type_for_merge(ctx, default).codegen_repr();
+    let value_ty = ctx.builder.value_php_type(value);
+    let default_ty = materialized_expr_type_for_merge(ctx, default);
+    null_coalesce_merge_type(value_ty, default_ty)
+}
+
+/// Joins the value and default sides of `??` into its materialized result type.
+pub(super) fn null_coalesce_merge_type(value_ty: PhpType, default_ty: PhpType) -> PhpType {
+    let value_ty = strip_void_from_union(value_ty).codegen_repr();
+    let default_ty = default_ty.codegen_repr();
     // `$o ?? null` can still be null. An object or callable slot has no null of its own, so a
     // default that may be null keeps the merge nullable (boxed) instead of letting the non-null
     // side's slot type win and then reading the stored null back as an object.

@@ -872,3 +872,31 @@ fn test_instanceof_narrowed_receiver_reads_class_property() {
     );
     assert_eq!(out, "hi|other|yo|none");
 }
+
+/// Verifies a ternary whose arm is `$map[$k] ?? null` over a map of objects keeps the object,
+/// so the narrowed result can call its method; the merge slot was typed as a tagged `?int`.
+#[test]
+fn test_ternary_of_coalesced_map_object_keeps_the_object() {
+    let out = compile_and_run(
+        r#"<?php
+interface Cmd { public function run(): int; }
+final class Ping implements Cmd { public function run(): int { echo "pong\n"; return 0; } }
+final class Console
+{
+    /** @param array<string, Cmd> $commands */
+    public function __construct(private array $commands) {}
+    public function run(array $argv): int
+    {
+        $name = $argv[1] ?? null;
+        $command = is_string($name) ? $this->commands[$name] ?? null : null;
+        if (!$command instanceof Cmd) {
+            return 2;
+        }
+        return $command->run();
+    }
+}
+echo (new Console(['ping' => new Ping()]))->run(['aic', 'ping']), "\n";
+"#,
+    );
+    assert_eq!(out, "pong\n0\n");
+}

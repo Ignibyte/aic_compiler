@@ -115,6 +115,10 @@ pub(super) fn resolve_expr(
                     args: resolved_args,
                 }
             } else if let Some(rewritten) =
+                rewrite_array_merge_arity(&function_name, &resolved_args)
+            {
+                rewritten
+            } else if let Some(rewritten) =
                 rewrite_date_procedural_alias(&function_name, &resolved_args)
             {
                 rewritten
@@ -635,6 +639,45 @@ fn rewrite_var_export_return_flag(
         }),
         Some(_) => None,
     }
+}
+
+/// Rewrites a global `array_merge()` call of any arity other than two into two-argument calls,
+/// which is the form the checker and backend implement, or returns `None` to leave it alone.
+///
+/// PHP's `array_merge(...$arrays)` is a left fold: `array_merge($a, $b, $c)` is
+/// `array_merge(array_merge($a, $b), $c)`, operands evaluated in order. One operand renumbers its
+/// integer keys exactly as merging it into `[]` does, and no operand answers `[]`. A spread or a
+/// named argument keeps the call as written.
+fn rewrite_array_merge_arity(name: &str, args: &[Expr]) -> Option<ExprKind> {
+    let global = name.trim_start_matches('\\');
+    if global.contains('\\') || !global.eq_ignore_ascii_case("array_merge") || args.len() == 2 {
+        return None;
+    }
+    if args
+        .iter()
+        .any(|arg| matches!(arg.kind, ExprKind::Spread(_) | ExprKind::NamedArg { .. }))
+    {
+        return None;
+    }
+    let merge = |left: Expr, right: Expr| {
+        let span = left.span;
+        Expr::new(
+            ExprKind::FunctionCall {
+                name: resolved_name("array_merge".to_string()),
+                args: vec![left, right],
+            },
+            span,
+        )
+    };
+    let mut operands = args.iter().cloned();
+    let Some(first) = operands.next() else {
+        return Some(ExprKind::ArrayLiteral(Vec::new()));
+    };
+    let Some(second) = operands.next() else {
+        let empty = Expr::new(ExprKind::ArrayLiteral(Vec::new()), first.span);
+        return Some(merge(empty, first).kind);
+    };
+    Some(operands.fold(merge(first, second), merge).kind)
 }
 
 /// Rewrites a procedural date/time alias call into the equivalent OOP expression, or returns `None`

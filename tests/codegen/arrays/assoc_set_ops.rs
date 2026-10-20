@@ -467,3 +467,20 @@ echo "done\n";
         out.stderr
     );
 }
+
+/// Verifies `array_merge()` with three operands, none, and one: a left fold of the two-operand
+/// merge, `[]`, and a renumbering of the single operand's integer keys, as in PHP.
+#[test]
+fn test_array_merge_takes_any_number_of_arrays() {
+    let out = compile_and_run(
+        r#"<?php
+$m = array_merge(['a'], ['b'], ['c', 'd']);
+echo implode(',', $m), "\n";
+echo count(array_merge()), "\n";
+echo implode(',', array_merge(['x' => 1], ['y' => 2], ['x' => 3])), "\n";
+$one = array_merge([5 => 'p', 9 => 'q']);
+echo implode(',', array_keys($one)), ':', implode(',', $one), "\n";
+"#,
+    );
+    assert_eq!(out, "a,b,c,d\n0\n3,2\n0,1:p,q\n");
+}

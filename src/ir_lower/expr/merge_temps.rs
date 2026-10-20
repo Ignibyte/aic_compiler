@@ -154,6 +154,13 @@ pub(super) fn materialized_expr_type_for_merge(ctx: &LoweringContext<'_, '_>, ex
         ExprKind::ShortTernary { value, default } => {
             short_ternary_merge_result_type(ctx, value, default)
         }
+        // Typed from both sides, as its own lowering types its result. The syntactic guess
+        // answers `int` for an element read, and beside a null default a tagged `?int` that
+        // cannot hold the object or array the read really returns.
+        ExprKind::NullCoalesce { value, default } => null_coalesce_merge_type(
+            materialized_expr_type_for_merge(ctx, value),
+            materialized_expr_type_for_merge(ctx, default),
+        ),
         ExprKind::ArrayAccess { array, .. } => array_access_expr_value_type_for_ir(ctx, array)
             .unwrap_or_else(|| fallback_expr_type(expr)),
         ExprKind::PropertyAccess { object, property } => {
