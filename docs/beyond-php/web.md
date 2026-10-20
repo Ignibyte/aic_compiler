@@ -96,8 +96,9 @@ every request and readable inside any function scope (no `global` needed):
 - **`$_FILES`** — `multipart/form-data` file uploads, each as
   `['name' => …, 'type' => …, 'tmp_name' => …, 'error' => 0, 'size' => …]`. The
   upload is written to a temp file at `tmp_name`; read it with
-  `file_get_contents()`, or move it with `rename()` after validating the upload.
-  `move_uploaded_file()` and `is_uploaded_file()` are currently unavailable.
+  `file_get_contents()`, or move it with `move_uploaded_file()`, which accepts
+  only this request's uploads (`is_uploaded_file()` asks the same question). As
+  in PHP, an upload the handler did not move is deleted when the request ends.
 - **`$_COOKIE`** — the `Cookie` request header parsed into a string-keyed array
   (values percent-decoded).
 - **`$_REQUEST`** — `$_GET` overlaid with `$_POST` (POST wins on key collision),

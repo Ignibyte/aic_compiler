@@ -244,6 +244,14 @@ fn merge_match_arm_result_type(checker: &Checker, acc: PhpType, next: PhpType) -
 /// indexed/indexed or associative/associative shapes, leaving the caller's existing
 /// object-union and `Mixed` handling untouched.
 fn merge_array_branch_types(acc: &PhpType, next: &PhpType) -> Option<PhpType> {
+    // An empty literal (`cond ? $values : []`) adds no element type to any array shape, the
+    // any-array union a bare `array` declaration has included.
+    if is_empty_array_literal_type(next) && is_array_shaped(acc) {
+        return Some(acc.clone());
+    }
+    if is_empty_array_literal_type(acc) && is_array_shaped(next) {
+        return Some(next.clone());
+    }
     match (acc, next) {
         (PhpType::Array(acc_elem), PhpType::Array(next_elem)) => Some(PhpType::Array(Box::new(
             PhpType::widen_array_branch_element(
@@ -271,6 +279,25 @@ fn merge_array_branch_types(acc: &PhpType, next: &PhpType) -> Option<PhpType> {
             )),
         }),
         _ => None,
+    }
+}
+
+/// Reports whether a type is the empty array literal's, `Array(Never)`.
+fn is_empty_array_literal_type(ty: &PhpType) -> bool {
+    matches!(ty, PhpType::Array(element) if **element == PhpType::Never)
+}
+
+/// Reports whether a type is an indexed or associative array, or a union of only those.
+fn is_array_shaped(ty: &PhpType) -> bool {
+    match ty {
+        PhpType::Array(_) | PhpType::AssocArray { .. } => true,
+        PhpType::Union(members) => {
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|member| matches!(member, PhpType::Array(_) | PhpType::AssocArray { .. }))
+        }
+        _ => false,
     }
 }
 

@@ -49,6 +49,15 @@ pub(crate) struct GuardNarrowing {
     pub then_ty: PhpType,
     /// Type the binding has where the guard is false.
     pub else_ty: PhpType,
+    /// Type the binding has before the guard, where neither outcome is known.
+    pub current_ty: PhpType,
+}
+
+impl GuardNarrowing {
+    /// Returns the narrowing of the negated condition: its true and false sides exchanged.
+    fn swapped(self) -> Self {
+        Self { then_ty: self.else_ty, else_ty: self.then_ty, ..self }
+    }
 }
 
 /// Describes an exact guard type or the element-agnostic array family.
@@ -87,6 +96,12 @@ impl Checker {
             ExprKind::Not(inner) => (inner.as_ref(), true),
             _ => (condition, false),
         };
+        if let ExprKind::BinaryOp { left, op: op @ (BinOp::And | BinOp::Or), right } = &cond.kind {
+            let Some(guard) = self.logical_guard_narrowing(left, op, right, env)? else {
+                return Ok(None);
+            };
+            return Ok(Some(if prefix_negated { guard.swapped() } else { guard }));
+        }
         let Some((receiver, target, comparison_negated)) = guard_receiver_and_target(cond) else {
             return Ok(None);
         };
@@ -130,7 +145,54 @@ impl Checker {
         } else {
             (matched, complement)
         };
-        Ok(Some(GuardNarrowing { var: key, then_ty, else_ty }))
+        Ok(Some(GuardNarrowing { var: key, then_ty, else_ty, current_ty: current }))
+    }
+
+    /// Narrows `A && B` or `A || B` by the first operand's guard (or the second's when the first
+    /// is none). `A && B` holds only where both operands do, so its true side takes the guard's
+    /// true type; `A || B` fails only where both do, so its false side takes the guard's false
+    /// type. The other side, where either operand may have decided it, keeps the current type.
+    fn logical_guard_narrowing(
+        &mut self,
+        left: &Expr,
+        op: &BinOp,
+        right: &Expr,
+        env: &TypeEnv,
+    ) -> Result<Option<GuardNarrowing>, CompileError> {
+        let guard = match self.guard_narrowing(left, env)? {
+            Some(guard) => guard,
+            None => match self.guard_narrowing(right, env)? {
+                Some(guard) => guard,
+                None => return Ok(None),
+            },
+        };
+        let current_ty = guard.current_ty.clone();
+        Ok(Some(match op {
+            BinOp::And => GuardNarrowing { else_ty: current_ty, ..guard },
+            _ => GuardNarrowing { then_ty: current_ty, ..guard },
+        }))
+    }
+
+    /// Returns the environment the right operand of `&&` or `||` is checked in. It runs only
+    /// when the left operand did not settle the result, so it sees that operand's guard as true
+    /// (`$x instanceof C && $x->only()`) or as false (`!$x instanceof C || $x->only()`).
+    pub(crate) fn logical_right_operand_env(
+        &mut self,
+        left: &Expr,
+        op: &BinOp,
+        env: &TypeEnv,
+    ) -> Result<Option<TypeEnv>, CompileError> {
+        let Some(guard) = self.guard_narrowing(left, env)? else {
+            return Ok(None);
+        };
+        let narrowed = match op {
+            BinOp::And => guard.then_ty,
+            BinOp::Or => guard.else_ty,
+            _ => return Ok(None),
+        };
+        let mut right_env = env.clone();
+        right_env.insert(guard.var, narrowed);
+        Ok(Some(right_env))
     }
 
     /// Synthetic `TypeEnv` key for a narrowed simple property access `$var->prop` (`None` for a

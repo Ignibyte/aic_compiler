@@ -991,6 +991,8 @@ Browse by category: [Array](./builtins/array.md) · [Buffer](./builtins/buffer.m
 | [`ini_get()`](./builtins/web/ini_get.md) | `(string $option): mixed` | `mixed` | ✓ | - |
 | [`ini_get_all()`](./builtins/web/ini_get_all.md) | `(?string $extension = null, bool $details = true): array|false` | `array|false` | ✓ | - |
 | [`ini_set()`](./builtins/web/ini_set.md) | `(string $option, string|int|float|bool|null $value): string|false` | `string|false` | ✓ | - |
+| [`is_uploaded_file()`](./builtins/web/is_uploaded_file.md) | `(string $filename): bool` | `bool` | ✓ | - |
+| [`move_uploaded_file()`](./builtins/web/move_uploaded_file.md) | `(string $from, string $to): bool` | `bool` | ✓ | - |
 | [`session_abort()`](./builtins/web/session_abort.md) | `(): bool` | `bool` | ✓ | - |
 | [`session_cache_expire()`](./builtins/web/session_cache_expire.md) | `(?int $value = null): mixed` | `mixed` | ✓ | - |
 | [`session_cache_limiter()`](./builtins/web/session_cache_limiter.md) | `(?string $value = null): mixed` | `mixed` | ✓ | - |

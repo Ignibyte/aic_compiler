@@ -96,6 +96,7 @@ pub(super) unsafe fn execute_handler_request(handler: extern "C" fn(), mut strea
     if seconds > 0 {
         libc::alarm(0);
     }
+    crate::uploads::discard_unmoved();
     // Unconditional and idempotent, as in the default worker: a request that
     // started no slice ends none, and consecutive profiled requests stay
     // separate captures. A pool child serves many requests, so leaving a slice

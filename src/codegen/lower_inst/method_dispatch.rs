@@ -42,6 +42,11 @@ pub(super) fn lower_method_call(ctx: &mut FunctionContext<'_>, inst: &Instructio
     let method_name = method_name_data(ctx, inst)?.to_string();
     if let Some((class_name, true)) = objects::nullable_object_receiver_class(ctx, object)? {
         if !class_name.is_empty() {
+            if !static_receiver_declares_method(ctx, &class_name, &method_name) {
+                // A narrowed nullable receiver (`if ($this->shape instanceof Square)`): dispatch
+                // on the runtime class, which still reports a call on null.
+                return lower_mixed_method_call(ctx, inst, object, &method_name);
+            }
             return lower_nullable_receiver_method_call(ctx, inst, object, &class_name, &method_name);
         }
     }

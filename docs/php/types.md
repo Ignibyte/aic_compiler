@@ -523,7 +523,6 @@ Two gaps remain: array callables (`[$obj, "method"]`, `["Class", "method"]`) are
 
 These standard PHP filesystem functions are intentionally absent from elephc because they have no meaningful semantics in a compiled native binary:
 
-- `move_uploaded_file()`, `is_uploaded_file()` — both rely on the PHP-FPM/SAPI request lifecycle (the `$_FILES` superglobal and a per-request "uploaded files" registry). A standalone compiled binary has no such request scope.
 - `fgetss()` — deprecated in PHP 7.3 and removed in PHP 8.0. New code should use `strip_tags()` on the result of `fgets()`.
 
 ### Compiler diagnostics
