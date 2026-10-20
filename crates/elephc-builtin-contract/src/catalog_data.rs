@@ -13174,7 +13174,9 @@ pub(crate) static CONTRACTS: &[BuiltinContract] = &[
         returns: TypeSpec::Void,
         by_ref_return: false,
         summary: "Flushes the system write buffers of PHP and whatever backend PHP is using.",
-        examples: &[],
+        examples: &[
+            "```php\n// Full example: examples/web-flush/main.php\nheader('X-Report: building');\nflush(); // under --web the status and headers leave now\nsleep(1);\necho \"done\\n\";\n```",
+        ],
         php_manual: Some("function.flush"),
         deprecation: None,
         extension: false,

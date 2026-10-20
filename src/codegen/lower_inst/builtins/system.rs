@@ -303,6 +303,15 @@ pub(crate) fn lower_http_response_code(
     store_if_result(ctx, inst)
 }
 
+/// Lowers `flush()` to `__rt_flush`, which takes no arguments and returns nothing. What
+/// flushing means (freezing the response headers, sending them under `--web`) lives in
+/// the runtime routine.
+pub(crate) fn lower_flush(ctx: &mut FunctionContext<'_>, inst: &Instruction) -> Result<()> {
+    super::ensure_arg_count(inst, "flush", 0)?;
+    abi::emit_call_label(ctx.emitter, "__rt_flush");
+    store_if_result(ctx, inst)
+}
+
 /// Lowers `header($line[, $replace[, $code]])` to `__rt_header`, materializing the
 /// four C-ABI integer arguments: arg0=line ptr, arg1=line len, arg2=`$replace`
 /// (default true), arg3=`$response_code` (default 0). `$replace`/`$code` are staged

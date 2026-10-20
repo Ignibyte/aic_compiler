@@ -425,6 +425,20 @@ echo "done\n";
     assert_eq!(out, "NULL\n[a]\ndone\n");
 }
 
+/// Verifies `flush()` resolves through a runtime callable, as by name and `call_user_func()`.
+#[test]
+fn test_flush_is_callable_by_name() {
+    let out = compile_and_run(
+        r#"<?php
+$name = "flush";
+var_dump($name());
+var_dump(call_user_func($name));
+echo "done\n";
+"#,
+    );
+    assert_eq!(out, "NULL\nNULL\ndone\n");
+}
+
 /// Verifies ob_implicit_flush accepts a flag and returns true like PHP 8.
 #[test]
 fn test_ob_implicit_flush_returns_true() {

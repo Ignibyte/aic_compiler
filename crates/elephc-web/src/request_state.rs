@@ -3,12 +3,14 @@
 //! compiled PHP runtime: the output-capture flag the runtime reads, the
 //! response-body buffer the runtime appends to, and the parsed incoming request
 //! statics (method, URI, path, query string, headers, body) the web prelude
-//! reads via C-ABI getters. Provides `elephc_web_write`, `set_request`, all
-//! request getters, and buffer lifecycle helpers.
+//! reads via C-ABI getters. Provides `elephc_web_write`, `elephc_web_flush`,
+//! `set_request`, all request getters, and buffer lifecycle helpers.
 //!
 //! Called from:
 //! - The compiled `--web` runtime's `__rt_stdout_write` capture branch, which
 //!   calls `elephc_web_write(ptr, len)` when `elephc_web_capture` is non-zero.
+//! - The compiled `--web` runtime's `__rt_flush` (PHP `flush()`), which calls
+//!   `elephc_web_flush()` to send the status and headers early.
 //! - `crate::worker` for in-process requests and `crate::handler_broker` for
 //!   pool/request snapshots and response streams.
 //!
@@ -106,27 +108,58 @@ pub unsafe extern "C" fn elephc_web_write(ptr: *const u8, len: usize) {
         (*core::ptr::addr_of_mut!(RESPONSE_BODY)).extend_from_slice(bytes);
         return;
     }
-    if !*core::ptr::addr_of!(RESPONSE_COMMITTED) {
-        core::ptr::write(core::ptr::addr_of_mut!(RESPONSE_COMMITTED), true);
-        let cookie = request_header_owned("cookie");
-        let host = request_header_owned("host");
-        if crate::trans_sid::prepare_streaming_response(
-            cookie.as_deref(),
-            host.as_deref(),
-            &mut *core::ptr::addr_of_mut!(RESPONSE_HEADERS),
-        ) {
-            core::ptr::write(core::ptr::addr_of_mut!(RESPONSE_TRANS_SID_BUFFERED), true);
-        } else if !crate::handler_ipc::write_response_start(
-            fd,
-            *core::ptr::addr_of!(RESPONSE_STATUS),
-            &*core::ptr::addr_of!(RESPONSE_HEADERS),
-        ) {
-            abort_failed_response_stream();
-        }
-    }
+    commit_response_stream(fd);
     if *core::ptr::addr_of!(RESPONSE_TRANS_SID_BUFFERED) {
         (*core::ptr::addr_of_mut!(RESPONSE_BODY)).extend_from_slice(bytes);
     } else if !crate::handler_ipc::write_response_chunks(fd, bytes) {
+        abort_failed_response_stream();
+    }
+}
+
+/// Sends the status and headers once, at the first output or `flush()`: trans-SID keeps them
+/// back with the body it has to rewrite.
+///
+/// # Safety
+/// `fd` is the current handler channel. Single-threaded per worker (see module docs).
+unsafe fn commit_response_stream(fd: RawFd) {
+    if *core::ptr::addr_of!(RESPONSE_COMMITTED) {
+        return;
+    }
+    core::ptr::write(core::ptr::addr_of_mut!(RESPONSE_COMMITTED), true);
+    let cookie = request_header_owned("cookie");
+    let host = request_header_owned("host");
+    if crate::trans_sid::prepare_streaming_response(
+        cookie.as_deref(),
+        host.as_deref(),
+        &mut *core::ptr::addr_of_mut!(RESPONSE_HEADERS),
+    ) {
+        core::ptr::write(core::ptr::addr_of_mut!(RESPONSE_TRANS_SID_BUFFERED), true);
+    } else if !crate::handler_ipc::write_response_start(
+        fd,
+        *core::ptr::addr_of!(RESPONSE_STATUS),
+        &*core::ptr::addr_of!(RESPONSE_HEADERS),
+    ) {
+        abort_failed_response_stream();
+    }
+}
+
+/// Backs PHP `flush()`: sends the status and headers now, before any body output, as PHP's
+/// built-in server does, and asks the worker not to hold them (or a gzip prefix) back. Body
+/// bytes already stream as they are written. A no-op outside a streaming handler child, and
+/// while trans-SID holds the whole response for rewriting.
+///
+/// # Safety
+/// Single-threaded per worker (see module docs).
+#[no_mangle]
+pub unsafe extern "C" fn elephc_web_flush() {
+    let fd = *core::ptr::addr_of!(RESPONSE_STREAM_FD);
+    if fd < 0 {
+        return;
+    }
+    commit_response_stream(fd);
+    if !*core::ptr::addr_of!(RESPONSE_TRANS_SID_BUFFERED)
+        && !crate::handler_ipc::write_response_flush(fd)
+    {
         abort_failed_response_stream();
     }
 }

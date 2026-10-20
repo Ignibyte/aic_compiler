@@ -48818,7 +48818,9 @@
       "variadic": null
     },
     "eval_only": false,
-    "examples": [],
+    "examples": [
+      "```php\n// Full example: examples/web-flush/main.php\nheader('X-Report: building');\nflush(); // under --web the status and headers leave now\nsleep(1);\necho \"done\\n\";\n```"
+    ],
     "in_catalog": true,
     "is_extension": false,
     "is_internal": false,
@@ -48829,8 +48831,9 @@
       "codegen_function": "lower_registry_call",
       "codegen_line": 700,
       "notes": [
-        "Uses the `eir_primitive` strategy from the single-source builtin descriptor.",
-        "Emits backend-neutral EIR primitives or a small EIR graph through `BuiltinLoweringContext`."
+        "Uses the `runtime_call` strategy from the single-source builtin descriptor.",
+        "Emits the typed EIR target `runtime.flush` through `BuiltinLoweringContext`.",
+        "The backend resolves that typed target through `src/codegen/lower_inst/runtime_calls.rs`; PHP builtin names do not participate in dispatch."
       ],
       "runtime_helpers": [],
       "sig_arm": null,
@@ -48842,26 +48845,47 @@
     "semantics": {
       "argument_lowering": "standard",
       "callable": {
-        "kind": "dynamic"
+        "kind": "dynamic_target",
+        "target": "flush"
       },
       "effects": {
         "kind": "static",
-        "names": []
+        "names": [
+          "reads_local",
+          "writes_local",
+          "reads_heap",
+          "writes_heap",
+          "reads_global",
+          "reads_fs",
+          "writes_fs",
+          "reads_process",
+          "writes_process",
+          "output",
+          "alloc_heap",
+          "alloc_concat",
+          "may_throw",
+          "may_fatal",
+          "may_warn",
+          "may_deopt"
+        ]
       },
       "lowering": {
-        "kind": "eir"
+        "kind": "runtime_call",
+        "target": "flush"
       },
       "ownership": {
         "argument_indexes": [],
-        "kind": "non_heap"
+        "kind": "may_alias_arguments"
       },
       "requirements": {
         "kind": "static",
         "values": []
       },
       "result_type": "declared",
-      "runtime_functions": [],
-      "target_strategy": "eir_primitive",
+      "runtime_functions": [
+        "flush"
+      ],
+      "target_strategy": "runtime_call",
       "target_support": [
         "macos-aarch64",
         "ios-arm64",

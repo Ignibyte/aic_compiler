@@ -1075,6 +1075,9 @@ pub trait RuntimeValueOps {
 
     /// Stores the (semantically inert) implicit-flush flag.
     fn ob_implicit_flush(&mut self, enable: bool) -> Result<(), EvalStatus>;
+
+    /// Runs PHP `flush()`: freezes the response headers and, under `--web`, sends them.
+    fn flush(&mut self) -> Result<(), EvalStatus>;
 }
 
 pub(super) const EVAL_TAG_INT: u64 = 0;

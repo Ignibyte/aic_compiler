@@ -37,6 +37,9 @@ pub(super) fn lower(
         RuntimeFnId::Fflush => Some({
             crate::codegen::lower_inst::builtins::io::lower_fflush(ctx, inst)
         }),
+        RuntimeFnId::Flush => Some({
+            crate::codegen::lower_inst::builtins::system::lower_flush(ctx, inst)
+        }),
         RuntimeFnId::Fgetc => Some({
             crate::codegen::lower_inst::builtins::io::lower_fgetc(ctx, inst)
         }),
