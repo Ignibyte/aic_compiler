@@ -179,6 +179,30 @@ fn decl_extern_elephc_web_multipart_count() -> Stmt {
         .build()
 }
 
+/// `elephc_web_upload_register` — records an upload's temp file for this request.
+fn decl_extern_elephc_web_upload_register() -> Stmt {
+    extern_fn("elephc_web_upload_register", "elephc_web")
+        .param("path", CType::Str)
+        .returns(CType::Void)
+        .build()
+}
+
+/// `elephc_web_upload_is` — 1 when the path is an unmoved upload of this request.
+fn decl_extern_elephc_web_upload_is() -> Stmt {
+    extern_fn("elephc_web_upload_is", "elephc_web")
+        .param("path", CType::Str)
+        .returns(CType::Int)
+        .build()
+}
+
+/// `elephc_web_upload_forget` — drops a moved upload from this request's registry.
+fn decl_extern_elephc_web_upload_forget() -> Stmt {
+    extern_fn("elephc_web_upload_forget", "elephc_web")
+        .param("path", CType::Str)
+        .returns(CType::Void)
+        .build()
+}
+
 /// `elephc_web_multipart_name` — transcribed from the PHP form.
 fn decl_extern_elephc_web_multipart_name() -> Stmt {
     extern_fn("elephc_web_multipart_name", "elephc_web")
@@ -1124,6 +1148,7 @@ fn decl_stmt_bootstrap_26() -> Stmt {
                         e_binop(e_var("__elephc_mptmp"), BinOp::StrictNotEq, e_bool(false)),
                         vec![
                             s_expr(e_call("file_put_contents", vec![e_var("__elephc_mptmp"), e_var("__elephc_mpv")])),
+                            s_expr(e_call("elephc_web_upload_register", vec![e_var("__elephc_mptmp")])),
                             s_array_assign("_FILES", e_var("__elephc_mpn"), e_array_assoc(vec![(e_str("name"), e_var("__elephc_mpf")), (e_str("type"), e_call("elephc_web_multipart_type", vec![e_var("__elephc_mpi")])), (e_str("tmp_name"), e_var("__elephc_mptmp")), (e_str("error"), e_int(0)), (e_str("size"), e_call("strlen", vec![e_var("__elephc_mpv")]))])),
                         ],
                         vec![],
@@ -3050,6 +3075,50 @@ fn decl_fn_session_name() -> Stmt {
                 None,
             ),
             s_return(e_var("old")),
+        ])
+        .build()
+}
+
+/// `is_uploaded_file` — whether the path is one of this request's uploads, still unmoved.
+fn decl_fn_is_uploaded_file() -> Stmt {
+    function("is_uploaded_file")
+        .param("filename", TypeExpr::Str)
+        .returns(TypeExpr::Bool)
+        .body(vec![
+            s_return(e_binop(e_call("elephc_web_upload_is", vec![e_var("filename")]), BinOp::StrictEq, e_int(1))),
+        ])
+        .build()
+}
+
+/// `move_uploaded_file` — moves one of this request's uploads, as PHP does: a path that is not
+/// an upload is refused silently; a failed move warns; the moved file gets `0666 & ~umask()` and
+/// is no longer removed at request end.
+fn decl_fn_move_uploaded_file() -> Stmt {
+    function("move_uploaded_file")
+        .param("from", TypeExpr::Str)
+        .param("to", TypeExpr::Str)
+        .returns(TypeExpr::Bool)
+        .body(vec![
+            s_if(
+                e_binop(e_call("elephc_web_upload_is", vec![e_var("from")]), BinOp::StrictNotEq, e_int(1)),
+                vec![
+                    s_return(e_bool(false)),
+                ],
+                vec![],
+                None,
+            ),
+            s_if(
+                e_not(e_call("rename", vec![e_var("from"), e_var("to")])),
+                vec![
+                    s_expr(e_call("__elephc_web_trigger_error", vec![e_binop(e_binop(e_binop(e_binop(e_str("move_uploaded_file(): Unable to move \""), BinOp::Concat, e_var("from")), BinOp::Concat, e_str("\" to \"")), BinOp::Concat, e_var("to")), BinOp::Concat, e_str("\"")), e_const("E_WARNING")])),
+                    s_return(e_bool(false)),
+                ],
+                vec![],
+                None,
+            ),
+            s_expr(e_call("chmod", vec![e_var("to"), e_binop(e_int(0o666), BinOp::BitXor, e_binop(e_int(0o666), BinOp::BitAnd, e_call("umask", vec![])))])),
+            s_expr(e_call("elephc_web_upload_forget", vec![e_var("from")])),
+            s_return(e_bool(true)),
         ])
         .build()
 }
@@ -5163,6 +5232,9 @@ pub(crate) fn web_declarations(
             decl_extern_elephc_web_multipart_type(),
             decl_extern_elephc_web_multipart_value_ptr(),
             decl_extern_elephc_web_multipart_value_len(),
+            decl_extern_elephc_web_upload_register(),
+            decl_extern_elephc_web_upload_is(),
+            decl_extern_elephc_web_upload_forget(),
             decl_extern_elephc_web_session_reset(),
             decl_extern_elephc_web_session_get_name(),
             decl_extern_elephc_web_session_set_name(),
@@ -5307,6 +5379,8 @@ pub(crate) fn web_declarations(
             decl_fn_session_id(),
             decl_fn_session_name(),
             decl_fn_session_status(),
+            decl_fn_is_uploaded_file(),
+            decl_fn_move_uploaded_file(),
             decl_fn_session_unset(),
             decl_fn_session_encode(),
             decl_fn_session_decode(),

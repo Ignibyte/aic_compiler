@@ -2524,6 +2524,66 @@ fn web_gzip_compresses_when_accepted() {
     assert!(plain.ends_with(&"ABCD".repeat(500)), "plain body mismatch");
 }
 
+/// Verifies `is_uploaded_file()` and `move_uploaded_file()` accept only this request's uploads,
+/// that a move keeps the bytes and gives the file `0666 & ~umask()`, and that an upload the
+/// handler left in place is deleted when the request ends, in the default worker model and under
+/// pool isolation.
+#[test]
+fn web_move_uploaded_file_accepts_only_uploads_and_unmoved_ones_are_deleted() {
+    let src = r#"<?php
+$tmp = $_FILES['upload']['tmp_name'] ?? '';
+$to = $_GET['to'] ?? '';
+if ($to === '') {
+    echo $tmp;
+    return;
+}
+echo is_uploaded_file($tmp) ? 'up' : 'no', '|', is_uploaded_file(__FILE__) ? 'up' : 'no', '|';
+echo @move_uploaded_file(__FILE__, $to) ? 'moved' : 'refused', '|';
+echo move_uploaded_file($tmp, $to) ? 'moved' : 'failed', '|', file_get_contents($to), '|';
+echo file_exists($tmp) ? 'left' : 'gone', '|', is_uploaded_file($tmp) ? 'up' : 'no', '|';
+echo (fileperms($to) & 0777) === (0666 & ~umask()) ? 'mode' : 'badmode';
+"#;
+    let boundary = "Xbnd";
+    let body = format!(
+        "--{b}\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"up.txt\"\r\n\
+         Content-Type: text/plain\r\n\r\nFILEDATA-123\r\n--{b}--\r\n",
+        b = boundary
+    );
+    let ct = format!("multipart/form-data; boundary={}", boundary);
+    for mode in ["worker", "pool"] {
+        let dir = make_test_dir(&format!("web_move_uploaded_{mode}"));
+        let bin = if mode == "pool" {
+            compile_isolated_web(&dir, src, "app", "pool")
+        } else {
+            compile_web(&dir, src, "app")
+        };
+        let port = free_port();
+        let addr = format!("127.0.0.1:{port}");
+        let mut child = spawn_server(&bin, &addr, "1");
+        let dest = dir.join("moved.txt");
+        let moved = http_request(
+            &addr,
+            "POST",
+            &format!("/?to={}", dest.display()),
+            &[("Content-Type", &ct)],
+            &body,
+        );
+        let left = http_request(&addr, "POST", "/", &[("Content-Type", &ct)], &body);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(
+            moved.ends_with("up|no|refused|moved|FILEDATA-123|gone|no|mode"),
+            "{mode}: move_uploaded_file: {moved:?}"
+        );
+        let unmoved = raw_response_body(&left).trim().to_string();
+        assert!(unmoved.contains("elephc_up"), "{mode}: no upload temp path: {left:?}");
+        assert!(
+            !std::path::Path::new(&unmoved).exists(),
+            "{mode}: the unmoved upload {unmoved} outlived its request"
+        );
+    }
+}
+
 /// Verifies multipart/form-data parsing (A5): text fields land in $_POST and file
 /// uploads populate $_FILES (name, type, size). The request is built by hand to
 /// avoid depending on a multipart client.

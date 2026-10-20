@@ -473,5 +473,6 @@ fn run_handler(handler: extern "C" fn()) -> Vec<u8> {
     if secs > 0 {
         unsafe { libc::alarm(0); }
     }
+    crate::uploads::discard_unmoved();
     request_state::take_body()
 }

@@ -44030,7 +44030,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "error_log",
-      "codegen_line": 1761,
+      "codegen_line": 1786,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -71806,7 +71806,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "ini_get",
-      "codegen_line": 4398,
+      "codegen_line": 4467,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -72019,7 +72019,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "ini_set",
-      "codegen_line": 4905,
+      "codegen_line": 4974,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -76288,6 +76288,70 @@
     "since": null,
     "slug": "is_subclass_of",
     "sub_area": "Class"
+  },
+  {
+    "aot": {
+      "kind": "prelude",
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "filename",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "required_param_count": 1,
+      "signature_override_reason": null,
+      "supported": true,
+      "variadic": null
+    },
+    "area": "Web",
+    "canonical_name": "is_uploaded_file",
+    "description": "Tells whether the file was uploaded via HTTP POST.",
+    "eval": {
+      "kind": "none",
+      "supported": false,
+      "unsupported_reason": "eval-implementation-pending"
+    },
+    "eval_only": false,
+    "examples": [],
+    "in_catalog": true,
+    "is_extension": false,
+    "is_internal": false,
+    "lowering": {
+      "checker_file": null,
+      "checker_line": null,
+      "codegen_file": "src/web_prelude/build.rs",
+      "codegen_function": "is_uploaded_file",
+      "codegen_line": 3084,
+      "notes": [
+        "Implemented by the compiler-injected web prelude."
+      ],
+      "runtime_helpers": [],
+      "sig_arm": null,
+      "sig_file": "crates/elephc-builtin-contract/src/catalog_data.rs",
+      "sig_line": null
+    },
+    "module": "standard",
+    "name": "is_uploaded_file",
+    "semantics": null,
+    "sig": {
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "filename",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "return_type": "bool",
+      "variadic": null
+    },
+    "since": null,
+    "slug": "is_uploaded_file",
+    "sub_area": "Web"
   },
   {
     "aot": {
@@ -93647,6 +93711,84 @@
     "since": null,
     "slug": "mktime",
     "sub_area": "Date"
+  },
+  {
+    "aot": {
+      "kind": "prelude",
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "from",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "to",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "required_param_count": 2,
+      "signature_override_reason": null,
+      "supported": true,
+      "variadic": null
+    },
+    "area": "Web",
+    "canonical_name": "move_uploaded_file",
+    "description": "Moves an uploaded file to a new location.",
+    "eval": {
+      "kind": "none",
+      "supported": false,
+      "unsupported_reason": "eval-implementation-pending"
+    },
+    "eval_only": false,
+    "examples": [],
+    "in_catalog": true,
+    "is_extension": false,
+    "is_internal": false,
+    "lowering": {
+      "checker_file": null,
+      "checker_line": null,
+      "codegen_file": "src/web_prelude/build.rs",
+      "codegen_function": "move_uploaded_file",
+      "codegen_line": 3097,
+      "notes": [
+        "Implemented by the compiler-injected web prelude."
+      ],
+      "runtime_helpers": [],
+      "sig_arm": null,
+      "sig_file": "crates/elephc-builtin-contract/src/catalog_data.rs",
+      "sig_line": null
+    },
+    "module": "standard",
+    "name": "move_uploaded_file",
+    "semantics": null,
+    "sig": {
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "from",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "to",
+          "optional": false,
+          "type": "string"
+        }
+      ],
+      "return_type": "bool",
+      "variadic": null
+    },
+    "since": null,
+    "slug": "move_uploaded_file",
+    "sub_area": "Web"
   },
   {
     "aot": {
@@ -118106,7 +118248,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_abort",
-      "codegen_line": 3415,
+      "codegen_line": 3484,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118162,7 +118304,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_cache_expire",
-      "codegen_line": 3522,
+      "codegen_line": 3591,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118226,7 +118368,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_cache_limiter",
-      "codegen_line": 3494,
+      "codegen_line": 3563,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118282,7 +118424,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_commit",
-      "codegen_line": 3729,
+      "codegen_line": 3798,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118338,7 +118480,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_create_id",
-      "codegen_line": 3340,
+      "codegen_line": 3409,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118402,7 +118544,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_decode",
-      "codegen_line": 3106,
+      "codegen_line": 3175,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118458,7 +118600,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_destroy",
-      "codegen_line": 2956,
+      "codegen_line": 2981,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118506,7 +118648,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_encode",
-      "codegen_line": 3088,
+      "codegen_line": 3157,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118554,7 +118696,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_gc",
-      "codegen_line": 3385,
+      "codegen_line": 3454,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118602,7 +118744,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_get_cookie_params",
-      "codegen_line": 3550,
+      "codegen_line": 3619,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118658,7 +118800,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_id",
-      "codegen_line": 2992,
+      "codegen_line": 3017,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118722,7 +118864,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_module_name",
-      "codegen_line": 3749,
+      "codegen_line": 3818,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118786,7 +118928,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_name",
-      "codegen_line": 3021,
+      "codegen_line": 3046,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118850,7 +118992,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_regenerate_id",
-      "codegen_line": 3155,
+      "codegen_line": 3224,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118906,7 +119048,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_register_shutdown",
-      "codegen_line": 3739,
+      "codegen_line": 3808,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -118954,7 +119096,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_reset",
-      "codegen_line": 3447,
+      "codegen_line": 3516,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -119010,7 +119152,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_save_path",
-      "codegen_line": 3126,
+      "codegen_line": 3195,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -119066,7 +119208,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_set_cookie_params",
-      "codegen_line": 3569,
+      "codegen_line": 3638,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -119178,7 +119320,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_set_save_handler",
-      "codegen_line": 3786,
+      "codegen_line": 3855,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -119298,7 +119440,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_start",
-      "codegen_line": 1928,
+      "codegen_line": 1953,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -119354,7 +119496,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_status",
-      "codegen_line": 3059,
+      "codegen_line": 3128,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -119402,7 +119544,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_unset",
-      "codegen_line": 3069,
+      "codegen_line": 3138,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -119450,7 +119592,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "session_write_close",
-      "codegen_line": 2868,
+      "codegen_line": 2893,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -119825,7 +119967,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "setcookie",
-      "codegen_line": 1280,
+      "codegen_line": 1305,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],
@@ -119973,7 +120115,7 @@
       "checker_line": null,
       "codegen_file": "src/web_prelude/build.rs",
       "codegen_function": "setrawcookie",
-      "codegen_line": 1296,
+      "codegen_line": 1321,
       "notes": [
         "Implemented by the compiler-injected web prelude."
       ],

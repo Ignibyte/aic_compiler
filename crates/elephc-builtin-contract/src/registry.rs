@@ -157,8 +157,9 @@ mod tests {
         // feature; see `crate::catalog_curl`'s module doc.
         let curl_surface = if cfg!(feature = "curl") { 34 } else { 0 };
         // +11 over main: the `__elephc_opcache_rt_*` runtime script-cache helpers this
-        // branch adds (see `support.rs` for the roll-call). +1: `flush`.
-        assert_eq!(contracts().len(), 1161 + curl_surface);
+        // branch adds (see `support.rs` for the roll-call). +1: `flush`. +2: the `--web`
+        // prelude's `is_uploaded_file` and `move_uploaded_file`.
+        assert_eq!(contracts().len(), 1163 + curl_surface);
         assert_eq!(lookup("STRLEN").map(|contract| contract.name), Some("strlen"));
         assert_eq!(lookup("\\parse_url").map(|contract| contract.name), Some("parse_url"));
     }

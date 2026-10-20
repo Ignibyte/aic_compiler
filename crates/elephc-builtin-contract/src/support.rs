@@ -391,16 +391,18 @@ mod tests {
         //
         // None of the eleven is callable from eval'd code.
         assert_eq!(eval_internal, 125);
-        // 28 registry builtins awaiting eval homes, plus the 325 PHP-visible prelude-provided
-        // and name-resolver-rewritten functions eval does not reach (see `eval_support`).
-        assert_eq!(eval_pending, 353);
+        // 28 registry builtins awaiting eval homes, plus the 327 PHP-visible prelude-provided
+        // and name-resolver-rewritten functions eval does not reach (see `eval_support`), the
+        // `--web` upload pair included.
+        assert_eq!(eval_pending, 355);
         // The shared mbstring catalog adds sixty-four registry contracts, including
         // its internal INI helper, to the prior compiler registry surface; the eleven
         // `__elephc_opcache_rt_*` runtime script-cache helpers rolled through above add the rest.
         assert_eq!(aot_registry, 752);
         // Compiler transforms, constructs, dedicated syntax, preludes, and
-        // name-resolver rewrites remain outside the ordinary AOT registry.
-        assert_eq!(aot_external, 409 + curl_surface);
+        // name-resolver rewrites remain outside the ordinary AOT registry, the `--web` upload
+        // pair included.
+        assert_eq!(aot_external, 411 + curl_surface);
     }
 
     /// Verifies representative exceptional routes are attached to their contracts.
@@ -449,8 +451,9 @@ mod tests {
         assert_eq!(hybrid_adapter, 2);
         assert_eq!(interpreter_adapter, 596 + curl_surface);
         // Includes the eleven `__elephc_opcache_rt_*` helpers: they lower to an eval-bridge
-        // call from AOT code and have no eval execution route of their own.
-        assert_eq!(unsupported, 478);
+        // call from AOT code and have no eval execution route of their own. +2: the `--web`
+        // prelude's `is_uploaded_file` and `move_uploaded_file`.
+        assert_eq!(unsupported, 480);
         assert_eq!(
             eval_execution(lookup("strval").expect("strval contract")),
             Some(EvalExecution::Adapter {
