@@ -2236,6 +2236,24 @@ echo $result;
     assert_eq!(out, "price: [123] and [456]");
 }
 
+/// Verifies `preg_replace_callback` returns a valid empty string for an empty subject, so the
+/// result survives being copied, compared and coalesced.
+#[test]
+fn test_preg_replace_callback_empty_subject_returns_empty_string() {
+    let out = compile_and_run(
+        r#"<?php
+$callback = static fn (array $matches): string => "[" . $matches[0] . "]";
+$empty = preg_replace_callback("/x/", $callback, "");
+$kept = $empty;
+echo "(", $kept, ")", strlen($kept), "|";
+echo "(", preg_replace_callback("/x/", $callback, "") ?? "null", ")|";
+echo $empty === "" ? "empty" : "other", "|";
+echo preg_replace_callback("/x/", $callback, "axb");
+"#,
+    );
+    assert_eq!(out, "()0|()|empty|a[x]b");
+}
+
 /// Verifies `preg_replace_callback` exposes both complete match `$matches[0]` and numbered
 /// capture groups `$matches[1]`, `$matches[2]` to the closure.
 #[test]
