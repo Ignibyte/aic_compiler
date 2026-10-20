@@ -2,7 +2,7 @@
 title: "__elephc_curl_easy_setopt_long() - internals"
 description: "Compiler internals for __elephc_curl_easy_setopt_long(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 1101
+  order: 1103
 ---
 
 ## `__elephc_curl_easy_setopt_long()` - internals

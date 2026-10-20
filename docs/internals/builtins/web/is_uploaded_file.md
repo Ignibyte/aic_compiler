@@ -2,7 +2,7 @@
 title: "is_uploaded_file() - internals"
 description: "Compiler internals for is_uploaded_file(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 985
+  order: 981
 ---
 
 ## `is_uploaded_file()` - internals

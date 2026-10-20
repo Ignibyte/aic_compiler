@@ -2,7 +2,7 @@
 title: "__elephc_shared_ini() - internals"
 description: "Compiler internals for __elephc_shared_ini(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 1177
+  order: 1179
 ---
 
 ## `__elephc_shared_ini()` - internals

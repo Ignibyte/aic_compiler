@@ -2,7 +2,7 @@
 title: "move_uploaded_file() - internals"
 description: "Compiler internals for move_uploaded_file(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 986
+  order: 982
 ---
 
 ## `move_uploaded_file()` - internals

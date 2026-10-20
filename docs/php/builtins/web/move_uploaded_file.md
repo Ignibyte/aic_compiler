@@ -2,7 +2,7 @@
 title: "move_uploaded_file()"
 description: "Moves an uploaded file to a new location."
 sidebar:
-  order: 986
+  order: 982
 ---
 
 ## move_uploaded_file()

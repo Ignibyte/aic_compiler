@@ -2,7 +2,7 @@
 title: "is_uploaded_file()"
 description: "Tells whether the file was uploaded via HTTP POST."
 sidebar:
-  order: 985
+  order: 981
 ---
 
 ## is_uploaded_file()

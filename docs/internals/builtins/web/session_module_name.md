@@ -2,7 +2,7 @@
 title: "session_module_name() - internals"
 description: "Compiler internals for session_module_name(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 992
+  order: 994
 ---
 
 ## `session_module_name()` - internals
@@ -10,7 +10,7 @@ sidebar:
 ## Where it lives
 
 - **Signature**: [`crates/elephc-builtin-contract/src/catalog_data.rs`](https://github.com/illegalstudio/elephc/blob/main/crates/elephc-builtin-contract/src/catalog_data.rs)
-- **Lowering**: [`src/web_prelude/build.rs`:3749](https://github.com/illegalstudio/elephc/blob/main/src/web_prelude/build.rs#L3749) (`session_module_name`)
+- **Lowering**: [`src/web_prelude/build.rs`:3818](https://github.com/illegalstudio/elephc/blob/main/src/web_prelude/build.rs#L3818) (`session_module_name`)
 - **Function symbol**: `session_module_name()`
 
 

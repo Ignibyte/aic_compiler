@@ -2,7 +2,7 @@
 title: "__elephc_opcache_rt_soft_invalidate() - internals"
 description: "Compiler internals for __elephc_opcache_rt_soft_invalidate(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 1152
+  order: 1154
 ---
 
 ## `__elephc_opcache_rt_soft_invalidate()` - internals

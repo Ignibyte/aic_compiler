@@ -2,7 +2,7 @@
 title: "session_decode()"
 description: "Loads serialized session data into the session superglobal."
 sidebar:
-  order: 986
+  order: 988
 ---
 
 ## session_decode()

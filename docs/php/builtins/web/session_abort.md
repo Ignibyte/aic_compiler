@@ -2,7 +2,7 @@
 title: "session_abort()"
 description: "Discards the session changes made in this request and closes the session."
 sidebar:
-  order: 981
+  order: 983
 ---
 
 ## session_abort()
