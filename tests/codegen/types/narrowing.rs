@@ -900,3 +900,30 @@ echo (new Console(['ping' => new Ping()]))->run(['aic', 'ping']), "\n";
     );
     assert_eq!(out, "pong\n0\n");
 }
+
+/// Verifies an early exit inside an `if` narrows only the paths through it: after the enclosing
+/// `if`, which either returned or never ran the inner guard, `$value` is `mixed` again.
+#[test]
+fn test_early_exit_narrowing_stays_inside_its_enclosing_if() {
+    let out = compile_and_run(
+        r#"<?php
+final class H { public int $h = 7; }
+function f(int $kind, mixed $value): int {
+    if ($kind === 3) {
+        if (!is_array($value)) { throw new Exception("x"); }
+        return count($value);
+    }
+    return $value->h;
+}
+function g(int $kind, mixed $value): string {
+    if ($kind === 3) {
+        if (!is_array($value)) { return "scalar"; }
+        echo count($value), ":";
+    }
+    return is_object($value) ? "object" : "array";
+}
+echo f(1, new H()), "|", f(3, [1, 2]), "|", g(1, new H()), "|", g(3, [1]), "\n";
+"#,
+    );
+    assert_eq!(out, "7|2|object|1:array\n");
+}

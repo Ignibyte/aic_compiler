@@ -658,6 +658,7 @@ impl Checker {
                         ));
 
                         // Check the guarded body with the "then" type.
+                        let body_mark = self.kept_narrowings.len();
                         let saved = env.get(&guard.var).cloned();
                         env.insert(guard.var.clone(), guard.then_ty.clone());
                         for s in *body {
@@ -665,6 +666,7 @@ impl Checker {
                                 errors.extend(error.flatten());
                             }
                         }
+                        self.undo_kept_narrowings_since(body_mark, env);
                         // Join only when the then-branch WROTE the guarded place, i.e. when the
                         // fact at branch exit is no longer the guard's own `then` type. That is
                         // exactly the lazy-initialization shape; joining unconditionally would
@@ -695,11 +697,13 @@ impl Checker {
                         self.republish_flow_narrowing(&guard.var, &guard.else_ty);
                     } else {
                         // No narrowing for this clause — check the body with the current env.
+                        let body_mark = self.kept_narrowings.len();
                         for s in *body {
                             if let Err(error) = self.check_stmt(s, env) {
                                 errors.extend(error.flatten());
                             }
                         }
+                        self.undo_kept_narrowings_since(body_mark, env);
                         if !self.body_cannot_fall_through(body) {
                             callable_target_exits.push(self.callable_array_targets.clone());
                             callable_target_version_exits
@@ -718,11 +722,13 @@ impl Checker {
                 let mut else_exit_ty: Option<Option<PhpType>> = None;
                 let mut else_falls_through = else_body.is_none();
                 if let Some(body) = else_body {
+                    let body_mark = self.kept_narrowings.len();
                     for s in body {
                         if let Err(error) = self.check_stmt(s, env) {
                             errors.extend(error.flatten());
                         }
                     }
+                    self.undo_kept_narrowings_since(body_mark, env);
                     else_falls_through = !self.body_cannot_fall_through(body);
                 }
                 if else_falls_through {
@@ -772,6 +778,18 @@ impl Checker {
                     }
                     if let Some((key, joined)) = joined {
                         env.insert(key, joined);
+                    }
+                } else {
+                    // Logged so an enclosing `if` clause or loop body can undo it: the kept
+                    // complement holds for the code after THIS `if`, inside whatever contains it.
+                    for (var, original) in &saved_vars {
+                        if let Some(narrowed) = env.get(var) {
+                            self.kept_narrowings.push(crate::types::checker::KeptNarrowing {
+                                var: var.clone(),
+                                original: original.clone(),
+                                narrowed: narrowed.clone(),
+                            });
+                        }
                     }
                 }
                 // Closed for the construct even when the complement is KEPT for the code after
@@ -1163,7 +1181,11 @@ impl Checker {
         // loop cannot be trusted inside it.
         Self::purge_property_narrowings(env);
         self.break_continue_depth += 1;
+        let body_mark = self.kept_narrowings.len();
         let errors = self.check_body(body, env);
+        // An early exit inside the body narrows the rest of one iteration, not the code after
+        // the loop, which may run after no iteration at all.
+        self.undo_kept_narrowings_since(body_mark, env);
         self.break_continue_depth -= 1;
         errors
     }
