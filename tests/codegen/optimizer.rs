@@ -20,6 +20,7 @@ mod bcmath_number;
 mod boxed_array_snapshots;
 mod implode_effects;
 mod spread_effects;
+mod strip_tags_effects;
 
 #[path = "optimizer/branch_simplification.rs"]
 mod branch_simplification;
@@ -33,6 +34,8 @@ mod constant_propagation;
 mod control_flow_normalization;
 #[path = "optimizer/checked_int_sink.rs"]
 mod checked_int_sink;
+#[path = "optimizer/bounded_mixed_counter.rs"]
+mod bounded_mixed_counter;
 #[path = "optimizer/checked_numeric_chain.rs"]
 mod checked_numeric_chain;
 #[path = "optimizer/concat_reset.rs"]
@@ -77,6 +80,7 @@ mod integer_range;
 mod memory_model_propagation;
 #[path = "optimizer/mem2reg.rs"]
 mod mem2reg;
+mod buffer_access;
 #[path = "optimizer/warning_globals.rs"]
 mod warning_globals;
 
@@ -87,3 +91,6 @@ mod machine_peepholes;
 
 #[path = "optimizer/tail_call.rs"]
 mod tail_call;
+
+#[path = "optimizer/stack_numeric.rs"]
+mod stack_numeric;

@@ -65,6 +65,7 @@ const _: () = assert!(std::mem::size_of::<Instruction>() <= 112);
 /// Optimization pass recorded as an instruction's provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PassOrigin {
+    BufferAccess,
     ConstFold,
     IntegerRange,
     Licm,
@@ -75,6 +76,7 @@ impl PassOrigin {
     /// Returns the lower-case spelling used by source maps and the EIR printer.
     pub fn name(self) -> &'static str {
         match self {
+            PassOrigin::BufferAccess => "buffer_access",
             PassOrigin::ConstFold => "const_fold",
             PassOrigin::IntegerRange => "integer_range",
             PassOrigin::Licm => "licm",
@@ -126,6 +128,8 @@ pub enum Immediate {
     FloatKeyDiagnostic,
     /// Converts a string offset with runtime cast diagnostics for boxed values.
     StringOffsetCast,
+    /// Binds an already validated float-shaped runtime argument to int with precision diagnostics.
+    ImplicitIntCast,
     Data(DataId),
     /// Data-pool reference carrying the strict-PHP profile of its physical call site.
     ProfiledData {
@@ -1087,6 +1091,7 @@ pub enum Op {
     ExprCall,
     FirstClassCallableNew,
     CallableArrayNew,
+    /// Invokes a descriptor with callback, argument container, and optional source-strict Bool.
     CallableDescriptorInvoke,
     PipeCall,
     PtrCast,
@@ -1100,6 +1105,15 @@ pub enum Op {
     BufferLen,
     BufferGet,
     BufferSet,
+    /// Speculatively resolves a buffer handle to its static descriptor address, or 0 for an
+    /// invalid, freed, or stale handle. Never faults: the access that consumes the descriptor
+    /// reports the use-after-free, so the resolution can run ahead of it in a loop preheader.
+    BufferResolve,
+    /// `buffer_get` through a descriptor from `BufferResolve`: `[descriptor, index]`. Faults
+    /// with the use-after-free diagnostic on a zero descriptor, then bounds-checks the index.
+    BufferGetResolved,
+    /// `buffer_set` through a descriptor from `BufferResolve`: `[descriptor, index, value]`.
+    BufferSetResolved,
     BufferFree,
     PackedFieldGet,
     PackedFieldSet,
@@ -1270,9 +1284,13 @@ impl Op {
                 | E::WRITES_GLOBAL | E::ALLOC_HEAP | E::MAY_THROW | E::REFCOUNT_OP,
             IsNull | IsTruthy | TypePredicate | MixedUnbox | MixedCastBool | MixedCastInt
             | MixedCastFloat | BufferGet | BufferLen | PackedFieldGet | PtrRead
-            | PtrReadString => {
+            | PtrReadString | BufferGetResolved => {
                 E::READS_HEAP | E::MAY_FATAL
             }
+            // Reads the static descriptor registry and never faults.
+            BufferResolve => E::READS_HEAP,
+            // One scalar store into the validated payload: no refcounted element is replaced.
+            BufferSetResolved => E::WRITES_HEAP | E::MAY_FATAL,
             ArrayGetSilent | HashGetSilent | ArrayIsset | HashIsset | DescriptorArgKeyExists => {
                 E::READS_HEAP
             }
@@ -1472,6 +1490,23 @@ impl Op {
             effects | Effects::REFCOUNT_OP | Effects::WRITES_HEAP
         } else {
             effects
+        }
+    }
+
+    /// Returns the exact effects of a `prop_get` or `prop_set` on a `packed class` record.
+    ///
+    /// The read is a single load from the record. The write is a single store of a scalar the
+    /// lowering already narrowed or, for a nested packed record field, a copy of the source
+    /// record, so it reads the heap as well; `MAY_FATAL` stays for the payload guard a
+    /// `false`-typed field keeps and the null check of a `ptr<T>` copy source. Neither can warn,
+    /// throw, run user code, or touch the concat scratch. Effect refinement attaches these to
+    /// packed receivers, and the validator accepts exactly this value as the one refinement of an
+    /// otherwise default-only `prop_set`.
+    pub fn packed_field_access_effects(self) -> Effects {
+        if self == Op::PropSet {
+            Effects::READS_HEAP | Effects::WRITES_HEAP | Effects::MAY_FATAL
+        } else {
+            Effects::READS_HEAP
         }
     }
 
@@ -1764,6 +1799,9 @@ impl Op {
             BufferLen => "buffer_len",
             BufferGet => "buffer_get",
             BufferSet => "buffer_set",
+            BufferResolve => "buffer_resolve",
+            BufferGetResolved => "buffer_get_resolved",
+            BufferSetResolved => "buffer_set_resolved",
             BufferFree => "buffer_free",
             PackedFieldGet => "packed_field_get",
             PackedFieldSet => "packed_field_set",

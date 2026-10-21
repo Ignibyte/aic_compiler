@@ -17,10 +17,12 @@
 //! - Canonical null and legacy null-container payloads autovivify through the
 //!   shared cell helper before any container header is dereferenced.
 //! - Packed invoker-marker overwrites promote to the shared hash setter to retain caller identity.
+//! - Callable payloads are Closure objects, not class-table pointers; rejected writes name them directly.
 
 use crate::codegen_support::abi;
 use crate::codegen_support::emit::Emitter;
 use crate::codegen_support::platform::Arch;
+use crate::codegen_support::runtime::data::CLOSURE_CLASS_NAME;
 use crate::codegen_support::sentinels::emit_branch_if_null_container;
 
 /// Emits the `__rt_mixed_array_set` runtime helper for writing into boxed Mixed arrays.
@@ -80,6 +82,8 @@ fn emit_mixed_array_set_aarch64(emitter: &mut Emitter) {
     emitter.instruction("b.eq __rt_mixed_array_set_assoc");                     // route hash arrays to key-based mutation
     emitter.instruction("cmp x9, #6");                                          // is the Mixed payload an object?
     emitter.instruction("b.eq __rt_mixed_array_set_object");                    // route runtime-managed ArrayAccess objects to offsetSet
+    emitter.instruction("cmp x9, #10");                                         // callable payloads are PHP Closure objects
+    emitter.instruction("b.eq __rt_mixed_array_set_closure_not_indexable");     // reject the write without interpreting a callable as a class-table object
     emitter.instruction("cmp x9, #8");                                          // is the target a canonical Mixed null?
     emitter.instruction("b.eq __rt_mixed_array_set_autovivify");                // PHP keyed writes autovivify null into an array
     emitter.instruction("b __rt_mixed_array_set_drop");                         // non-array Mixed payloads cannot be mutated here
@@ -323,6 +327,17 @@ fn emit_mixed_array_set_aarch64(emitter: &mut Emitter) {
     emitter.instruction("add sp, sp, #80");                                     // release the helper frame before the tail-call
     emitter.instruction("b __rt_throw_object_not_array");                       // never returns
 
+    // -- reject a Closure after retiring the consumed write value --
+    // A callable descriptor has no class id to look up, but PHP still names it as Closure.
+    emitter.label("__rt_mixed_array_set_closure_not_indexable");
+    emitter.instruction("ldr x0, [sp, #24]");                                   // reload the owned boxed value consumed by the rejected write
+    emitter.instruction("bl __rt_decref_mixed");                                // retire the unused value before constructing its Error
+    abi::emit_symbol_address(emitter, "x1", "_closure_class_name");
+    abi::emit_load_int_immediate(emitter, "x2", CLOSURE_CLASS_NAME.len() as i64);
+    emitter.instruction("ldp x29, x30, [sp, #64]");                             // restore the caller frame before the named-error tail call
+    emitter.instruction("add sp, sp, #80");                                     // release the setter frame before unwinding
+    emitter.instruction("b __rt_throw_object_not_array_name");                  // throw a catchable Error using the literal Closure name
+
     emitter.label("__rt_mixed_array_set_reference");
     emitter.instruction("ldr x1, [sp, #24]");                                   // borrow the incoming value for reference assignment
     emitter.instruction("bl __rt_reference_replace");                           // publish an independent value in the existing shared wrapper
@@ -373,6 +388,8 @@ fn emit_mixed_array_set_x86_64(emitter: &mut Emitter) {
     emitter.instruction("je __rt_mixed_array_set_assoc");                       // route hash arrays to key-based mutation
     emitter.instruction("cmp r10, 6");                                          // is the Mixed payload an object?
     emitter.instruction("je __rt_mixed_array_set_object");                      // route runtime-managed ArrayAccess objects to offsetSet
+    emitter.instruction("cmp r10, 10");                                         // callable payloads are PHP Closure objects
+    emitter.instruction("je __rt_mixed_array_set_closure_not_indexable");       // reject the write without treating its descriptor as a class-table object
     emitter.instruction("cmp r10, 8");                                          // is the target a canonical Mixed null?
     emitter.instruction("je __rt_mixed_array_set_autovivify");                  // PHP keyed writes autovivify null into an array
     emitter.instruction("jmp __rt_mixed_array_set_drop");                       // non-array Mixed payloads cannot be mutated here
@@ -606,6 +623,17 @@ fn emit_mixed_array_set_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov rsp, rbp");                                        // restore stack pointer
     emitter.instruction("pop rbp");                                             // restore caller frame pointer before the tail-call
     emitter.instruction("jmp __rt_throw_object_not_array");                     // never returns
+
+    // -- reject a Closure after retiring the consumed write value --
+    // A callable descriptor has no class id to look up, but PHP still names it as Closure.
+    emitter.label("__rt_mixed_array_set_closure_not_indexable");
+    emitter.instruction("mov rax, QWORD PTR [rbp - 32]");                       // reload the owned boxed value consumed by the rejected write
+    emitter.instruction("call __rt_decref_mixed");                              // retire the unused value before constructing its Error
+    abi::emit_symbol_address(emitter, "rax", "_closure_class_name");
+    abi::emit_load_int_immediate(emitter, "rdx", CLOSURE_CLASS_NAME.len() as i64);
+    emitter.instruction("mov rsp, rbp");                                        // release the setter frame before the tail call
+    emitter.instruction("pop rbp");                                             // restore the caller frame before unwinding
+    emitter.instruction("jmp __rt_throw_object_not_array_name");                // throw a catchable Error using the literal Closure name
 
     emitter.label("__rt_mixed_array_set_reference");
     emitter.instruction("mov rdi, QWORD PTR [rbp - 32]");                       // borrow the incoming value for reference assignment

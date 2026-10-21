@@ -49,6 +49,44 @@ echo $enemies[0]->x;   // 100
 
 Buffer indices may be statically typed as `int` or `mixed`. A `mixed` index is converted to `int` at runtime before bounds checking; a statically known non-integer index is rejected at compile time.
 
+## Buffers in class members
+
+Class members can name `buffer<T>` like any other type, including buffers of
+packed classes: properties, method parameters and return types, promoted
+constructor parameters, and generic type arguments.
+
+```php
+<?php
+packed class Vec2 { public float $x; public float $y; }
+
+final class Points {
+    public buffer<Vec2> $data;
+
+    public function __construct(int $n) {
+        $this->data = buffer_new<Vec2>($n);
+    }
+
+    public function moveX(int $i, float $dx): void {
+        $this->data[$i]->x = $this->data[$i]->x + $dx;
+    }
+
+    public function all(): buffer<Vec2> {
+        return $this->data;
+    }
+}
+
+final class Store<T> {
+    public function __construct(public buffer<T> $items) {}
+}
+
+$store = new Store<Vec2>(buffer_new<Vec2>(16));
+```
+
+Packed element fields can be written through a buffer-typed property, as in
+`moveX()` above. Writing a whole element through a property
+(`$this->ids[$i] = 42` on a `buffer<int>` property) is not supported yet, and
+a static property cannot hold a buffer yet.
+
 ## Buffer length
 
 ```php

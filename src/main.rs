@@ -80,6 +80,8 @@ mod superglobals;
 #[allow(dead_code)]
 mod synthetic_class;
 mod termination;
+mod test_command;
+mod testing_prelude;
 mod timings;
 mod types;
 mod tz_prelude;
@@ -126,6 +128,7 @@ fn main_inner() {
         }
         cli::Command::Native(command) => run_native(command),
         cli::Command::Monitor(command) => std::process::exit(monitor::run(command)),
+        cli::Command::Test(command) => std::process::exit(test_command::run(command)),
     }
 }
 

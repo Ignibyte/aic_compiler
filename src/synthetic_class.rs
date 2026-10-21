@@ -2257,6 +2257,7 @@ impl ExternFnBuilder {
 pub struct ClassBuilder {
     name: String,
     is_final: bool,
+    is_abstract: bool,
     extends: Option<Name>,
     implements: Vec<Name>,
     constants: Vec<ClassConst>,
@@ -2269,6 +2270,7 @@ pub fn class(name: &str) -> ClassBuilder {
     ClassBuilder {
         name: name.to_string(),
         is_final: false,
+        is_abstract: false,
         extends: None,
         implements: Vec::new(),
         constants: Vec::new(),
@@ -2281,6 +2283,14 @@ impl ClassBuilder {
     /// Makes the class `final`.
     pub fn final_(mut self) -> Self {
         self.is_final = true;
+        self
+    }
+
+    /// Makes the class `abstract`: it can be extended but not instantiated. Its methods are
+    /// still ordinary built methods; an abstract METHOD is an interface-style signature and
+    /// is not modelled here.
+    pub fn abstract_(mut self) -> Self {
+        self.is_abstract = true;
         self
     }
 
@@ -2479,7 +2489,7 @@ impl ClassBuilder {
             name: self.name,
                 extends: self.extends,
                 implements: self.implements,
-                is_abstract: false,
+                is_abstract: self.is_abstract,
                 is_final: self.is_final,
                 is_readonly_class: false,
                 trait_uses: Vec::new(),

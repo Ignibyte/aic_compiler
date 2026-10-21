@@ -84,12 +84,12 @@ pub enum RuntimeCallTarget {
     /// Fetches an intermediate array element in write context, installing an
     /// empty child container when the addressed parent slot is missing or null.
     ArrayFetchForWrite,
-    /// Fetches a parent whose key conversion was diagnosed by the preceding compound read.
+    /// Fetches a parent whose key conversion was diagnosed by the update's preceding read.
     ArrayFetchForWriteAlreadyDiagnosed,
     /// Fetches through a pending append parent, preserving a payload-only survivor selected
     /// before a diagnostic callback instead of separating it through ordinary COW.
     PendingAppendFetchForWrite,
-    /// Fetches through a pending append parent after the compound read diagnosed its key.
+    /// Fetches through a pending append parent after the update read diagnosed its key.
     PendingAppendFetchForWriteAlreadyDiagnosed,
     /// Retains the concrete cell behind PHP wrappers and boxed caller-reference markers.
     MixedCellResolveForWrite,
@@ -101,6 +101,8 @@ pub enum RuntimeCallTarget {
     StringWriteOffset,
     /// Sends one complete PHP warning or deprecation line through the shared handler dispatcher.
     WriteDiagnostic,
+    /// Tests whether a pinned Mixed cell still has an owner besides the pending write.
+    MixedCellHasOtherOwner,
     /// Borrows a boxed PHP array and returns an independently owned hash for literal unpacking.
     /// Rejects non-array values without mutating the original cell or its payload.
     ArrayUnpackToHash,
@@ -188,7 +190,8 @@ impl RuntimeCallTarget {
             RuntimeCallTarget::WriteDiagnostic => Some(RuntimeCallSignature::Fixed {
                 parameters: &[IrType::Str], result: IrType::Void,
             }),
-            RuntimeCallTarget::MixedArrayCellHasLiveOwner => Some(RuntimeCallSignature::Fixed {
+            RuntimeCallTarget::MixedArrayCellHasLiveOwner
+            | RuntimeCallTarget::MixedCellHasOtherOwner => Some(RuntimeCallSignature::Fixed {
                 parameters: &[IrType::Heap(IrHeapKind::Mixed)], result: IrType::I64,
             }),
             RuntimeCallTarget::MixedCellPromoteToHash(_)
@@ -268,6 +271,7 @@ impl RuntimeCallTarget {
             RuntimeCallTarget::MixedCellResolveForWrite => "array.mixed_cell_resolve_for_write",
             RuntimeCallTarget::MixedArrayCellHasLiveOwner => "array.mixed_cell_has_live_owner",
             RuntimeCallTarget::WriteDiagnostic => "diagnostic.write",
+            RuntimeCallTarget::MixedCellHasOtherOwner => "mixed.has_other_owner",
             RuntimeCallTarget::ArrayUnpackToHash => "array.unpack_to_hash",
             RuntimeCallTarget::MixedCellPromoteToHash(ArrayKeySort::Ascending) => {
                 "array.mixed_cell_promote_to_hash_ksort"

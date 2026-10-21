@@ -49,6 +49,8 @@ This page explains where every value lives in memory at runtime.
 │                              │  _rt_diag_suppression, _rt_diag_pending_*,
 │                              │  _php_diagnostic_*,
 │                              │  _rt_unmanaged_ref_borrow_top,
+│                              │  _obj_handle_index, _obj_handle_free/_top,
+│                              │  _obj_weak_reference_index,
 │                              │  _resource_inventory_head/_tail,
 │                              │  _json_last_error, _json_active_*,
 │                              │  _json_indent_depth, _json_validate_*,
@@ -111,7 +113,7 @@ For heap-backed values, stack slots also carry compile-time ownership metadata i
 | `Array` | 8 bytes | Pointer to heap-allocated header |
 | `AssocArray` | 8 bytes | Pointer to heap-allocated hash table |
 | `Iterable` | 8 bytes | Type-erased heap pointer for arrays or Traversable objects |
-| `Mixed` | 8 bytes | Pointer to heap-allocated boxed mixed cell |
+| `Mixed` | 8 bytes | Pointer to a boxed Mixed cell, normally heap-allocated |
 | `Void` (null) | 8 bytes | Sentinel value `0x7FFFFFFFFFFFFFFE` |
 | `Object` | 8 bytes | Pointer to heap-allocated object |
 | `Callable` | 8 bytes | Function pointer |
@@ -121,6 +123,29 @@ For heap-backed values, stack slots also carry compile-time ownership metadata i
 | `Packed` | 8 bytes | Metadata-only nominal type, accessed via pointer |
 | `Union` | 8 bytes | Boxed runtime-tagged payload (same storage as Mixed) |
 | `TaggedScalar` | 16 bytes | 8-byte payload + 8-byte runtime tag (tagged null representation) |
+
+### Nonescaping checked numeric results
+
+Checked integer add, subtract and multiply can use a 24-byte cell reserved in the
+current function's frame. The cell retains the ordinary Mixed tag and two payload
+words. Overflow converts both original integers to double and writes a float tag;
+the optimization does not narrow the arithmetic domain or replace promotion with
+a fatal error. Frame sizing and instruction emission support all five targets.
+
+`src/codegen/stack_numeric.rs` proves the complete use graph before frame layout.
+Only same-block numeric casts, ownership scaffolding and one ordinary local may
+consume a selected pointer. Every access to that local must preserve the numeric
+storage contract. A borrowed pointer must be converted before another checked
+producer executes. Returns of the cell, pointer-valued block arguments, a second
+local, container stores and unknown consumers retain heap storage. Parameters,
+globals, statics, references, eval storage and suspended activations do not receive
+this local storage optimization. The executable main frame is also excluded.
+
+These frame cells have no heap header and cannot own children. Proven retains and
+releases of their SSA pointers emit no refcount calls. A selected local may still
+hold a numeric heap seed; its direct Mixed cleanup releases that seed and ignores
+frame addresses through the runtime's existing heap-range check. This avoids a
+protected destructor callback for values that cannot execute PHP cleanup code.
 
 ### Eval subclass property storage
 
@@ -349,6 +374,17 @@ replacement fields, then releases displaced owners. The same constructor can
 therefore reinitialize a compact native Throwable or an ordinary eval/subclass
 object without mixing raw previous pointers and nullable Mixed cells.
 
+Mixed add, subtract and multiply may borrow an integer RHS cell from a 32-byte,
+16-byte-aligned stack span for the duration of that single runtime call. The cell
+has the usual 24-byte tag/payload layout, with integer tag zero, but no managed
+heap header. Only these read-only intrinsics may receive it: they must not retain,
+release, store or return its pointer. Their result remains a fresh owned heap
+cell, including after integer overflow promotes to float. Codegen uses this path
+only for an exact integer constant beside a boxed Mixed left operand; bool, null,
+float and dynamic operands keep ordinary materialization. Boxed increment and
+decrement use the same loan for their integer delta. No caller-visible value,
+reference binding or loop type proof changes.
+
 Deep release of objects, indexed arrays, hashes, Mixed cells, and callable
 captures contains destructor exceptions in a native cleanup boundary. Each
 cleanup frame keeps a pending exception chain, completes the remaining child
@@ -368,6 +404,25 @@ live indexed array with logical length zero. Reserved capacity owns no child
 slots, so the original dispatcher can release that array without a new handler.
 Hash-promoted storage, nonempty arrays, strings, objects, resources, reference
 cells, unknown tags, and other callbacks use the protected cleanup boundary.
+
+Dynamic eval creates its activation context before synchronizing the caller scope,
+but may postpone native catalog registration for a proven numeric-only fragment.
+The execution proof also requires every retained local and global scope value to
+be a trivial scalar, so context destruction cannot invoke a callback before an
+upgrade. Generated eval opts into a separate deferred-aware entry point; the
+existing execute ABI retains eager global-class synchronization.
+The proof accepts only straight-line numeric expressions, stores and returns with
+existing int/float cells (or fresh numeric locals). Undefined reads, nonnumeric
+values, reference/global/typed bindings, native symbol use, calls and other syntax
+require the complete catalog before PHP executes. Replacing a nonnumeric cell also
+fails the proof, because releasing it could invoke a destructor or callback.
+A guard before scope synchronization also requests metadata if replacing any old
+cell could invoke PHP, or if an indirect or typed binding needs validation. Both
+guards share one registration transaction. A later fragment upgrades the same
+context without replacing its scope or handlers.
+Until that upgrade, numeric-only execution also postpones global class imports, so
+native declarations retain their usual position before dynamic declarations in
+introspection. A completed catalog is still shared by module generation and thread.
 
 Interpreter value releases and native-call argument cleanup use a versioned
 release boundary with an owned Throwable accumulator. Releasing a group finishes
@@ -559,6 +614,16 @@ the current pointer after every push, and it applies only to source elements who
 evaluation cannot be observed, because it interleaves element evaluation with
 callback invocation while PHP evaluates the whole source array first.
 
+Descriptor invocation also carries the physical caller's scalar-binding mode,
+independently of where a callable was created. Its hidden frame-owned profile
+preserves legacy weak class ids and global `-1`; strict profiles encode
+`-class_id - 3`, including global `-2`. The native boundary and invoker forward
+that same word across throws and nested calls. Source-sensitive builtin wrappers
+select strict or weak EIR paths from it, while the `clone()` wrapper decodes the
+original scope before checking hook visibility. No mutable global carries this
+state. Weak Stringable union preparation copies and roots the source cell before
+invoking `__toString()`, then retires both source and converted-string leases.
+
 Argument containers are published the same way whether they are built from a
 signature or not. A `call_user_func()` / `call_user_func_array()` container is
 rooted for its whole construction and reloaded from that slot after every
@@ -589,7 +654,10 @@ detach an arbitrary named record. On the normal path the slot is CLEARED rather
 than released, which transfers the single reference back to the expression's
 consumer; on the unwind path the record releases it exactly once, before the catch
 body runs. The slot is declared with the exact result type the call is emitted
-with. Two cases are deliberately excluded: a by-reference-returning callee, whose
+with. Only heap-bearing results publish heap-owner records. A rejected call can leave
+a scalar result slot uninitialized, and heap cleanup must never interpret its bits
+as a pointer. For heap-bearing results, two further cases are deliberately excluded:
+a by-reference-returning callee, whose
 result is the transferred cell the reference staging already owns, and a callee
 whose summary says its result may be one of its arguments, because that argument's
 release is guarded by a runtime alias comparison and rooting both would release one
@@ -655,7 +723,7 @@ The runtime routine `__rt_heap_free`:
 1. Read the block size (32-bit) from the 16-byte header at `user_pointer - 16`
 2. If the block is exactly at the bump tail, shrink `_heap_off` immediately
 3. Otherwise, payloads up to 64 bytes are cached into one of four segregated small-bin heads (`<=8`, `<=16`, `<=32`, `<=64`) so later tiny allocations can reuse them without scanning the larger free list
-4. Larger non-tail blocks are inserted into the general free list in address order, merged with adjacent free neighbors, and repeatedly trim any now-free tail chain back into `_heap_off`
+4. Larger non-tail blocks are inserted into the general free list in address order and merged with adjacent free neighbors. Only a merged block ending at the bump frontier starts a tail search; other insertions skip that scan. Direct bump-tail frees still search for and repeatedly reclaim newly exposed free tail blocks. Cache draining uses the same merged-end check, so a cached block that now touches the tail is reclaimed without adding a free event.
 5. Free blocks reuse the same 16-byte header, clear the kind back to `0`, and then store the next pointer immediately after it: `[size:4][refcnt:4][kind:8][next_ptr:8][...unused...]`
 
 The variant `__rt_heap_free_safe` validates that the pointer is within `_heap_buf` range before freeing — safe to call with garbage, null, or `.data` section pointers.
@@ -970,6 +1038,7 @@ The runtime data layer is split into fixed shared data, user-program data, and d
 - `_rt_diag_suppression`, `_diag_fopen_failed_msg`, `_diag_file_get_contents_failed_msg`, `_diag_define_already_defined_msg` — runtime warning suppression depth and warning strings used by `@`
 - `_resource_id_prefix` — prefix used by resource display helpers
 - `_obj_handle_index`, `_obj_handle_free`, `_obj_handle_free_top` — direct heap-granule-to-object-handle index plus the LIFO pool of reusable PHP object handles
+- `_obj_weak_reference_index` - one non-owning wrapper pointer per 16-byte heap granule, cleared before referent or wrapper reuse; `_weak_map_key_retire_fn` selects the live WeakMap retirement callback, and `_weak_reference_class_id` / `_weak_map_class_id` identify the emitted classes
 - `_web_heap_guard_enabled` — enables per-request live-block accounting for persistent `--web` workers
 - `_resource_id_keys`, `_resource_id_vals` — open-addressed native-resource-to-PHP-id map; resource ids and object handles deliberately use separate numbering spaces
 - `_vd_indent`, `_vd_seen`, `_vd_seen_n` — current `var_dump()` indentation and its bounded recursion-detection stack
@@ -1093,6 +1162,15 @@ reference sets. When a child lease replaces an older compiler parent, EIR pops t
 record, publishes the child, then releases the old parent slot. This keeps unwinding safe
 without making dead compiler ancestors look like live PHP owners.
 
+A selected object child retains that same rooted cell while EIR dispatches an append
+through `ArrayAccess::offsetSet(null, value)`. The method borrows the receiver and
+RHS roots; ordinary array/null children instead use the consuming boxed append helper.
+Both branches retire the caller's roots after mutation and expose them to exception
+unwinding when a user method throws.
+Callable payloads are Closure objects but have no class-table object header. The boxed
+setter releases a rejected value before entering the shared class-name Error helper,
+rather than reading a callable descriptor as an object or dropping the write.
+
 A fresh parent is preallocated with the indexed or associative representation required by
 its next key before the missing-key callback runs. Around conversion and reads, a typed, non-retaining
 EIR query counts both cell and payload owners. Their sum must be exactly three:
@@ -1112,6 +1190,18 @@ selected payload instead of crossing another COW boundary. Both normal and cance
 branches retire active leases in LIFO order. ARM64 and x86_64 use the same ownership
 rules; non-array offsets keep their ordinary dispatch.
 
+Nested write lowering captures computed keys and property receivers in source order, roots
+them across RHS evaluation, and traverses writable parents afterwards. Each child is published
+before an older receiver or key owner is retired. Short internal handlers preserve a pending
+false-conversion exception through key-sensitive opcode completion, then transfer that
+exception or chain it under a new key error without leaving an owner in both the frame and the
+in-flight exception cell.
+
+Local and static false-parent updates query the selected Mixed cell's reference count after notification
+without acquiring another reference. A count of one means only the pending write pin remains;
+the leaf read is skipped and an owned null is selected instead. The ARM64 and x86_64 emitters
+read the same uniform heap header, including on the iOS targets.
+
 ## Memory limits and trade-offs
 
 | Resource | Size | What happens when full |
@@ -1124,6 +1214,7 @@ rules; non-array offsets keep their ordinary dispatch.
 | Eval bridge hook slots | `_elephc_eval_ob_handler_fn`, `_elephc_eval_dynamic_object_destruct_fn`, `_elephc_eval_closure_bind_fn`, `_elephc_eval_wrap_callback_fn`, `_elephc_eval_object_gc_child_fn`, `_elephc_eval_object_release_fn`, `_elephc_eval_array_reference_retire_fn`, `_elephc_eval_object_clone_fn` = 8 bytes each | Late-bound Magician callbacks for eval-managed handlers, closures, callbacks, objects, references, and cloning |
 | Heap | 8MB (configurable) | Fatal error: "heap memory exhausted" |
 | Heap and GC metadata | `_heap_off`, `_heap_free_list`, `_heap_debug_enabled`, `_heap_max`, and each `_gc_*` flag, counter, pointer, or timer = 8 bytes each; `_heap_small_bins` = 32 bytes | Fixed-size allocator, cycle-collector, destructor, pin, and timing bookkeeping |
+| Weak-reference identity index | `_obj_weak_reference_index` = `(heap_size / 16 + 2) * 8` bytes, or 4 MiB plus 16 bytes for the default 8 MiB heap | One non-owning wrapper pointer per heap granule; it neither keeps keys alive nor acts as a collector root |
 | Buffer descriptors | `_buffer_registry` = 196656 bytes (4097 descriptors × 48 bytes), `_buffer_registry_free` = 8 bytes, `_buffer_registry_next` = 8 bytes | Up to 4096 live buffers; freed descriptors are recycled with a new generation, while exhaustion aborts with `Fatal error: buffer registry exhausted` (an invalid requested size aborts earlier with `Fatal error: buffer_new() length is negative or exceeds the maximum buffer size`) |
 | Exception and user-handler state | `_exc_handler_top`, `_exc_call_frame_top`, `_exc_value`, `_magic_set_guard_head`, and every `_php_error_handler_*` / `_php_exception_handler_*` slot = 8 bytes each | Active exception state and current user handlers; nested handler registrations use heap-backed linked stacks |
 | Fiber scheduler state | `_fiber_current`, `_fiber_main_saved_sp`, `_fiber_main_saved_exc`, `_fiber_main_saved_call_frame`, `_fiber_main_saved_magic_set_guard` = 40 bytes total | Current-fiber and main-frame resume bookkeeping, including the magic-set recursion guard |
@@ -1196,6 +1287,14 @@ does not bypass normal copy-on-write or final-owner destruction.
 ### Unboxing a Mixed hands back a reference
 
 `Op::MixedUnbox` extracts concrete storage from a checked Mixed source. Its callers include typed local/property assignment (`coerce_typed_assign_value`), call-argument and closure coercion, static method-call receivers, typed foreach slots, object-return coercion, and merge temps that retain a `??`-kept `?C` cell as an object or callable (#1628). Its lowering ends in `emit_unbox_mixed_to_owned_refcounted_result`, so a refcounted payload carries its own reference rather than borrowing the box's.
+
+Call parameters declared `iterable` receive a raw array, hash or Traversable pointer, not the surrounding Mixed cell. After runtime argument validation, their layout-neutral unbox acquires the payload before the source lease is released. Enum interface calls also keep static-unpack arrays and projected values rooted while checking types before a later arity shortage. A typed variadic collector promoted to Mixed storage must pass through an EIR unpack/rebox adapter; forwarding its raw words would confuse typed element storage with boxed entries and lose named keys or actual counts.
+
+An enum interface call zeroes a heap-result slot before publishing its cleanup
+record. Every candidate may reject argument binding before storing a result, so
+the guard cannot rely on a later successful store to make frame initialization
+include that slot. `ZeroLocalSlot` initializes both string words, or the single
+array/object pointer, and participates in the backend's local-store analysis.
 
 An object return can consume an independent Mixed assignment-result cell, not just borrow a frame local. Return coercion first acquires the object payload and then releases that owned cell. Borrowed parameter/local cells retain their existing frame cleanup instead; releasing them as independent return temporaries would retire the same owner twice.
 
@@ -1298,3 +1397,11 @@ skips the string-registry lookup; the child's release still retires its own
 identity before allocator reuse. Eval array-reference observers retire before
 this skip, including when a Mixed cell no longer contains its former array
 value. Other allocation kinds retain their existing identity retirement path.
+
+### Packed integer prefixes in JSON arrays
+
+The structural JSON decoder constructs each fresh indexed array with signed-i64 slots. A bounded, allocation-free token probe accepts only strict JSON integers within PHP's integer range, followed by JSON whitespace and a comma or closing bracket. It appends the raw value with `__rt_array_push_int`, preserving the ordinary separator, depth and error cleanup paths. It records the same token-start diagnostic candidate as recursive decoding.
+
+At the first other token, `__rt_array_to_mixed` converts the existing integer prefix once before recursive decoding continues. This covers floats, oversized integers (including `JSON_BIGINT_AS_STRING`), strings, booleans, null and containers. Later elements keep the generic path; the decoder never rereads the whole array to choose its storage. Fully integer arrays remain packed under their Mixed container box. Existing runtime-header-aware consumers handle reads, COW, references, mutation and encoding. Construction owners remain unique and unpublished until the existing owned-container boxing transfer. Partial errors release either representation through ordinary array cleanup.
+
+Packed integer leaves remain outside the cycle collector's swept-node set. When an unreachable graph owner releases one, the uniform decref dispatcher therefore performs an ordinary array decrement even during the final sweep. A surviving native alias keeps the buffer alive; the final owner releases it. Graph-backed array storage keeps its existing reachability and sweep suppression.

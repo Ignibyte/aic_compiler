@@ -56,6 +56,10 @@ pub(super) fn op_is_volatile_safe(op: Op) -> bool {
         // registers and stores its value to `_concat_off`. PIC x86_64 preserves
         // its additional r11 symbol-address scratch around the store.
         | ConcatReset | Nop
+        // Buffer element access through a hoisted descriptor: x9-x11 or r10/r11 plus the
+        // result register (`lower_inst::buffers`). Its stale-handle and bounds faults jump to
+        // runtime fatals that never return, so no call can observe a caller-saved home.
+        | BufferGetResolved | BufferSetResolved
     )
 }
 

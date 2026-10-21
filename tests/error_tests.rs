@@ -68,6 +68,7 @@ fn check_source_with_defines_and_options(
     let ast = elephc::hash_prelude::inject_if_used(ast, false, &mut prelude_inventory);
     let ast = elephc::core_prelude::inject_if_used(ast, &mut prelude_inventory);
     let ast = elephc::bcmath_prelude::inject_if_used(ast, false, &mut prelude_inventory);
+    let ast = elephc::testing_prelude::inject_if_used(ast, false, &mut prelude_inventory);
     let ast = elephc::curl_prelude::inject_if_used(ast, false, &mut prelude_inventory);
     let ast = elephc::xml_prelude::inject_if_used(ast, false, &mut prelude_inventory);
     let ast = elephc::dom_html_prelude::inject_if_used(ast, false, &mut prelude_inventory);
@@ -102,6 +103,7 @@ fn check_source_full(src: &str) -> Result<elephc::types::CheckResult, elephc::er
     let ast = elephc::hash_prelude::inject_if_used(ast, false, &mut prelude_inventory);
     let ast = elephc::core_prelude::inject_if_used(ast, &mut prelude_inventory);
     let ast = elephc::bcmath_prelude::inject_if_used(ast, false, &mut prelude_inventory);
+    let ast = elephc::testing_prelude::inject_if_used(ast, false, &mut prelude_inventory);
     let ast = elephc::curl_prelude::inject_if_used(ast, false, &mut prelude_inventory);
     let ast = elephc::xml_prelude::inject_if_used(ast, false, &mut prelude_inventory);
     let ast = elephc::dom_html_prelude::inject_if_used(ast, false, &mut prelude_inventory);
@@ -296,6 +298,8 @@ mod reference_detach;
 mod exceptions_enums_magic;
 #[path = "error_tests/classes_traits.rs"]
 mod classes_traits;
+#[path = "error_tests/property_default_scope.rs"]
+mod property_default_scope;
 #[path = "error_tests/generics_review.rs"]
 mod generics_review;
 #[path = "error_tests/extensions.rs"]
@@ -314,6 +318,8 @@ mod mbstring;
 mod io_builtins;
 #[path = "error_tests/array_builtins.rs"]
 mod array_builtins;
+#[path = "error_tests/nested_write_review.rs"]
+mod nested_write_review;
 #[path = "error_tests/registry_arity.rs"]
 mod registry_arity;
 #[path = "error_tests/callables.rs"]

@@ -7,7 +7,7 @@
 //! Key details:
 //! - The argument box is consumed on normal and exceptional exits.
 //! - Separate entries distinguish borrowed descriptors from caller-transferred descriptor owners.
-//! - A third hidden ABI argument carries the invocation-site lexical class id through the
+//! - A third hidden ABI argument carries the invocation-site scope/strictness profile through the
 //!   exception boundary. The value is frame-owned, so nesting, throws and fibers cannot clobber it.
 //! - A local native handler keeps cleanup below the caller's exception boundary.
 //! - Slots are cleared before release so a cleanup throw cannot release an owner twice.

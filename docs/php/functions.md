@@ -100,6 +100,13 @@ Variables inside a function are separate from the caller.
 
 ## Anonymous functions (closures)
 
+Closure and arrow parameter defaults bind `self::` and `parent::` to the
+enclosing lexical class, not the later caller. A missing parent, or a `self::` /
+`parent::` default outside class scope, raises a catchable `Error` only when the
+argument is omitted and its default is evaluated. Passing an explicit argument
+bypasses that default. Ordinary method and property defaults keep their separate
+declaration-time validation rules.
+
 ```php
 <?php
 $double = function(int $x): int {
@@ -508,6 +515,15 @@ The caller's reference is published before any of the caller's own post-call cle
 so a destructor that throws while the call's argument temporaries, an owning receiver, or
 the previous binding of the target are retired cannot lose the returned reference. A
 `catch` in the same function still sees the referenced value released exactly once.
+When retirement of the previous target throws, the replacement alias is already visible
+inside that `catch`. This also holds when a loop re-executes the same reference binding.
+
+An enum implementing a by-value interface method may add a by-reference return, as in
+PHP. When an interface call selects among native enums, a reference assignment preserves
+the selected method's actual reference; a by-value method instead supplies an independent
+cell containing its result. Copied results are widened to the interface's result layout
+before their cell is created. This does not make a class interface adapter that returns a
+copied value capable of transferring the original reference.
 
 ### Reference-return forms this compiler does not support yet
 
@@ -521,12 +537,17 @@ semantics:
 - Returning a place that is neither a variable nor a property, such as an array element
   read or the result of another call. PHP returns a reference to those places; this
   lowering has no cell to transfer for them.
-- Capturing a reference with `$x = &f()` from a call the compiler cannot resolve to a
-  by-reference return. A named function, a method, a static method, and a closure whose
+- Outside the native enum interface dispatch described above, capturing a reference with
+  `$x = &f()` from a call the compiler cannot resolve to a by-reference return. A named
+  function, a method, a static method, and a closure whose
   binding is known (including one produced by `Closure::bind`) are all resolved. A call
   made through a runtime-selected callable, such as a variable holding a function-name
   string, is not: that path is lowered through the dynamic descriptor invoker, which hands
   back a copied value rather than the callee's reference cell.
+- Binding a selected enum reference whose payload representation differs from the
+  interface's result representation. A compatible copied result can be widened, but an
+  existing reference cannot be reshaped behind its other aliases. Such declarations remain
+  valid; this reference-assignment form is rejected with `Unsupported reference assignment`.
 
 One case cannot be decided at compile time. A function that returns its own by-reference
 parameter has no way to know what the caller bound to it, so a caller that passed an alias

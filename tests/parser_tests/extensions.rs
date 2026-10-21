@@ -176,6 +176,30 @@ fn test_parse_extern_class() {
     }
 }
 
+/// Parses an extern class whose fields use explicit C widths, keeping each field's C type.
+#[test]
+fn test_parse_extern_class_with_c_widths() {
+    use elephc::parser::ast::{CIntWidth, CType};
+    let stmts = parse_source(
+        "<?php extern class Event { public u32 $type; public u16 $mod; public bool $down; public f32 $x; }",
+    );
+    match &stmts[0].kind {
+        StmtKind::ExternClassDecl { fields, .. } => {
+            let types: Vec<&CType> = fields.iter().map(|field| &field.c_type).collect();
+            assert_eq!(
+                types,
+                vec![
+                    &CType::IntWidth(CIntWidth::U32),
+                    &CType::IntWidth(CIntWidth::U16),
+                    &CType::Bool,
+                    &CType::F32,
+                ]
+            );
+        }
+        _ => panic!("Expected ExternClassDecl"),
+    }
+}
+
 /// Parses `extern global int $errno;` as an `ExternGlobalDecl`.
 /// Verifies the name and C type are captured correctly.
 #[test]
@@ -187,6 +211,51 @@ fn test_parse_extern_global() {
             assert!(matches!(c_type, elephc::parser::ast::CType::Int));
         }
         _ => panic!("Expected ExternGlobalDecl"),
+    }
+}
+
+/// Parses every explicit C integer width in extern parameters and returns, with `i64` folding
+/// to the plain 64-bit `int`.
+#[test]
+fn test_parse_extern_int_widths() {
+    use elephc::parser::ast::{CIntWidth, CType};
+    let stmts = parse_source(
+        "<?php extern function widths(i8 $a, u8 $b, i16 $c, u16 $d, i32 $e, u32 $f, i64 $g, u64 $h): u32;",
+    );
+    match &stmts[0].kind {
+        StmtKind::ExternFunctionDecl { params, return_type, .. } => {
+            let widths: Vec<&CType> = params.iter().map(|param| &param.c_type).collect();
+            assert_eq!(
+                widths,
+                vec![
+                    &CType::IntWidth(CIntWidth::I8),
+                    &CType::IntWidth(CIntWidth::U8),
+                    &CType::IntWidth(CIntWidth::I16),
+                    &CType::IntWidth(CIntWidth::U16),
+                    &CType::IntWidth(CIntWidth::I32),
+                    &CType::IntWidth(CIntWidth::U32),
+                    &CType::Int,
+                    &CType::IntWidth(CIntWidth::U64),
+                ]
+            );
+            assert_eq!(return_type, &CType::IntWidth(CIntWidth::U32));
+        }
+        _ => panic!("Expected ExternFunctionDecl"),
+    }
+}
+
+/// Parses the C `float` width: `f32` is its own C type while `f64` and `double` fold to `float`.
+#[test]
+fn test_parse_extern_float_widths() {
+    use elephc::parser::ast::CType;
+    let stmts = parse_source("<?php extern function fw(f32 $a, f64 $b, double $c): f32;");
+    match &stmts[0].kind {
+        StmtKind::ExternFunctionDecl { params, return_type, .. } => {
+            let types: Vec<&CType> = params.iter().map(|param| &param.c_type).collect();
+            assert_eq!(types, vec![&CType::F32, &CType::Float, &CType::Float]);
+            assert_eq!(return_type, &CType::F32);
+        }
+        _ => panic!("Expected ExternFunctionDecl"),
     }
 }
 

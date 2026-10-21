@@ -1,68 +1,15 @@
 //! Purpose:
-//! Creates eval contexts and seeds top-level declared-symbol metadata.
+//! Registers native symbols and configures eval constants, profiles and providers.
 //!
 //! Called from:
 //! - The eval lowering facade and sibling eval support modules.
 //!
 //! Key details:
-//! - Context creation also preserves regex-provider and PHP-profile registration.
+//! - Context initialization requests these registrations only when metadata is needed.
 //! - Core and user global constants are seeded through separate bridge registries so
 //!   PHP's `Core` / `user` categories stay exact inside eval.
 
 use super::*;
-
-/// Ensures a persistent eval context exists and stores its handle in the scratch frame.
-pub(super) fn ensure_eval_context(ctx: &mut FunctionContext<'_>) -> Result<()> {
-    let slot = eval_context_slot(ctx)?;
-    let offset = ctx.local_offset(slot)?;
-    let ready = ctx.next_label("eval_context_ready");
-    let result_reg = abi::int_result_reg(ctx.emitter);
-    abi::load_at_offset(ctx.emitter, result_reg, offset);
-    abi::emit_branch_if_int_result_nonzero(ctx.emitter, &ready);
-    register_eval_regex_provider(ctx);
-    // -- attach this module's immutable catalog to a fresh activation context --
-    let catalog = ctx.data.add_private_identity("L__elephc_eval_native_catalog");
-    abi::emit_symbol_address(
-        ctx.emitter,
-        abi::int_arg_reg_name(ctx.emitter.target, 0),
-        &catalog,
-    );
-    let symbol = ctx
-        .emitter
-        .target
-        .extern_symbol("__elephc_eval_context_new_with_native_catalog");
-    abi::emit_call_label(ctx.emitter, &symbol);
-    abi::store_at_offset(ctx.emitter, result_reg, offset);
-    let registered = ctx.next_label("eval_native_catalog_registered");
-    load_eval_context_local_to_arg(ctx, offset, 0);
-    let symbol = ctx.emitter.target.extern_symbol("__elephc_eval_context_native_catalog_ready");
-    abi::emit_call_label(ctx.emitter, &symbol);
-    abi::emit_branch_if_int_result_nonzero(ctx.emitter, &registered);
-    // -- register and publish metadata only on this thread's catalog miss --
-    register_eval_declared_symbols(ctx, offset);
-    register_eval_native_global_constants(ctx, offset)?;
-    register_eval_native_user_constants(ctx, offset);
-    register_eval_native_functions(ctx, offset)?;
-    register_eval_native_method_signatures(ctx, offset);
-    load_eval_context_local_to_arg(ctx, offset, 0);
-    let symbol = ctx.emitter.target.extern_symbol("__elephc_eval_context_publish_native_catalog");
-    abi::emit_call_label(ctx.emitter, &symbol);
-    ctx.emitter.label(&registered);
-    // The runtime's `__rt_closure_bind` is shared by eval-free programs, so it reaches the
-    // generated adapter wrapper through a slot each new context fills. Install it on both
-    // cache hits and misses, since a host can enter a different loaded module between calls.
-    let scratch = abi::symbol_scratch_reg(ctx.emitter);
-    abi::emit_symbol_address(
-        ctx.emitter,
-        scratch,
-        crate::codegen::eval_callable_helpers::EVAL_CALLBACK_WRAPPER_LABEL,
-    );
-    abi::emit_store_reg_to_symbol(ctx.emitter, scratch, "_elephc_eval_wrap_callback_fn", 0);
-    ctx.emitter.label(&ready);
-    abi::load_at_offset(ctx.emitter, result_reg, offset);
-    abi::emit_store_to_sp(ctx.emitter, result_reg, EVAL_CONTEXT_HANDLE_OFFSET);
-    Ok(())
-}
 
 /// Registers the AOT Core constant inventory with a newly allocated eval context.
 pub(super) fn register_eval_native_global_constants(
@@ -631,6 +578,7 @@ pub(super) fn register_eval_native_method_signatures(ctx: &mut FunctionContext<'
     for registration in eval_native_property_default_registrations(ctx) {
         register_eval_native_property_default(ctx, context_offset, &registration);
     }
+    super::property_attribute_registration::register_eval_native_class_default_errors(ctx, context_offset);
     for registration in eval_native_member_attribute_registrations(ctx) {
         register_eval_native_member_attribute(ctx, context_offset, &registration);
     }

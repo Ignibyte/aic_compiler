@@ -204,6 +204,10 @@ pub enum BuiltinArgumentLowering {
     /// `sole` limits it to a call where this is the ONLY argument — `max($a)`, not `max($a, $b)`,
     /// where the array itself is the value compared and its keys come back with it.
     BareArrayValues { arg: usize, sole: bool },
+    /// Convert a weakly bound Stringable object while preserving the other union alternatives.
+    /// Strict callers keep their original operand for the ordinary parameter diagnostic.
+    /// The descriptor must retain the observable effects of user conversion callbacks.
+    WeakStringUnion { arg: usize },
     /// Bind the receiver to its hidden internal-array-pointer cursor slot.
     ///
     /// PHP's `key`/`current`/`next`/`prev`/`reset`/`end` read and move a per-array

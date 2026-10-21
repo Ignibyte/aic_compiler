@@ -46,6 +46,14 @@ leading-numeric offset such as `"1abc"`; invalid nonnumeric offsets throw
 `TypeError`. A `false` element is converted to an array with an `E_DEPRECATED`
 diagnostic. Both paths preserve copy-on-write aliases and caller references.
 
+Nested appends preserve object identity: `$items[0][] = $value` invokes
+`offsetSet(null, $value)` when the selected child implements `ArrayAccess`, while
+an array or null child keeps the attached array append path. `WeakMap` children
+reject append with a catchable `Error`. Closure children also throw a catchable
+`Error` on array writes instead of silently discarding the value. Generated nested updates can create
+missing parents below a false or null ancestor, without permitting ordinary reads
+through a scalar value.
+
 A compound append such as `$items[]['k'] += 1` stops if its missing-key handler
 detaches the selected array and no PHP owner keeps that array alive. The expression
 then yields null without inserting the leaf or evaluating the operator, including
@@ -96,6 +104,35 @@ $items[] = 3.5;
 echo $items[0]; // 1
 echo $items[1]; // two
 ```
+
+## Nested write contexts
+
+Nested assignments and appends keep their parent cells attached to the original array and
+respect copy-on-write. Computed dimensions run once before the right-hand side; bare variable
+keys are read at store time. Missing or null parents are created during the write traversal.
+
+A `false` parent is converted to an empty array after the right-hand side, with PHP's
+false-to-array deprecation before the leaf write. This applies to locals and static arrays,
+including `$items[0][0][1] = 9` and `$items[0][0][] = 3`.
+Statically inferred false elements also support deeper write traversal. Integer, float and
+true parents instead raise `Error: Cannot use a scalar value as an array`.
+
+Nested `??=` probes without converting the parent, evaluates its default only for a missing
+or null leaf, and then uses the ordinary write traversal. Local and static compound updates
+settle computed dimensions and the RHS before fetching writable parents and converting false.
+A throwing conversion handler prevents the leaf read and operator, but does not undo the RHS.
+These update paths preserve by-value array copies.
+
+If the deprecation handler throws, plain writes preserve PHP's opcode completion: integer,
+boolean and string dimensions finish their store before propagation; appends finish their
+append. Null, float and resource dimensions stop without a leaf store, while array/object
+dimensions raise `TypeError` with the callback exception as `previous`. An intermediate
+write fetch completes an eligible dimension with null before propagating the exception.
+
+Local and static read-modify-write updates instead stop on a throwing conversion handler. If a returning handler
+detaches the promoted parent and only its pending write owner remains, the update starts from
+null without an extra undefined-key warning. Parents that still have another owner keep the
+ordinary leaf read and diagnostics.
 
 ## Associative arrays
 ```php

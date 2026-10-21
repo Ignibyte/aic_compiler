@@ -102,8 +102,23 @@ impl Checker {
                     params.iter().map(|(n, _, _, _)| n.clone()).collect();
                 let param_type_anns: Vec<Option<TypeExpr>> =
                     params.iter().map(|(_, t, _, _)| t.clone()).collect();
-                let defaults: Vec<Option<Expr>> =
-                    params.iter().map(|(_, _, d, _)| d.clone()).collect();
+                // A free function has no lexical class even when called from a method.
+                // Normalize before publishing any provisional or specialized signature so
+                // every consumer preserves lazy relative-scope errors and rejects new static.
+                let defaults: Result<Vec<Option<Expr>>, CompileError> = params.iter()
+                    .map(|(_, _, default, _)| {
+                        default.as_ref().map(
+                            super::super::schema::normalize_free_function_default_in_scope,
+                        ).transpose()
+                    })
+                    .collect();
+                let defaults = match defaults {
+                    Ok(defaults) => defaults,
+                    Err(error) => {
+                        errors.push(error);
+                        continue;
+                    }
+                };
                 let mut ref_flags: Vec<bool> = params.iter().map(|(_, _, _, r)| *r).collect();
                 if variadic.is_some() {
                     ref_flags.push(*variadic_by_ref);

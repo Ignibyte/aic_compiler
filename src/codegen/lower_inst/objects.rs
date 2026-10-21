@@ -117,6 +117,21 @@ struct PropertyDefault {
     is_reference: bool,
 }
 
+/// Strategy used to initialize a newly allocated object's physical property slots.
+enum PropertyInitialization {
+    /// Copy backend-supported literal defaults directly into their slots.
+    Inline(Vec<PropertyDefault>),
+    /// Run the EIR initializer so constant expressions retain their runtime branch semantics.
+    Thunk { class_id: u64 },
+}
+
+impl PropertyInitialization {
+    /// Returns whether initialization requires calling the class's EIR thunk.
+    fn uses_thunk(&self) -> bool {
+        matches!(self, Self::Thunk { .. })
+    }
+}
+
 /// Concrete class that a dynamic factory can instantiate in this EIR module.
 struct DynamicNewCandidate {
     class_name: String,
@@ -125,7 +140,7 @@ struct DynamicNewCandidate {
     allow_dynamic_properties: bool,
     uninitialized_marker_offsets: Vec<usize>,
     owned_reference_property_offsets: Vec<(usize, PhpType, bool)>,
-    property_defaults: Vec<PropertyDefault>,
+    property_initialization: PropertyInitialization,
     constructor_impl: Option<ConstructorCallTarget>,
 }
 
@@ -175,6 +190,8 @@ mod property_store_values;
 mod typed_property_guards;
 mod instanceof_helpers;
 mod mixed_property_type_guard;
+mod extern_fields;
+pub(super) use mixed_property_type_guard::emit_string_into_int_diagnostics;
 
 #[allow(unused_imports)]
 use fixed_new::*;
@@ -230,6 +247,7 @@ use typed_property_guards::*;
 use instanceof_helpers::*;
 #[allow(unused_imports)]
 use mixed_property_type_guard::*;
+use extern_fields::*;
 
 pub(super) use dynamic_property_read_entry::{lower_dynamic_prop_get, lower_nullsafe_prop_get};
 pub(super) use fiber_dynamic_entry::{

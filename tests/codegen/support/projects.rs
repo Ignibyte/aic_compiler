@@ -350,6 +350,7 @@ pub(crate) fn compile_expect_type_error(source: &str) -> String {
         &mut prelude_inventory,
     );
     let resolved = elephc::xml_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
+    let resolved = elephc::testing_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
     let resolved = elephc::name_resolver::resolve(resolved).expect("name resolve failed");
     let resolved =
         elephc::autoload::run(resolved, &dir, &autoload_registry).expect("autoload failed");
@@ -357,6 +358,8 @@ pub(crate) fn compile_expect_type_error(source: &str) -> String {
         .expect("autoload DOM prelude injection failed");
     // Mirrors `pipeline::compile`: the object-cast prelude is injected AFTER autoloading, so a
     // `(object)` cast that only appears in an autoloaded class file is still detected.
+    let resolved = elephc::testing_prelude::inject_after_autoload(resolved, &mut prelude_inventory)
+        .expect("testing prelude post-autoload injection failed");
     let resolved = elephc::object_cast_prelude::inject_if_used(resolved, &mut prelude_inventory)
         .expect("object-cast prelude injection failed");
     // Mirrors `pipeline::compile`: desugar `func_num_args`/`func_get_args`/`func_get_arg`
@@ -535,6 +538,8 @@ fn compile_and_run_files_with_defines_per_argv(
     let mut prelude_inventory = elephc::optimize::reachability::PreludeInventory::new();
     let resolved = elephc::dom_html_prelude::inject_after_autoload(resolved, &mut prelude_inventory)
         .expect("autoload DOM prelude injection failed");
+    let resolved = elephc::testing_prelude::inject_after_autoload(resolved, &mut prelude_inventory)
+        .expect("testing prelude post-autoload injection failed");
     let resolved = elephc::object_cast_prelude::inject_if_used(resolved, &mut prelude_inventory)
         .expect("object-cast prelude injection failed");
     // Mirrors `pipeline::compile`: desugar `func_num_args`/`func_get_args`/`func_get_arg`

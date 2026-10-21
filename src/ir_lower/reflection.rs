@@ -136,14 +136,21 @@ fn lower_builtin_reflection_property_init_thunk(
     );
 }
 
-/// Collects Reflection class owners reachable from lowered values and calls.
+/// Collects Reflection class owners reachable from lowered values and calls, plus whatever
+/// the module's bridge-run eval fragments can name: every class for a fragment whose source
+/// is only known at runtime, exactly the named ones for literal fragments.
 fn referenced_builtin_reflection_classes(module: &Module) -> BTreeSet<String> {
     let mut classes = BTreeSet::new();
     if module.required_runtime_features.eval_bridge {
+        let demand = super::program::eval_demand(module);
         for class_name in BUILTIN_REFLECTION_CLASS_NAMES {
-            insert_builtin_reflection_class(module, class_name, &mut classes);
+            if demand.names_class(class_name) {
+                insert_builtin_reflection_class(module, class_name, &mut classes);
+            }
         }
-        return classes;
+        if demand.is_everything() {
+            return classes;
+        }
     }
 
     for function in all_lowered_functions(module) {

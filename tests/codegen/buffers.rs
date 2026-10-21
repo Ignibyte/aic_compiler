@@ -540,3 +540,124 @@ fn test_packed_int_field_mixed_string_throws_type_error() {
     );
     assert_eq!(out, "Packed field Cell::$id must be of type int, string given");
 }
+
+/// Regression test for packed classes named in class member signatures: a `buffer<Vec2>`
+/// property, method parameter, return type, and promoted constructor parameter all resolve, and
+/// the program reads and writes elements through `$this->data[$i]->field`. Before the fix the
+/// checker registered packed classes after the class schema pass and rejected `Vec2` as an
+/// unknown type.
+#[test]
+fn test_buffer_packed_class_member_signatures_resolve_and_run() {
+    let out = compile_and_run(
+        r#"<?php
+packed class Vec2 { public float $x; public float $y; }
+
+final class Points {
+    public buffer<Vec2> $data;
+
+    public function __construct(int $n) {
+        $this->data = buffer_new<Vec2>($n);
+        for ($i = 0; $i < $n; $i++) {
+            $this->data[$i]->x = $i * 1.5;
+            $this->data[$i]->y = $i * 2.5;
+        }
+    }
+
+    public function sumX(): float {
+        $sum = 0.0;
+        for ($i = 0; $i < buffer_len($this->data); $i++) {
+            $sum += $this->data[$i]->x;
+        }
+        return $sum;
+    }
+
+    public function secondY(buffer<Vec2> $points): float {
+        return $points[1]->y;
+    }
+
+    public function all(): buffer<Vec2> {
+        return $this->data;
+    }
+}
+
+final class Promoted {
+    public function __construct(public buffer<Vec2> $data) {}
+
+    public function lastX(): float {
+        return $this->data[buffer_len($this->data) - 1]->x;
+    }
+}
+
+$points = new Points(3);
+echo $points->sumX(), "|", $points->secondY($points->data), "|";
+$all = $points->all();
+echo $all[2]->y, "|";
+$promoted = new Promoted($all);
+echo $promoted->lastX();
+"#,
+    );
+    assert_eq!(out, "4.5|2.5|5|3");
+}
+
+/// Regression test for `ptr<T>` class members whose target is a packed class or an ordinary
+/// class the schema pass builds later (`Holder` sorts before `Node`). Both used to fail with
+/// "Unknown pointer target type", and an untyped `ptr_null()` must fill a `ptr<T>` slot.
+#[test]
+fn test_typed_pointer_properties_resolve_packed_and_later_classes() {
+    let out = compile_and_run(
+        r#"<?php
+packed class Vec2 { public float $x; public float $y; }
+
+final class Holder {
+    public ptr<Vec2> $vec;
+    public ptr<Node> $node;
+
+    public function __construct() {
+        $this->vec = ptr_null();
+        $this->node = ptr_null();
+    }
+}
+
+final class Node { public int $id = 7; }
+
+$holder = new Holder();
+echo ptr_is_null($holder->vec) ? "null" : "set", "|", ptr_is_null($holder->node) ? "null" : "set";
+"#,
+    );
+    assert_eq!(out, "null|null");
+}
+
+/// Verifies a packed class field typed `ptr<Node>` still resolves an ordinary class now that
+/// packed classes are registered before the class schema pass builds `Node`.
+#[test]
+fn test_packed_field_pointer_to_ordinary_class_resolves() {
+    let out = compile_and_run(
+        r#"<?php
+class Node {}
+packed class Slot { public ptr<Node> $node; }
+buffer<Slot> $slots = buffer_new<Slot>(1);
+echo ptr_is_null($slots[0]->node) ? "null" : "set";
+"#,
+    );
+    assert_eq!(out, "null");
+}
+
+/// Regression test for a `ptr<T>` packed class field whose target is a builtin enum. The packed
+/// and extern prescan now runs before `inject_builtin_enums` registers `SortDirection`, so the
+/// builtin enum names must already resolve as pointer targets there; otherwise the packed
+/// declaration fails with "Unknown pointer target type: SortDirection". The extern class field,
+/// stored as a typed C pointer, is checked alongside to pin that it keeps compiling too.
+#[test]
+fn test_packed_and_extern_fields_point_to_builtin_enum() {
+    let out = compile_and_run(
+        r#"<?php
+packed class Slot { public ptr<SortDirection> $dir; public int $id; }
+extern class Holder { public ptr<SortDirection> $dir; }
+buffer<Slot> $slots = buffer_new<Slot>(1);
+$slots[0]->id = 3;
+echo ptr_is_null($slots[0]->dir) ? "null" : "set", "|", $slots[0]->id, "|";
+echo ptr_sizeof("Slot"), "|", ptr_sizeof("Holder");
+"#,
+    );
+    assert_eq!(out, "null|3|16|8");
+}

@@ -21,15 +21,23 @@
 //! - Coercion is expressed as the equivalent explicit PHP cast (`(string)`, `(bool)`) or as a
 //!   replacement literal, so the runtime result is whatever elephc already produces for that
 //!   cast — no separate conversion semantics to keep in sync.
-//! - Only *total* coercions (every value of the source type converts, with no PHP diagnostic)
-//!   run on runtime values. Partial coercions (`int $i` from a float or string) are limited to
+//! - For runtime values, the generic classifier below permits only total coercions (every
+//!   source value converts without a diagnostic). Partial coercions (`int $i` from a float or string) are limited to
 //!   compile-time constants, because PHP signals their failure modes with a runtime
 //!   `Deprecated:` notice or a `TypeError` and elephc has neither channel at a call boundary.
+//! - Selected enum unpacks add runtime guards and precision diagnostics through EIR, then use the sibling scalar plan
+//!   before parameter storage erases the declared member types.
 
 use crate::parser::ast::{CallableTarget, CastType, Expr, ExprKind, StaticReceiver};
 use crate::names::Name;
 use crate::numeric_string::{scan_numeric_prefix, NumericScan};
 use crate::types::PhpType;
+
+mod union;
+pub(crate) use union::{
+    runtime_int_binding_needs_diagnostics, runtime_scalar_param_binding,
+    runtime_strict_param_acceptance, runtime_weak_int_param_acceptance,
+};
 
 /// How a declared parameter binds an argument whose type does not already match.
 #[derive(Debug, Clone, PartialEq)]

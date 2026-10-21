@@ -13,15 +13,19 @@
 use crate::codegen_support::emit::Emitter;
 use crate::codegen_support::platform::Arch;
 
+#[cfg(test)]
+#[path = "heap_free/tail_scan_tests.rs"]
+mod tail_scan_tests;
+
 
 /// Emits `__rt_heap_free` and `__rt_heap_free_safe` runtime helpers.
 ///
 /// `__rt_heap_free(x0)` returns a heap block to the free list. The block header
 /// (16 bytes before user pointer) contains block size, refcount, and heap kind.
 ///
-/// Optimization: if the block is at the END of the heap (most recently bump-allocated),
-/// just decrement the bump pointer instead of adding to the free list. This makes free
-/// loops O(1) with zero fragmentation.
+/// If the block is at the bump tail, shrink the bump pointer and reclaim any newly
+/// exposed ordered free-list tail blocks. Other insertions start that tail search
+/// only when their merged endpoint reaches the bump frontier.
 ///
 /// Otherwise, small blocks (≤64 bytes payload) go into segregated size-class bins.
 /// Larger blocks join the ordered coalescing free list.
@@ -224,18 +228,32 @@ pub fn emit_heap_free(emitter: &mut Emitter, eval_bridge: bool, mbstring: bool) 
     emitter.label("__rt_heap_free_merge_prev");
     crate::codegen_support::abi::emit_symbol_address(emitter, "x14", "_heap_free_list");
     emitter.instruction("cmp x10, x14");                                        // was the block inserted at the head of the list?
-    emitter.instruction("b.eq __rt_heap_free_trim_tail");                       // yes — there is no previous block to merge with
+    emitter.instruction("b.eq __rt_heap_free_trim_inserted");                   // no predecessor exists; check whether the inserted end reaches the tail
     emitter.instruction("sub x14, x10, #16");                                   // x14 = previous free block header (prev_next_addr - 16)
     emitter.instruction("ldr w12, [x14]");                                      // x12 = previous block size
     emitter.instruction("add x16, x14, x12");                                   // x16 = previous header + previous payload size
     emitter.instruction("add x16, x16, #16");                                   // x16 = end of previous free block including header
     emitter.instruction("cmp x16, x9");                                         // does the previous free block end where the inserted one begins?
-    emitter.instruction("b.ne __rt_heap_free_trim_tail");                       // no — nothing more to merge locally
+    emitter.instruction("b.ne __rt_heap_free_trim_inserted");                   // the predecessor stays separate; check the inserted block end
     emitter.instruction("add x12, x12, x11");                                   // accumulate current payload size into the previous block
     emitter.instruction("add x12, x12, #16");                                   // include the inserted block header in the merged payload size
     emitter.instruction("str w12, [x14]");                                      // write merged size back to the previous block header
     emitter.instruction("ldr x16, [x9, #16]");                                  // x16 = inserted_block->next
     emitter.instruction("str x16, [x14, #16]");                                 // previous->next = inserted_block->next
+
+    // -- skip tail searches when insertion cannot have exposed a free tail --
+    // The ordered list has no untrimmed tail before insertion. A predecessor
+    // merge changes the start, but x9 + x11 + 16 still gives the merged end.
+    // Direct bump-tail frees bypass this guard because they expose older blocks.
+    emitter.label("__rt_heap_free_trim_inserted");
+    crate::codegen_support::abi::emit_symbol_address(emitter, "x13", "_heap_off");
+    emitter.instruction("ldr x14, [x13]");                                      // load the bump frontier after insertion and coalescing
+    crate::codegen_support::abi::emit_symbol_address(emitter, "x15", "_heap_buf");
+    emitter.instruction("add x14, x15, x14");                                   // resolve the live heap end without changing the inserted block registers
+    emitter.instruction("add x12, x9, x11");                                    // retain the inserted-plus-successor endpoint after a predecessor merge
+    emitter.instruction("add x12, x12, #16");                                   // include the inserted header in the merged block end
+    emitter.instruction("cmp x12, x14");                                        // can the changed free block reach the bump frontier?
+    emitter.instruction("b.ne __rt_heap_free_post_validate");                   // finish a non-tail insertion without scanning unrelated free blocks
 
     // -- repeatedly trim any free block that now touches the bump tail --
     emitter.label("__rt_heap_free_trim_tail");
@@ -534,17 +552,29 @@ fn emit_heap_free_linux_x86_64(emitter: &mut Emitter, eval_bridge: bool, mbstrin
     emitter.label("__rt_heap_free_merge_prev");
     crate::codegen_support::abi::emit_symbol_address(emitter, "rcx", "_heap_free_list");
     emitter.instruction("cmp r10, rcx");                                        // was the block inserted at the head of the ordered free list?
-    emitter.instruction("je __rt_heap_free_trim_tail");                         // yes — there is no previous free block to merge with
+    emitter.instruction("je __rt_heap_free_trim_inserted");                     // no predecessor exists; check whether the inserted end reaches the tail
     emitter.instruction("lea rcx, [r10 - 16]");                                 // recover the previous free block header from prev_next_addr
     emitter.instruction("mov edx, DWORD PTR [rcx]");                            // load the previous free block payload size before checking adjacency
     emitter.instruction("lea r8, [rcx + rdx + 16]");                            // compute the end address of the previous free block
     emitter.instruction("cmp r8, r9");                                          // does the previous free block end where the inserted block begins?
-    emitter.instruction("jne __rt_heap_free_trim_tail");                        // no — there is no previous neighbor to coalesce with
+    emitter.instruction("jne __rt_heap_free_trim_inserted");                    // the predecessor stays separate; check the inserted block end
     emitter.instruction("add rdx, r11");                                        // accumulate the inserted block payload size into the previous block
     emitter.instruction("add rdx, 16");                                         // include the inserted block header in the merged previous block size
     emitter.instruction("mov DWORD PTR [rcx], edx");                            // write the merged payload size back into the previous block header
     emitter.instruction("mov r8, QWORD PTR [r9 + 16]");                         // preserve the inserted block successor before unlinking the merged header
     emitter.instruction("mov QWORD PTR [rcx + 16], r8");                        // splice the merged previous block directly to the inserted block successor
+
+    // -- skip tail searches when insertion cannot have exposed a free tail --
+    // A predecessor merge preserves r9 + r11 + 16 as the merged endpoint.
+    // Direct bump-tail frees still enter the unconditional scan below.
+    emitter.label("__rt_heap_free_trim_inserted");
+    crate::codegen_support::abi::emit_symbol_address(emitter, "r8", "_heap_off");
+    emitter.instruction("mov rcx, QWORD PTR [r8]");                             // load the bump frontier after insertion and coalescing
+    crate::codegen_support::abi::emit_symbol_address(emitter, "r10", "_heap_buf");
+    emitter.instruction("add rcx, r10");                                        // resolve the live heap end without changing the inserted block registers
+    emitter.instruction("lea rdx, [r9 + r11 + 16]");                            // preserve the merged endpoint even when the predecessor absorbed this header
+    emitter.instruction("cmp rdx, rcx");                                        // can the changed free block reach the bump frontier?
+    emitter.instruction("jne __rt_heap_free_post_validate");                    // finish a non-tail insertion without scanning unrelated free blocks
 
     // -- repeatedly trim any ordered free block that now touches the bump tail --
     emitter.label("__rt_heap_free_trim_tail");

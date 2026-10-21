@@ -43,7 +43,7 @@ pub(in crate::codegen::lower_inst) fn lower_object_new(ctx: &mut FunctionContext
         allow_dynamic_properties,
         uninitialized_marker_offsets,
         owned_reference_property_offsets,
-        property_defaults,
+        property_initialization,
         constructor_impl,
         borrowed_reference_params,
     ) = {
@@ -57,7 +57,7 @@ pub(in crate::codegen::lower_inst) fn lower_object_new(ctx: &mut FunctionContext
                 class_name
             )));
         }
-        let property_defaults = collect_property_defaults(class_info, inst)?;
+        let property_initialization = collect_property_initialization(class_info, inst);
         // A private constructor is not inherited, so a descendant of a class that declares one
         // carries no `__construct` entry of its own. PHP still instantiates it through that
         // ancestor, so resolve the owner; it is the class itself for every other constructor.
@@ -122,7 +122,7 @@ pub(in crate::codegen::lower_inst) fn lower_object_new(ctx: &mut FunctionContext
             class_info.has_property_hash_storage(),
             marker_offsets,
             owned_ref_offsets,
-            property_defaults,
+            property_initialization,
             constructor_impl,
             borrowed_reference_params,
         )
@@ -148,14 +148,15 @@ pub(in crate::codegen::lower_inst) fn lower_object_new(ctx: &mut FunctionContext
         .result
         .ok_or_else(|| CodegenIrError::invalid_module("object_new missing result value"))?;
     ctx.store_result_value(result)?;
-    let construction_guard_bytes = if constructor_impl.is_some() {
+    let needs_construction_guard = constructor_impl.is_some() || property_initialization.uses_thunk();
+    let construction_guard_bytes = if needs_construction_guard {
         ctx.load_value_to_result(result)?;
         abi::emit_push_reg(ctx.emitter, abi::int_result_reg(ctx.emitter));
         super::super::callable_guards::begin_unconstructed_object(ctx.emitter)
     } else {
         0
     };
-    emit_property_defaults(ctx, result, &property_defaults)?;
+    emit_property_initialization(ctx, result, &property_initialization)?;
     if super::super::is_throwable_like_class(ctx, &class_name) {
         ctx.load_value_to_result(result)?;
         emit_regular_throwable_creation_line(ctx, result, abi::int_result_reg(ctx.emitter), class_id);
@@ -172,6 +173,8 @@ pub(in crate::codegen::lower_inst) fn lower_object_new(ctx: &mut FunctionContext
             &constructor.ref_params,
             None,
         )?;
+    }
+    if needs_construction_guard {
         super::super::callable_guards::end_unconstructed_object(ctx.emitter, construction_guard_bytes);
         abi::emit_release_temporary_stack(ctx.emitter, 16);
     }

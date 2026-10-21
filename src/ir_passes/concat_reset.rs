@@ -806,6 +806,9 @@ impl<'a> ConcatInertAnalysis<'a> {
             | Op::BufferLen
             | Op::BufferGet
             | Op::BufferSet
+            | Op::BufferResolve
+            | Op::BufferGetResolved
+            | Op::BufferSetResolved
             | Op::BufferFree
             | Op::ArrayNew
             | Op::HashNew
@@ -845,6 +848,8 @@ impl<'a> ConcatInertAnalysis<'a> {
                 .first()
                 .is_some_and(|&key| key_operand_is_concat_inert(self.function, key)),
 
+            // A packed field read or write is one load or store at a fixed record offset.
+            Op::PropGet | Op::PropSet => self.function.is_packed_field_access(inst),
             Op::LoadLocal | Op::LoadRefCell => load_local_is_concat_inert(self.function, inst),
             Op::StoreLocal => self.store_local_is_concat_inert(inst),
             Op::Acquire => true,

@@ -2,7 +2,7 @@
 title: "xmlwriter_flush()"
 description: "Flushes the buffer: the buffered string for a memory writer, the byte count written for a URI writer."
 sidebar:
-  order: 1040
+  order: 1042
 ---
 
 ## xmlwriter_flush()

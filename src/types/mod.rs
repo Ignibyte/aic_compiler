@@ -23,12 +23,16 @@ mod array_storage;
 mod array_cast;
 /// Call argument planning: named, positional, and spread semantics.
 pub(crate) mod call_args;
+/// Shared detection of lazy lexical errors in normalized default expression trees.
+pub(crate) mod deferred_defaults;
 /// Fiber/stack introspection for async and coroutine analysis.
 pub(crate) mod fibers;
 /// C FFI type mapping utilities.
 mod ffi;
 /// PHP parameter-binding rules: coercive scalar binding and callable-name strings.
 pub(crate) mod param_binding;
+/// PHP type spelling shared by parameter and property diagnostics.
+pub(crate) mod diagnostic_names;
 /// Target-aware `ext/pcntl` integer constants shared by checker and codegen.
 pub(crate) mod pcntl_constants;
 /// PHP type model and type environment for tracking variable types.
@@ -66,7 +70,9 @@ pub(crate) use array_keys::{
 };
 pub(crate) use array_cast::{array_cast_result_type, php_cast_result_type, ArrayCast};
 pub(crate) use array_storage::{array_storage_conversion, join_array_storage_conversion};
-pub use ffi::{ctype_stack_size, ctype_to_php_type, packed_type_size};
+pub use ffi::{
+    align_up, ctype_field_layout, ctype_to_abi_type, ctype_to_php_type, packed_type_size, ExternAbiType,
+};
 pub use model::{PhpType, TypeEnv};
 pub(crate) use model::MixedBoundary;
 pub(crate) use return_alias::{

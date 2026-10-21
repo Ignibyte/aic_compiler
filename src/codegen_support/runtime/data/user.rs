@@ -737,6 +737,18 @@ pub(crate) fn emit_runtime_data_user(
         }
     }
 
+    // Invalid trait defaults use the EIR initializer as a preallocation error thunk.
+    out.push_str(".globl _class_initcheck_ptrs\n_class_initcheck_ptrs:\n");
+    if let Some(max_class_id) = max_class_id {
+        for class_id in 0..=max_class_id {
+            let invalid = class_info_by_id.get(&class_id)
+                .is_some_and(|class| class.deferred_property_default_error.is_some())
+                && property_initializer_ids.contains(&class_id);
+            if invalid { out.push_str(&format!("    .quad _class_propinit_{}\n", class_id)); }
+            else { out.push_str("    .quad 0\n"); }
+        }
+    }
+
     // _class_serprop_ptrs: dense class_id-indexed table of serialize property-info
     // tables. Entry = _class_serprop_<id> for an existing class, else
     // _class_serprop_missing. __rt_serialize_object / __rt_unserialize_object index
@@ -3260,6 +3272,11 @@ fn interface_method_table_symbol(
             interface_sig.params, interface_sig.return_type,
             actual_sig.params, actual_sig.return_type,
         ))?;
+    if abi_plan == MethodAbiPlan::OptionalDefaults {
+        return Ok(crate::names::function_symbol(&interface_method_wrapper_symbol(
+            class_info.class_id, interface_info.interface_id, method_name,
+        )));
+    }
     if interface_method_needs_return_wrapper(interface_info, method_name, impl_class, classes)
         || abi_plan != MethodAbiPlan::Direct
     {
@@ -4416,6 +4433,7 @@ mod tests {
             property_offsets: HashMap::new(),
             property_declaring_classes: HashMap::new(),
             defaults: Vec::new(),
+            deferred_property_default_error: None,
             property_visibilities: HashMap::new(),
             property_set_visibilities: HashMap::new(),
             declared_properties: HashSet::new(),

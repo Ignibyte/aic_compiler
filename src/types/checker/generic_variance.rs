@@ -13,7 +13,7 @@
 //!   instantiations have to number their vtable slots identically. Being spliced from one
 //!   template body is not enough on its own: pruning used to recompact each class independently
 //!   and pulled them apart, which `reachability/reconcile.rs` now prevents for instantiated
-//!   classes. `.plans/generics.md` records how that was found.
+//!   classes. See `docs/beyond-php/generics.md` for the storage and variance contract.
 //! - Widening is admitted only between two OBJECT arguments. That is the storage proof
 //!   monomorphization forces and erased implementations never need: two objects are two
 //!   pointers, so the widened value is the same bytes, while `Box<int>` to `Box<mixed>` would

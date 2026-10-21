@@ -60,11 +60,12 @@ fn eval_expr_with_result_ownership(
     own_result: bool,
 ) -> Result<RuntimeCellHandle, EvalStatus> {
     match expr {
+        EvalExpr::DeferredDefaultError(message) => throwables::eval_throw_error(message, context, values),
         EvalExpr::Array(elements) => {
             if elements
                 .iter()
                 .any(|element| {
-                    matches!(
+                    native_default_array_spread(element).is_some() || matches!(
                         element,
                         EvalArrayElement::KeyValue { .. }
                             | EvalArrayElement::KeyReference { .. }

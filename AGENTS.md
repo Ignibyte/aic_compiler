@@ -112,6 +112,8 @@ fn test_my_feature() {
 
 Each test runs in an isolated temp directory. Tests run in parallel — the `compile_and_run` helper handles isolation automatically.
 
+A fixture that contains an `eval()` whose source is known only at runtime (the `$argc > 0 ? '...' : ''` pattern, `eval($code)`) lowers the whole builtin catalog and costs tens of seconds per compile; a literal `eval('...')` costs about as much as the same code inline. When several such fixtures only compare stdout, bundle them with `assert_bundle` / `assert_bundle_with` (`tests/codegen/support/bundle.rs`): the cases compile and run as one program, stdout is split per case, and a failure names the case. Cases share one scope and declaration namespace (unique function/class names, no `declare(strict_types=1)`, no `exit`), so keep a fixture on its own when it needs per-program heap or GC statistics, a non-zero exit, or stderr assertions. Name a bundled test `test_<family>_bundle`: `.config/nextest.toml` gives that suffix a longer timeout budget, because one bundle runs every case it replaced.
+
 ## Architecture
 
 ```

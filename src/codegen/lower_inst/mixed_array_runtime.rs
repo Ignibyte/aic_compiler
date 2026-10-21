@@ -89,12 +89,10 @@ pub(super) fn lower_array_fetch_for_write_runtime_call(
     let receiver = expect_operand(inst, 0)?;
     let key = expect_operand(inst, 1)?;
     let receiver_ty = ctx.value_php_type(receiver)?.codegen_repr();
-    let normalization = if matches!(inst.immediate,
-        Some(Immediate::RuntimeCall(
-            RuntimeCallTarget::ArrayFetchForWriteAlreadyDiagnosed
-                | RuntimeCallTarget::PendingAppendFetchForWriteAlreadyDiagnosed,
-        )))
-    {
+    let normalization = if matches!(inst.immediate, Some(Immediate::RuntimeCall(
+        RuntimeCallTarget::ArrayFetchForWriteAlreadyDiagnosed
+            | RuntimeCallTarget::PendingAppendFetchForWriteAlreadyDiagnosed,
+    ))) {
         hashes::HashKeyNormalization::PhpAlreadyDiagnosed
     } else { hashes::HashKeyNormalization::Php };
     match receiver_ty {

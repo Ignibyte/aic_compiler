@@ -41,7 +41,9 @@ use super::builtin_user_filter::inject_builtin_user_filter;
 use super::schema::{
     build_class_info_recursive, build_enum_info, build_interface_info_recursive,
     drop_unresolvable_attribute_arg_refs, validate_deferred_class_constants,
-    validate_deferred_declaration_defaults,
+    validate_deferred_declaration_defaults, validate_enum_trait_requirements,
+    expand_enum_interfaces, validate_enum_interface_contracts,
+    validate_trait_property_defaults,
 };
 use super::yield_validation::validate_yield_contexts;
 use super::{CheckOptions, Checker};
@@ -100,11 +102,14 @@ pub(super) fn check_types_impl(
     let mut errors = Vec::new();
 
     errors.extend(validate_yield_contexts(program));
+    errors.extend(validate_trait_property_defaults(program));
 
     checker.collect_function_decls(program, &mut errors);
 
     let (mut flattened_classes, mut flattened_enums, flatten_errors) = flatten_classes(program);
     errors.extend(flatten_errors);
+    (checker.trait_imported_properties, checker.trait_imported_constructors) =
+        super::schema::collect_trait_default_origins(program, &flattened_classes);
     // A prelude parsed from PHP text gives its classes real spans, so the statement's source
     // mode is what tells them apart from the program's own classes (`ClassInfo::is_internal`).
     checker.internal_class_decls = program
@@ -294,6 +299,12 @@ pub(super) fn check_types_impl(
             checker.declared_classes.insert(name.clone());
         }
     }
+    // Packed and extern classes are types that class members name too: `public buffer<Vec2> $data`,
+    // `public ptr<Point> $p`, a method parameter, or a generic argument (`Store<Vec2>` substitutes
+    // `buffer<T>` into a member). Their layouts must therefore exist before the interface and
+    // class schema passes below resolve member signatures. Duplicate detection against ordinary
+    // classes reads `declared_classes`, which is already complete here.
+    checker.prescan_extern_decls(program, &mut errors);
 
     let mut next_interface_id = 0u64;
     let mut building_interfaces = HashSet::new();
@@ -355,6 +366,10 @@ pub(super) fn check_types_impl(
                 .get(name)
                 .map(|flattened| flattened.methods.as_slice())
                 .unwrap_or(methods.as_slice());
+            let enum_constants = flattened_enums
+                .get(name)
+                .map(|flattened| flattened.constants.as_slice())
+                .unwrap_or(constants.as_slice());
             let enum_used_traits = flattened_enums
                 .get(name)
                 .map(|flattened| flattened.used_traits.as_slice())
@@ -369,6 +384,8 @@ pub(super) fn check_types_impl(
                 cases,
                 implements,
                 enum_methods,
+                methods,
+                enum_constants,
                 constants,
                 enum_used_traits,
                 enum_trait_aliases,
@@ -378,6 +395,27 @@ pub(super) fn check_types_impl(
                 &mut checker,
                 &mut next_class_id,
             ) {
+                errors.extend(error.flatten());
+            }
+        }
+    }
+    // Publish all transitive interfaces before validating hints that mention another enum.
+    let mut enum_units: Vec<_> = flattened_enums.values()
+        .filter(|unit| checker.enums.contains_key(&unit.name)).collect();
+    enum_units.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut expanded = HashSet::new();
+    for enum_unit in &enum_units {
+        match expand_enum_interfaces(&mut checker, enum_unit) {
+            Ok(()) => { expanded.insert(enum_unit.name.clone()); }
+            Err(error) => errors.extend(error.flatten()),
+        }
+    }
+    for enum_unit in enum_units {
+        if expanded.contains(&enum_unit.name) {
+            if let Err(error) = validate_enum_interface_contracts(&mut checker, enum_unit) {
+                errors.extend(error.flatten());
+            }
+            if let Err(error) = validate_enum_trait_requirements(&checker, program, enum_unit) {
                 errors.extend(error.flatten());
             }
         }
@@ -409,8 +447,6 @@ pub(super) fn check_types_impl(
     patch_builtin_generator_signatures(&mut checker);
     patch_builtin_spl_storage_signatures(&mut checker);
     patch_magic_method_signatures(&mut checker);
-
-    checker.prescan_extern_decls(program, &mut errors);
 
     // Every class, interface and enum is registered, and no body has been checked: a violated
     // bound is reported now, alone, instead of as whatever the instantiated body trips over.
@@ -488,9 +524,48 @@ fn report_class_id_inventory(checker: &Checker) {
 
 #[cfg(test)]
 mod tests {
-    /// Abstract enum method declarations retain their status in parallel class metadata.
+    /// Every enum `inject_builtin_enums` registers for a target is a builtin pointer target for
+    /// that target and no other name is, so the list the packed and extern prescan consults
+    /// (`is_builtin_enum_name`) cannot drift from the injection, including the macOS-only
+    /// `Pcntl\QosClass`.
     #[test]
-    fn enum_metadata_records_abstract_instance_and_static_methods() {
+    fn builtin_enum_pointer_targets_match_the_injected_enums() {
+        use std::collections::HashSet;
+
+        use crate::codegen_support::platform::{AppleVariant, Arch, Platform, Target};
+        use crate::types::checker::builtin_enums::{inject_builtin_enums, is_builtin_enum_name};
+
+        let targets = [
+            Target::new(Platform::MacOS, Arch::AArch64),
+            Target::new_apple(Arch::AArch64, AppleVariant::IOS),
+            Target::new(Platform::Linux, Arch::X86_64),
+            Target::new(Platform::Linux, Arch::AArch64),
+        ];
+        for target in targets {
+            let mut checker = super::Checker::new(target);
+            let before: HashSet<String> = checker.enums.keys().cloned().collect();
+            let mut next_class_id = 1;
+            inject_builtin_enums(&Vec::new(), &mut checker, &mut next_class_id)
+                .expect("builtin enums inject into an empty program");
+            let injected: HashSet<String> = checker
+                .enums
+                .keys()
+                .filter(|name| !before.contains(*name))
+                .cloned()
+                .collect();
+            for name in ["SortDirection", "PropertyHookType", "Pcntl\\QosClass", "Unrelated"] {
+                assert_eq!(
+                    is_builtin_enum_name(&checker, name),
+                    injected.contains(name),
+                    "{name} on {target:?}",
+                );
+            }
+        }
+    }
+
+    /// Imported abstract factory requirements never replace synthesized concrete metadata.
+    #[test]
+    fn enum_metadata_keeps_synthesized_factories_concrete() {
         use crate::codegen_support::platform::{Arch, Platform, Target};
         use crate::parser::ast::{ClassMethod, Visibility};
         use crate::span::Span;
@@ -518,10 +593,10 @@ mod tests {
         let mut next_class_id = 1;
         crate::types::checker::schema::insert_enum_metadata(
             "State",
-            None,
+            Some(crate::types::PhpType::Int),
             Vec::new(),
             &[],
-            &[method("instance", false), method("statik", true)],
+            &[method("from", true), method("tryFrom", true)],
             &[],
             &[],
             &[],
@@ -532,12 +607,14 @@ mod tests {
         )
         .expect("record enum metadata");
         let class = checker.classes.get("State").expect("enum class metadata");
-        assert!(class.abstract_methods.contains("instance"));
-        assert!(class.abstract_static_methods.contains("statik"));
-        assert!(!class.method_impl_classes.contains_key("instance"));
-        assert!(!class.static_method_impl_classes.contains_key("statik"));
-        assert_eq!(class.method_declaring_classes.get("instance").map(String::as_str), Some("State"));
-        assert_eq!(class.static_method_declaring_classes.get("statik").map(String::as_str), Some("State"));
+        assert!(class.abstract_methods.is_empty());
+        assert!(class.abstract_static_methods.is_empty());
+        for name in ["from", "tryfrom"] {
+            assert_eq!(class.static_method_impl_classes.get(name).map(String::as_str), Some("State"));
+            assert_eq!(class.static_method_declaring_classes.get(name).map(String::as_str), Some("State"));
+            assert_eq!(class.static_methods[name].params[0].1, crate::types::PhpType::Int);
+            assert!(!class.method_decls.iter().any(|decl| decl.name.eq_ignore_ascii_case(name)));
+        }
     }
 
     /// Class ids must not depend on HashMap iteration order.

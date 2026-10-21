@@ -19,6 +19,7 @@ fn test_core_symbols_serializable_user_return_contract() {
 #[test]
 fn test_core_symbols_enum_interface_misuse() {
     expect_error("<?php class Bad implements UnitEnum { public static function cases(): array { return []; } }", "Non-enum class Bad cannot implement interface UnitEnum");
+    expect_error("<?php interface Factory extends BackedEnum {} class Bad implements Factory {}", "Non-enum class Bad cannot implement interface UnitEnum");
     expect_error("<?php enum Bad implements UnitEnum { case One; }", "cannot explicitly implement");
 }
 

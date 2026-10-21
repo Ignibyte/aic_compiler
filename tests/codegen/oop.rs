@@ -19,6 +19,14 @@ mod inheritance;
 mod interfaces;
 #[path = "oop/modifiers_and_properties.rs"]
 mod modifiers_and_properties;
+#[path = "oop/lexical_property_defaults.rs"]
+mod lexical_property_defaults;
+#[path = "oop/nested_default_review.rs"]
+mod nested_default_review;
+mod nested_default_grok_scope;
+mod nested_default_review_boundaries;
+mod nested_default_compound_review;
+mod nested_default_numeric_review;
 #[path = "oop/readonly_initialization.rs"]
 mod readonly_initialization;
 #[path = "oop/callables/mod.rs"]

@@ -52,7 +52,9 @@ pub(super) fn address_escaping_slots(function: &Function) -> HashSet<LocalSlotId
         return escaping;
     }
     for inst in &function.instructions {
-        if op_is_value_only_consumer(inst.op) {
+        // A packed field store copies a scalar into the record; unlike an object property store
+        // it can never bind a promoted by-reference parameter, so the operand stays a value.
+        if op_is_value_only_consumer(inst.op) || function.is_packed_field_access(inst) {
             continue;
         }
         for operand in &inst.operands {
@@ -100,5 +102,8 @@ pub(super) fn op_is_value_only_consumer(op: Op) -> bool {
             | StoreRefCell | ExternGlobalStore
             // Value-level ownership/refcount bookkeeping.
             | Acquire | Release | Move | Borrow | EnsureOwned
+            // Buffer element access reads its handle and index operands by value; the stored
+            // element is a scalar copied into the payload, never an alias of a local slot.
+            | BufferGet | BufferSet | BufferResolve | BufferGetResolved | BufferSetResolved
     )
 }

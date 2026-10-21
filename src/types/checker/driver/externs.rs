@@ -8,11 +8,13 @@
 //! Key details:
 //! - Phase order controls diagnostics, available declarations, required libraries, and function-local environments.
 
+use std::collections::HashSet;
+
 use crate::errors::CompileError;
 use crate::names::php_symbol_key;
-use crate::parser::ast::{Program, StmtKind};
+use crate::parser::ast::{Program, StmtKind, TypeExpr};
 use crate::types::{
-    ctype_stack_size, ctype_to_php_type, packed_type_size, ExternClassInfo, ExternFieldInfo,
+    align_up, ctype_field_layout, ctype_to_abi_type, ctype_to_php_type, packed_type_size, ExternClassInfo, ExternFieldInfo,
     ExternFunctionSig, FunctionSig, PackedClassInfo, PackedFieldInfo,
 };
 
@@ -22,11 +24,23 @@ impl Checker {
     /// Iterates program statements, dispatching `ExternFunctionDecl`, `ExternClassDecl`,
     /// `PackedClassDecl`, and `ExternGlobalDecl` nodes to their respective prescan handlers.
     /// Collects validation errors without halting early, ensuring all declarations are processed.
+    ///
+    /// A packed class that embeds a packed class declared later in the program is sized once
+    /// the embedded layout exists, so declaration order does not matter; a set of packed classes
+    /// that embed each other in a cycle has no finite layout and is reported instead.
     pub(super) fn prescan_extern_decls(
         &mut self,
         program: &Program,
         errors: &mut Vec<CompileError>,
     ) {
+        let packed_decl_names: HashSet<&str> = program
+            .iter()
+            .filter_map(|stmt| match &stmt.kind {
+                StmtKind::PackedClassDecl { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let mut deferred_packed = Vec::new();
         for stmt in program {
             match &stmt.kind {
                 StmtKind::ExternFunctionDecl {
@@ -39,7 +53,14 @@ impl Checker {
                     self.prescan_extern_class(name, fields, stmt.span, errors)
                 }
                 StmtKind::PackedClassDecl { name, fields } => {
-                    self.prescan_packed_class(name, fields, stmt.span, errors)
+                    let waits_for_later_decl = embedded_packed_names(fields).any(|inner| {
+                        packed_decl_names.contains(inner) && !self.packed_classes.contains_key(inner)
+                    });
+                    if waits_for_later_decl {
+                        deferred_packed.push((name, fields, stmt.span));
+                    } else {
+                        self.prescan_packed_class(name, fields, stmt.span, errors);
+                    }
                 }
                 StmtKind::ExternGlobalDecl { name, c_type } => {
                     if let Err(error) = self.validate_extern_global_decl(name, c_type, stmt.span) {
@@ -52,15 +73,56 @@ impl Checker {
                 _ => {}
             }
         }
+        self.prescan_deferred_packed_classes(deferred_packed, errors);
+    }
+
+    /// Sizes the packed classes that embed a packed class declared after them, in dependency
+    /// order. Each pass sizes the first class whose embedded packed classes are no longer
+    /// pending; when no class can progress, every class left embeds itself through a cycle.
+    fn prescan_deferred_packed_classes(
+        &mut self,
+        mut pending: Vec<(&String, &Vec<crate::parser::ast::PackedField>, crate::span::Span)>,
+        errors: &mut Vec<CompileError>,
+    ) {
+        while !pending.is_empty() {
+            let pending_names: HashSet<&str> =
+                pending.iter().map(|(name, _, _)| name.as_str()).collect();
+            let ready = pending.iter().position(|(_, fields, _)| {
+                embedded_packed_names(fields).all(|inner| !pending_names.contains(inner))
+            });
+            let Some(ready) = ready else {
+                for (name, _, span) in pending {
+                    errors.push(CompileError::new(
+                        span,
+                        &format!(
+                            "Packed class {} embeds itself through its packed class fields",
+                            name
+                        ),
+                    ));
+                }
+                return;
+            };
+            let (name, fields, span) = pending.remove(ready);
+            self.prescan_packed_class(name, fields, span, errors);
+        }
     }
 
     /// Checks whether a class name is already registered in `classes`, `extern_classes`, or
-    /// `packed_classes`, using PHP-symbol key comparison for case-insensitive matching.
+    /// `packed_classes`, or pre-declared in `declared_classes`, using PHP-symbol key comparison
+    /// for case-insensitive matching.
+    ///
+    /// The extern prescan runs before the class schema pass fills `classes`, so the pre-declared
+    /// names (every class in the class map, builtin injections included, plus every enum) are what
+    /// catches an extern or packed class that reuses an ordinary class name.
     pub(super) fn has_class_decl_folded(&self, name: &str) -> bool {
         let key = php_symbol_key(name);
         self.classes
             .keys()
             .any(|existing| php_symbol_key(existing) == key)
+            || self
+                .declared_classes
+                .iter()
+                .any(|existing| php_symbol_key(existing) == key)
             || self
                 .extern_classes
                 .keys()
@@ -99,6 +161,8 @@ impl Checker {
             .map(|p| (p.name.clone(), ctype_to_php_type(&p.c_type)))
             .collect();
         let php_ret = ctype_to_php_type(return_type);
+        let abi_params: Vec<_> = params.iter().map(|p| ctype_to_abi_type(&p.c_type)).collect();
+        let abi_return = ctype_to_abi_type(return_type);
         if let Err(error) = self.validate_extern_function_decl(
             name,
             params,
@@ -130,7 +194,9 @@ impl Checker {
             ExternFunctionSig {
                 name: name.to_string(),
                 params: php_params,
+                abi_params,
                 return_type: php_ret,
+                abi_return,
                 library: library.clone(),
             },
         );
@@ -142,8 +208,10 @@ impl Checker {
     }
 
     /// Validates and registers an extern class declaration if no prior declaration exists.
-    /// Computes field offsets sequentially, checks for duplicate fields, converts C types
-    /// to PHP types, and stores an `ExternClassInfo` with total size and field metadata.
+    /// Lays the fields out like a C compiler does (each field at the next multiple of its
+    /// natural alignment, the total size padded to the largest alignment), checks for duplicate
+    /// fields, converts C types to PHP types, and stores an `ExternClassInfo` with the C
+    /// `sizeof` and per-field offsets and ABI shapes.
     fn prescan_extern_class(
         &mut self,
         name: &str,
@@ -163,6 +231,7 @@ impl Checker {
         }
         let mut extern_fields = Vec::new();
         let mut offset = 0usize;
+        let mut struct_align = 1usize;
         let mut seen_fields = std::collections::HashSet::new();
         let mut class_has_errors = false;
         for f in fields {
@@ -180,11 +249,18 @@ impl Checker {
                 continue;
             }
             let php_type = ctype_to_php_type(&f.c_type);
-            let size = ctype_stack_size(&f.c_type);
+            let Some((size, align)) = ctype_field_layout(&f.c_type) else {
+                // `validate_extern_field_decl` already refused the types without a layout.
+                class_has_errors = true;
+                continue;
+            };
+            offset = align_up(offset, align);
+            struct_align = struct_align.max(align);
             extern_fields.push(ExternFieldInfo {
                 name: f.name.clone(),
                 php_type,
                 offset,
+                abi: ctype_to_abi_type(&f.c_type),
             });
             offset += size;
         }
@@ -195,7 +271,7 @@ impl Checker {
             name.to_string(),
             ExternClassInfo {
                 name: name.to_string(),
-                total_size: offset,
+                total_size: align_up(offset, struct_align),
                 fields: extern_fields,
             },
         );
@@ -269,4 +345,15 @@ impl Checker {
             },
         );
     }
+}
+
+/// Yields the class names a packed declaration embeds by value (fields typed as a bare class
+/// name). Pointer fields only store an address and do not need the target's layout.
+fn embedded_packed_names(
+    fields: &[crate::parser::ast::PackedField],
+) -> impl Iterator<Item = &str> {
+    fields.iter().filter_map(|field| match &field.type_expr {
+        TypeExpr::Named(name) => Some(name.as_str()),
+        _ => None,
+    })
 }

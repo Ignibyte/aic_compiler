@@ -8,7 +8,7 @@ sidebar:
 ## Compilation pipeline
 
 ```
-PHP source (.php)
+Source (.php or .lfc)
     │
     ▼
 ┌─────────┐
@@ -54,7 +54,7 @@ PHP source (.php)
      │
      ▼
 ┌──────────────┐
-│   Preludes   │  src/{pdo,mysqli,tz,list_id,var_export,opcache,image,hash,curl,xml,web,version}_prelude*
+│   Preludes   │  src/{pdo,mysqli,tz,list_id,var_export,opcache,image,hash,curl,xml,dom_html,web,version}_prelude*
 │              │  Injects only the compiler-owned PHP surfaces required by
 │              │  resolved source usage, forced bridge flags, or --web.
 └─────┬────────┘
@@ -74,6 +74,12 @@ PHP source (.php)
 └────┬─────┘
      │
      ▼
+┌──────────────┐
+│ DOM autoload │  src/dom_html_prelude.rs
+│              │  Rechecks newly loaded classes for DOM HTML usage.
+└─────┬────────┘
+      │
+      ▼
 ┌──────────────┐
 │ Object casts │  src/object_cast_prelude*
 │              │  Injects stdClass declarations for object casts after autoload.
@@ -318,7 +324,7 @@ src/
 ├── optimize/                  Constant folding, constant propagation, control-flow pruning, normalization, dead-code elimination, declaration reachability pruning
 ├── ir/                        EIR types, builder, validator, printer, effects, and tests
 ├── ir_lower/                  Active checked-AST to EIR lowering
-├── ir_passes/                 EIR optimization pass driver, identity folding, peephole patterns, scalar local promotion, immutable integer-local loads, checked-integer sinking, canonical loop optimization, integer range and induction-variable analysis, numeric-chain fusion, constant folding, common-subexpression elimination, loop-invariant code motion, dead-instruction elimination, dead-store elimination, branch simplification, concat scratch-state optimization, the cross-function small-function inliner (run to a module-level fixed point), dominance analysis, loop analysis, and linear-scan register allocation with cost-aware constant rematerialization
+├── ir_passes/                 EIR optimization pass driver, identity folding, peephole patterns, scalar local promotion, immutable integer-local loads, checked-integer sinking, canonical loop optimization, integer range and induction-variable analysis, numeric-chain fusion, constant folding, common-subexpression elimination, loop-invariant code motion, dead-instruction elimination, dead-store elimination, branch simplification, concat scratch-state optimization, fresh numeric ownership finalization, direct self/mutual tail-recursion lowering, the cross-function small-function inliner (run to a module-level fixed point), dominance analysis, loop analysis, and linear-scan register allocation with cost-aware constant rematerialization
 ├── codegen/                   Active EIR to target assembly backend
 ├── codegen_support/           Shared ABI, runtime, platform, metadata, and callable support
 ├── runtime_cache.rs           Cached shared runtime object preparation
@@ -342,6 +348,8 @@ src/
 ├── list_id_prelude/           Identifier-list prelude detection and baked table data
 ├── var_export_prelude.rs      var_export prelude injection entry point
 ├── var_export_prelude/        var_export prelude usage detection
+├── dom_html_prelude.rs        Pay-for-use DOM HTML injection before name resolution and after autoload
+├── dom_html_prelude/          Cached declarations, HTML entity data, and DOM usage detection
 ├── image_prelude.rs           Image (GD, Exif/IPTC, Imagick, Gmagick, Cairo) prelude injection entry point
 ├── image_prelude/             Image prelude usage detection
 ├── web_prelude.rs             --web request superglobals and session prelude injection (flag-gated, not usage-detected)
@@ -479,7 +487,7 @@ src/
 │   │
 │   └── runtime/               Runtime routines and target-specific emission helpers
 │       ├── mod.rs             Runtime module boundary; re-exports the emission entry points
-│       ├── data/              Fixed, user-program, and instanceof runtime data tables (5 files)
+│       ├── data/              Fixed, user-program, and instanceof runtime data tables (6 files)
 │       ├── diagnostics.rs     Suppressible runtime-warning channel used by `@`
 │       ├── eval_bridge.rs     C-ABI value, callable, class, and runtime hooks used by Magician
 │       ├── eval_scope.rs      Core materialized-scope helpers usable without the interpreter
@@ -489,22 +497,22 @@ src/
 │       ├── resource_ids.rs    Runtime resource-kind identifiers shared by cleanup paths
 │       ├── round_mode.rs      PHP rounding-mode constants used by runtime helpers
 │       ├── sysv_call_alignment.rs x86_64 SysV nested-call stack-alignment helpers
-│       ├── strings/           itoa, concat, resource display, ftoa, sprintf, hashes, iconv, mbstring, parse_url, and conversion helpers (103 top-level files + 68 nested helpers)
-│       ├── arrays/            heap_alloc, heap_free, array_free_deep, array_grow, hash_grow, hash_*, mixed boxing/freeing, mixed instanceof, sort, usort, refcount, gc/decref dispatch, ... (206 top-level files + 7 nested target/debug helpers)
+│       ├── strings/           itoa, concat, resource display, ftoa, sprintf, hashes, iconv, mbstring, parse_url, and conversion helpers (105 top-level Rust files + 62 nested Rust helpers)
+│       ├── arrays/            heap_alloc, heap_free, array_free_deep, array_grow, hash_grow, hash_*, mixed boxing/freeing, mixed instanceof, sort, usort, refcount, gc/decref dispatch, ... (208 top-level Rust files + 9 nested target/debug/test helpers)
 │       ├── callables/         Runtime `is_callable()` fallback for dynamic strings/arrays/hashes/objects/Mixed, callable descriptor release, and `Closure::bind` support (7 files)
 │       ├── compare/           Loose/strict comparison and truthiness helpers (5 files)
 │       ├── io/                fopen, fgets, fread, stat, streams, sockets, filters, scandir, ... (126 top-level files + 1 nested response-metadata helper)
 │       ├── buffers/           Generation-safe handle resolution, allocation/free, length, bounds/size/use-after-free diagnostics (8 files incl. mod.rs)
 │       ├── bcmath/            Target-aware C-ABI marshalling for exact decimal bridge calls (3 files incl. target assembly)
 │       ├── curl/              Easy, multi, share, callback, multipart, error, and version bridge adapters (14 files)
-│       ├── eval_bridge/       Magician value, array, cast, reflection, clone, mbstring, output, and builtin adapters (36 top-level files + 1 nested output helper)
+│       ├── eval_bridge/       Magician value, array, cast, reflection, clone, mbstring, output, and builtin adapters (37 top-level files + 1 nested output helper)
 │       ├── exceptions.rs      Exception runtime module root / re-exports
-│       ├── exceptions/        cleanup frames, handler dispatch, dynamic instanceof, matching, throwing, and Throwable helpers (22 files)
+│       ├── exceptions/        cleanup frames, handler dispatch, dynamic instanceof, matching, throwing, and Throwable helpers (23 top-level Rust files + 2 nested cleanup helpers)
 │       ├── pdo/               Target-aware PDO callable callback adapters (5 files)
-│       ├── system/            build_argv, time, getenv, shell_exec, date/JSON/strtotime, serialize/unserialize, preg_*, ... (46 top-level files + 44 nested files)
+│       ├── system/            build_argv, time, getenv, shell_exec, date/JSON/strtotime, serialize/unserialize, preg_*, ... (50 top-level Rust files + 59 nested Rust files)
 │       ├── pointers/          ptoa, ptr_check_nonnull, str_to_cstr, cstr_to_str, ptr_read_string, ptr_write_string, ... (7 files)
 │       ├── fibers/            stack allocation/free, context switch, entry trampoline (4 top-level files) + `api/` (4 target-aware public API helper files)
-│       ├── objects/           stdClass, object handles, Mixed property/index autovivification, object-vars/export, destructor dispatch, and new-by-name helpers (17 files)
+│       ├── objects/           stdClass, object handles, Mixed property/index autovivification, object-vars/export, destructor dispatch, and new-by-name helpers (19 files)
 │       ├── spl/               SplDoublyLinkedList and SplFixedArray runtime container helpers, including shared PHP offset conversion (4 files)
 │       ├── generators/        Generator frame layout and fiber-backed coroutine __rt_gen_* helpers (3 files)
 │       └── zval/              Zval bridge packing, unpacking, type, and lifetime helpers (11 files)
@@ -516,7 +524,7 @@ src/
 
 crates/
 ├── elephc-builtin-contract/   Dependency-neutral builtin catalog and signatures
-├── elephc-bcmath/             Pure-Rust arbitrary-precision decimal bridge for PHP `bc*()` functions
+├── elephc-bcmath/             Pure-Rust arbitrary-precision decimal bridge for PHP `bc*()` functions and immutable `BcMath\Number` objects
 ├── elephc-crypto/             Pure-Rust hashing/HMAC bridge staticlib behind PHP `hash()` / `hash_hmac()`
 ├── elephc-curl/               Static libcurl easy, multi, share, callback, and multipart bridge
 ├── elephc-generics/           Shared structural generic type terms, binding, and variance for AOT compilation and Magician
@@ -568,12 +576,17 @@ During type checking, extern declarations are registered in dedicated maps that 
 - `extern_classes`: flat C struct layout metadata
 - `extern_globals`: native global symbols loaded through the linker
 
+The checker registers extern and packed classes before the interface and class schema passes,
+because class members name them too (`public buffer<Vec2> $data`, `public ptr<Point> $p`, or a
+generic argument such as `Store<Vec2>`). Duplicate detection against ordinary classes therefore
+reads the pre-declared class names rather than the finished class table.
+
 Extern calls differ from ordinary elephc function calls in four important ways:
 
 1. Codegen dispatches extern functions before built-ins, so an `extern function strlen(...)` declaration really calls C `strlen`, not the elephc builtin.
 2. `string` arguments are converted with `__rt_str_to_cstr`, which allocates a null-terminated C buffer that is valid for the duration of the native call and is released immediately after the call returns.
 3. `string` return values are converted with `__rt_cstr_to_str`, which treats the returned `char *` as borrowed and copies bytes back into an owned elephc string.
-4. `extern class` layouts are available to pointer-oriented codegen too, so `ptr_sizeof("StructName")` and `ptr_cast<StructName>($p)->field` use the same checked layout metadata recorded by the type checker.
+4. `extern class` layouts are available to pointer-oriented codegen too, so `ptr_sizeof("StructName")` and `ptr_cast<StructName>($p)->field` use the same checked layout metadata recorded by the type checker. The checker lays fields out with natural C alignment (`ctype_field_layout` in `src/types/ffi.rs`) and keeps each field's C shape (`ExternFieldInfo::abi`), and `src/codegen/lower_inst/objects/extern_fields.rs` turns `prop_get`/`prop_set` on a `ptr<StructName>` receiver into width-aware loads and stores, the extern sibling of the packed-class `ptr<T>` route.
 
 `callable` FFI parameters pass a user-defined elephc function by address. The function name is provided as a string literal at the call site, and codegen loads the address of the compiled mangled function symbol before branching into C. Namespaced functions therefore still map to unique assembly labels after canonicalization.
 

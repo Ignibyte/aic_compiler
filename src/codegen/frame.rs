@@ -63,6 +63,8 @@ pub(super) const WEB_HANDLER_SYMBOL: &str = "_elephc_web_handler";
 pub(super) struct FrameLayout {
     pub(super) value_placement: ValuePlacement,
     pub(super) local_offsets: HashMap<LocalSlotId, usize>,
+    pub(super) numeric_cell_offsets: HashMap<ValueId, usize>,
+    pub(super) numeric_local_slots: HashSet<LocalSlotId>,
     pub(super) ref_cell_state_offsets: HashMap<LocalSlotId, usize>,
     pub(super) try_handler_offsets: HashMap<i64, usize>,
     pub(super) exception_guard_offsets: HashMap<ValueId, usize>,
@@ -125,6 +127,12 @@ pub(super) fn layout_for_function(
         offset += bytes;
         local_offsets.insert(local.id, offset);
     }
+    let mut numeric_cell_offsets = HashMap::new();
+    let numeric = super::stack_numeric::plan(function);
+    for value in numeric.cells {
+        offset += 24;
+        numeric_cell_offsets.insert(value, offset);
+    }
     let mut ref_cell_state_offsets = HashMap::new();
     let mut ref_cell_slots = local_analysis.ref_cell_slots().collect::<Vec<_>>();
     ref_cell_slots.sort_by_key(|slot| slot.as_raw());
@@ -185,6 +193,8 @@ pub(super) fn layout_for_function(
     FrameLayout {
         value_placement,
         local_offsets,
+        numeric_cell_offsets,
+        numeric_local_slots: numeric.locals,
         ref_cell_state_offsets,
         try_handler_offsets,
         exception_guard_offsets,
@@ -1592,6 +1602,13 @@ pub(super) fn emit_owned_local_cleanup(
     offset: usize,
     ty: &PhpType,
 ) {
+    if ctx.numeric_local_slots.contains(&slot) {
+        // -- numeric cells have no child that can run a PHP destructor --
+        abi::load_at_offset(ctx.emitter, abi::int_result_reg(ctx.emitter), offset);
+        abi::emit_store_zero_to_local_slot(ctx.emitter, offset);
+        abi::emit_decref_if_refcounted(ctx.emitter, &PhpType::Mixed);
+        return;
+    }
     let done = ctx
         .ref_cell_state_offset(slot)
         .map(|_| ctx.next_label("raw_local_cleanup_done"));

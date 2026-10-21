@@ -2,7 +2,7 @@
 title: "get_resource_type()"
 description: "Returns the type of a resource."
 sidebar:
-  order: 954
+  order: 958
 ---
 
 ## get_resource_type()

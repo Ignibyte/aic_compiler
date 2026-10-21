@@ -24,7 +24,7 @@ use crate::parser::ast::{Expr, ExprKind, StaticReceiver, Stmt, TypeExpr};
 use crate::span::Span;
 use crate::types::{
     array_storage_conversion, join_array_storage_conversion, ClassInfo, EnumInfo,
-    ExternFunctionSig, FunctionSig, InterfaceInfo, PackedClassInfo, PhpType,
+    ExternClassInfo, ExternFunctionSig, FunctionSig, InterfaceInfo, PackedClassInfo, PhpType,
     ReturnAliasSummaries, ReturnArgAlias, ThrowAccessInfo, TypeEnv,
 };
 
@@ -293,6 +293,8 @@ pub(crate) struct LoweringContext<'m, 'f> {
         &'m HashMap<String, HashMap<String, crate::ir::TraitMethodInfo>>,
     pub declared_trait_properties: &'m HashMap<String, Vec<crate::parser::ast::ClassProperty>>,
     pub packed_classes: &'m HashMap<String, PackedClassInfo>,
+    /// C struct layouts of the declared extern classes, read by `ptr<Class>` field accesses.
+    pub extern_classes: &'m HashMap<String, ExternClassInfo>,
     /// Statically-decided access violations lowered to runtime `Error` throws,
     /// keyed by the source span of the offending call/assignment.
     pub throw_access_sites: &'m HashMap<Span, ThrowAccessInfo>,
@@ -465,6 +467,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         declared_trait_methods: &'m HashMap<String, HashMap<String, crate::ir::TraitMethodInfo>>,
         declared_trait_properties: &'m HashMap<String, Vec<crate::parser::ast::ClassProperty>>,
         packed_classes: &'m HashMap<String, PackedClassInfo>,
+        extern_classes: &'m HashMap<String, ExternClassInfo>,
         throw_access_sites: &'m HashMap<Span, ThrowAccessInfo>,
         builtin_call_types: &'m HashMap<Span, PhpType>,
         boxed_reference_promotion_sites: &'m HashMap<(String, Span), HashSet<String>>,
@@ -530,6 +533,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
             declared_trait_methods,
             declared_trait_properties,
             packed_classes,
+            extern_classes,
             throw_access_sites,
             builtin_call_types,
             boxed_reference_promotion_sites,
@@ -1371,7 +1375,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
     ///
     /// The single spelling site for both place temporaries, so the marker cannot be applied to
     /// one and forgotten on the other.
-    fn next_synthetic_place_local_name(&mut self) -> String {
+    pub(crate) fn next_synthetic_place_local_name(&mut self) -> String {
         let name = crate::names::synthetic_place_local_name(self.hidden_temp_counter);
         self.hidden_temp_counter += 1;
         name
@@ -1726,7 +1730,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
     }
 
     /// Returns the reusable hidden owner slot for a promoted local, declaring it if needed.
-    fn declare_ref_cell_owner(&mut self, variable: &str, php_type: PhpType) -> LocalSlotId {
+    pub(crate) fn declare_ref_cell_owner(&mut self, variable: &str, php_type: PhpType) -> LocalSlotId {
         if let Some(slot) = self.ref_cell_owner_locals.get(variable).copied() {
             self.builder.widen_local_storage_type(slot, php_type);
             return slot;
@@ -3882,7 +3886,9 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
             }
             Some(Immediate::RuntimeCall(
                 crate::ir::RuntimeCallTarget::ArrayFetchForWrite
-                    | crate::ir::RuntimeCallTarget::PendingAppendFetchForWrite,
+                    | crate::ir::RuntimeCallTarget::ArrayFetchForWriteAlreadyDiagnosed
+                    | crate::ir::RuntimeCallTarget::PendingAppendFetchForWrite
+                    | crate::ir::RuntimeCallTarget::PendingAppendFetchForWriteAlreadyDiagnosed,
             )) => matches!(inst.result_php_type.codegen_repr(), PhpType::Mixed | PhpType::Union(_)),
             Some(Immediate::RuntimeCall(crate::ir::RuntimeCallTarget::Function(target))) => {
                 matches!(
@@ -4780,6 +4786,7 @@ impl crate::builtins::semantics::BuiltinLoweringContext for LoweringContext<'_, 
                     crate::ir::RuntimeFnId::FunctionExists
                         | crate::ir::RuntimeFnId::IsCallable
                         | crate::ir::RuntimeFnId::ObStart
+                        | crate::ir::RuntimeFnId::StripTags
                 ) || target.string_callback_operand_index().is_some()
                     || target.uses_mbstring_runtime() =>
             {
@@ -5123,7 +5130,9 @@ fn runtime_call_may_invoke_implicit_user_code(
     };
     match target {
         crate::ir::RuntimeCallTarget::ArrayFetchForWrite
-        | crate::ir::RuntimeCallTarget::PendingAppendFetchForWrite => true,
+            | crate::ir::RuntimeCallTarget::ArrayFetchForWriteAlreadyDiagnosed
+            | crate::ir::RuntimeCallTarget::PendingAppendFetchForWrite
+            | crate::ir::RuntimeCallTarget::PendingAppendFetchForWriteAlreadyDiagnosed => true,
         crate::ir::RuntimeCallTarget::Pcntl(
             crate::ir::PcntlRuntime::Signal | crate::ir::PcntlRuntime::SignalDispatch,
         ) => true,

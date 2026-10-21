@@ -14,6 +14,10 @@ use super::*;
 /// Inputs consumed by the post-EIR backend and linker pipeline.
 pub(super) struct BackendInputs<'a> {
     pub(super) repl_build: bool,
+    /// Whether to print the final `Compiled '...' -> '...'` line. An `elephc test` build
+    /// turns it off: the binary lives under the cache and is run immediately, so the line
+    /// would only push the suite's own report down the terminal.
+    pub(super) announce_success: bool,
     pub(super) filename: &'a str,
     pub(super) with_crates: &'a HashSet<String>,
     pub(super) ini_overrides: &'a [(String, String)],
@@ -63,6 +67,7 @@ fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
 pub(super) fn emit_and_link(inputs: BackendInputs<'_>) {
     let BackendInputs {
         repl_build,
+        announce_success,
         filename,
         with_crates,
         ini_overrides,
@@ -477,8 +482,10 @@ pub(super) fn emit_and_link(inputs: BackendInputs<'_>) {
     ) {
         eprintln!("{warning}");
     }
-    crate::progress::finish_ok(
-        &format!("Compiled '{}' -> '{}'", filename, output_paths.bin.display()),
-        timings.elapsed(),
-    );
+    if announce_success {
+        crate::progress::finish_ok(
+            &format!("Compiled '{}' -> '{}'", filename, output_paths.bin.display()),
+            timings.elapsed(),
+        );
+    }
 }

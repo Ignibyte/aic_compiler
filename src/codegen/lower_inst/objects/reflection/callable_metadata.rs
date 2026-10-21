@@ -54,7 +54,7 @@ pub(super) fn reflection_function_metadata(
         None,
         Some(declaring_function),
         &[],
-        None,
+        Some(&function.source_defaults),
     )?;
     metadata.required_parameter_count = required_parameter_count;
     metadata.type_metadata = type_metadata;

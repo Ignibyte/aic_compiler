@@ -12,6 +12,7 @@
 //!   loaded, which `crate::opcache_prelude` bakes into the OPcache script manifest.
 
 mod alias;
+mod dev_packages;
 mod index;
 mod interpret;
 mod registry;
@@ -21,6 +22,7 @@ mod walk;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+pub use dev_packages::phpunit_closure;
 pub use registry::Registry;
 
 use crate::errors::CompileError;

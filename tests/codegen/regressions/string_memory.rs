@@ -1347,7 +1347,7 @@ echo "done";
 /// Fixture: assign concat, strlen, conditional unset, then is_null check.
 ///
 /// The `unset` sits inside a branch on purpose. A straight-line `unset($x)` now KILLS the
-/// binding (see `.plans/local-retype-and-strict-locals.md`), so `is_null($x)` after it is an
+/// binding (see `docs/php/types.md`, Local retyping), so `is_null($x)` after it is an
 /// `Undefined variable` diagnostic instead of a read of the nulled slot — that half of the
 /// contract lives in `tests/error_tests/type_system.rs::test_read_after_unset_is_undefined`. A
 /// conditional `unset` is not kill-eligible, so it keeps the release-and-null-store behaviour

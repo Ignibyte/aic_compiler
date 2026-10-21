@@ -766,11 +766,7 @@ pub(in crate::interpreter) fn eval_method_parameter_scalar_coercion(
 /// deciding whether to reject them is asking a different question (`null`, `int`, `float` and
 /// `bool` all coerce to `string` under PHP's coercive typing).
 ///
-/// Feature-gated for the same reason as `throwables::eval_throw_runtime_exception`: today's
-/// only caller is `builtins::curl::handle::eval_curl_string_argument`, which exists only under
-/// the `curl` feature. The gate comes off as soon as the sibling typed-string builtins named in
-/// issue #872 (`urlencode`, `date`) get the same guard.
-#[cfg(feature = "curl")]
+/// Shared by ordinary builtin string-union binding and optional curl argument validation.
 pub(in crate::interpreter) fn eval_object_has_to_string(
     value: RuntimeCellHandle,
     context: &mut ElephcEvalContext,

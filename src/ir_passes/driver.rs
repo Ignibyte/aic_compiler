@@ -28,6 +28,7 @@
 use crate::ir::{DataPool, Function, Module};
 
 use super::branch_simplify::BranchSimplify;
+use super::bounded_mixed_counter::BoundedMixedCounter;
 use super::checked_int_sink::CheckedIntSink;
 use super::checked_numeric_chain::CheckedNumericChain;
 use super::concat_reset::ConcatResetElim;
@@ -87,7 +88,7 @@ pub trait IrPass {
 /// Builds the ordered set of transformation passes run on every function:
 /// identity arithmetic folding, peephole rewrites, scalar local promotion,
 /// immutable-local discovery, checked-arithmetic int-sink specialization,
-/// canonical loop optimization, integer range specialization, boxed numeric-chain
+/// proven bounded Mixed counters, canonical loop optimization, integer range specialization, boxed numeric-chain
 /// fusion, constant folding, common-subexpression elimination, loop-invariant
 /// code motion, dead instruction elimination,
 /// dead store elimination, branch simplification, and concat scratch-state
@@ -114,13 +115,14 @@ pub trait IrPass {
 /// collapsed by branch simplification, all converging through the fixed-point loop.
 /// Fresh numeric ownership transfer then runs separately, without restarting
 /// checked-integer sink discovery after removing assignment clone barriers.
-fn default_passes() -> Vec<Box<dyn IrPass>> {
+fn default_passes(module: &Module) -> Vec<Box<dyn IrPass>> {
     vec![
         Box::new(IdentityArith),
         Box::new(Peephole),
         Box::new(Mem2Reg),
         Box::new(ImmutableLocalLoads),
         Box::new(CheckedIntSink),
+        Box::new(BoundedMixedCounter::new(module)),
         Box::new(LoopOptimize),
         Box::new(IntegerRange),
         Box::new(CheckedNumericChain),
@@ -162,7 +164,7 @@ fn default_passes() -> Vec<Box<dyn IrPass>> {
 /// converges (inlining is bounded over the acyclic candidate graph; the function
 /// passes only simplify), with `MAX_MODULE_ITERATIONS` as a backstop.
 pub fn optimize_module(module: &mut Module) {
-    let (finalizers, passes): (Vec<_>, Vec<_>) = default_passes().into_iter()
+    let (finalizers, passes): (Vec<_>, Vec<_>) = default_passes(module).into_iter()
         .partition(|pass| pass.run_after_fixed_point());
     optimize_module_to_fixed_point(module, &passes);
     // Tail recursion changes the CFG and parameter mutability after the ordinary
@@ -171,6 +173,15 @@ pub fn optimize_module(module: &mut Module) {
         #[cfg(debug_assertions)]
         if let Err(error) = crate::ir::validate_module(module) {
             panic!("tail recursion produced invalid module: {:?}", error);
+        }
+        run_module_function_passes(module, &passes);
+    }
+    // Buffer resolution hoisting needs the module-wide `pcntl_async_signals()` answer and runs
+    // once on the converged loops; the scalar passes then clean up what it leaves behind.
+    if super::buffer_access::hoist_buffer_resolution(module) {
+        #[cfg(debug_assertions)]
+        if let Err(error) = crate::ir::validate_module(module) {
+            panic!("buffer resolution hoisting produced invalid module: {:?}", error);
         }
         run_module_function_passes(module, &passes);
     }

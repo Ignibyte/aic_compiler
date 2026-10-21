@@ -51,6 +51,9 @@ pub(in crate::codegen::lower_inst) fn lower_prop_get(ctx: &mut FunctionContext<'
         return store_if_result(ctx, inst);
     }
     let property = property_name_immediate(ctx, inst)?.to_string();
+    if let Some(class_name) = extern_receiver_class(ctx, &ctx.value_php_type(object)?) {
+        return lower_extern_prop_get(ctx, inst, object, &class_name, &property);
+    }
     if matches!(ctx.value_php_type(object)?.codegen_repr(), PhpType::Object(_)) {
         return lower_object_prop_get_with_null_guard(ctx, inst, object, &property);
     }
@@ -159,6 +162,7 @@ pub(super) fn lower_prop_get_nonnull(
     let slot = resolve_property_slot(ctx, object, property, inst)?;
     let base_reg = abi::symbol_scratch_reg(ctx.emitter);
     ctx.load_value_to_reg(object, base_reg)?;
+    emit_typed_pointer_receiver_null_check(ctx, object, base_reg)?;
     let read_done = emit_property_read_state_guard(
         ctx,
         &slot,

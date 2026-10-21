@@ -8,6 +8,7 @@
 //! Key details:
 //! - PHP string coercion treats `false` and `null` as empty strings, while
 //!   integer true and ordinary ints use the existing `__rt_itoa` helper.
+//! - Raw pointers stringify through `__rt_ptoa`, the same "0x..." formatter `echo` uses.
 //! - Constant string values register lazy interned origins before native copies can create aliases.
 
 use crate::codegen::abi;
@@ -368,6 +369,9 @@ pub(super) fn lower_resource_to_string(
 }
 
 /// Lowers an integer-like-to-string conversion, including PHP bool/null string rules.
+///
+/// Raw pointers (`ptr` and `ptr<T>`) share the integer register shape and format as the same
+/// lowercase "0x..." text `echo` prints, so concatenation, interpolation and casts agree with it.
 pub(super) fn lower_int_like_to_string(
     ctx: &mut FunctionContext<'_>,
     inst: &Instruction,
@@ -380,6 +384,10 @@ pub(super) fn lower_int_like_to_string(
         }
         PhpType::Int => {
             abi::emit_call_label(ctx.emitter, "__rt_itoa");
+            store_if_result(ctx, inst)
+        }
+        PhpType::Pointer(_) => {
+            abi::emit_call_label(ctx.emitter, "__rt_ptoa");
             store_if_result(ctx, inst)
         }
         PhpType::TaggedScalar => {

@@ -236,6 +236,16 @@ impl PhpType {
         matches!(self, PhpType::Float)
     }
 
+    /// Reports whether an integer must widen to satisfy this declared numeric contract.
+    pub(crate) fn coerces_integer_to_float(&self) -> bool {
+        match self {
+            Self::Float => true,
+            Self::Union(members) => members.contains(&Self::Float)
+                && !members.iter().any(|member| matches!(member, Self::Int | Self::Mixed)),
+            _ => false,
+        }
+    }
+
     /// Returns true for heap values whose lifetime is tracked with runtime refcounts.
     pub fn is_refcounted(&self) -> bool {
         matches!(

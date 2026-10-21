@@ -18,6 +18,12 @@
 # EVAL_SHARD_NEXTEST_BIN names a cargo-nextest binary to run pass 2 with, for a
 # runner that packages the binary with the archive instead of installing one
 # (the macOS shards); without it pass 2 uses the `cargo nextest` on PATH.
+# EVAL_SHARD_JUNIT_FILE, when set, receives a JUnit report of pass 1: one testcase
+# per selected test with its libtest outcome. Pass 2 writes nextest's own report
+# through `[profile.ci.junit]`. libtest on stable reports no per-test durations,
+# so the `time` of a pass-1 testcase is the interval since the previous completion
+# in the two-thread process, a shard-tuning signal rather than the test's own
+# duration; the report says so in a suite property.
 
 set -euo pipefail
 
@@ -82,17 +88,21 @@ fi
 log_dir=$(mktemp -d)
 trap 'rm -rf "$log_dir"' EXIT
 pass1_log=$log_dir/pass1.log
+pass1_times=$log_dir/pass1.times
 
 echo "Running ${#selected[@]} eval tests in shard $shard/$shard_count"
 
 # --- pass 1: one process, progress-watched -----------------------------------
 pass1_status_file=$log_dir/pass1.status
 pass1_pid_file=$log_dir/pass1.pid
+# Every line is stamped with the epoch second it completed, which is all the per-test
+# timing stable libtest allows (see EVAL_SHARD_JUNIT_FILE above). perl rather than awk:
+# the macOS runners' awk has no systime(), and both runners ship perl.
 {
     "$test_binary" codegen::eval "${skipped[@]}" --test-threads 2 2>&1 &
     echo $! > "$pass1_pid_file"
     if wait $!; then echo 0 > "$pass1_status_file"; else echo $? > "$pass1_status_file"; fi
-} | tee "$pass1_log" &
+} | tee "$pass1_log" | perl -pe 'BEGIN { $| = 1 } $_ = time . "\t" . $_' > "$pass1_times" &
 tee_pid=$!
 # The libtest pid is what the watchdog kills; wait for the subshell to record it rather than
 # hoping a fixed sleep was long enough on a loaded runner.
@@ -144,6 +154,39 @@ pass1_status=$(cat "$pass1_status_file" 2>/dev/null || echo 1)
 if [[ -n $watchdog_reason ]]; then
     pass1_status=124
 fi
+
+# --- pass 1 JUnit report ------------------------------------------------------
+write_pass1_junit() {
+    [[ -n ${EVAL_SHARD_JUNIT_FILE:-} ]] || return 0
+    mkdir -p "$(dirname "$EVAL_SHARD_JUNIT_FILE")"
+    awk -F '\t' -v started="$started" -v shard="$shard/$shard_count" '
+        BEGIN { previous = started; tests = 0; failures = 0; skipped = 0; cases = "" }
+        $2 ~ /^test [^ ]+ \.\.\. (ok|FAILED|ignored)$/ {
+            split($2, parts, " ")
+            name = parts[2]
+            status = parts[4]
+            elapsed = $1 - previous
+            if (elapsed < 0) elapsed = 0
+            previous = $1
+            tests++
+            body = ""
+            if (status == "FAILED") { failures++; body = "<failure message=\"failed in the single-process pass\"/>" }
+            if (status == "ignored") { skipped++; body = "<skipped/>" }
+            cases = cases sprintf("    <testcase classname=\"elephc::codegen_tests\" name=\"%s\" time=\"%d\">%s</testcase>\n", name, elapsed, body)
+        }
+        END {
+            printf "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            printf "<testsuites name=\"eval shard %s pass 1\" tests=\"%d\" failures=\"%d\" skipped=\"%d\">\n", shard, tests, failures, skipped
+            printf "  <testsuite name=\"elephc::codegen_tests\" tests=\"%d\" failures=\"%d\" skipped=\"%d\">\n", tests, failures, skipped
+            printf "    <properties>\n"
+            printf "      <property name=\"elephc.eval_shard.time\" value=\"seconds since the previous completion in one two-thread libtest process, not the test duration itself\"/>\n"
+            printf "    </properties>\n"
+            printf "%s", cases
+            printf "  </testsuite>\n</testsuites>\n"
+        }
+    ' "$pass1_times" > "$EVAL_SHARD_JUNIT_FILE"
+}
+write_pass1_junit
 
 # libtest's --skip filters are substring matches; the prefix grouping above keeps the known
 # shapes together, but a green pass 1 is only trusted when every selected test was reported.

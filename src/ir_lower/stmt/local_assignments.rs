@@ -294,7 +294,7 @@ pub(super) fn local_has_loop_storage_contract(
 /// - `$a = &$obj->prop` binds the local to the object's reference-property cell (write-through).
 /// - `$a = &call()` binds the local to the cell returned by a by-reference callee.
 /// - `$a = &$arr[idx]` binds the local to the indexed-array element's inline storage.
-pub(super) fn lower_ref_assign(ctx: &mut LoweringContext<'_, '_>, target: &str, source: &Expr, span: Span) {
+pub(in crate::ir_lower) fn lower_ref_assign(ctx: &mut LoweringContext<'_, '_>, target: &str, source: &Expr, span: Span) {
     match &source.kind {
         ExprKind::Variable(source_name) => {
             let fiber_start_sig = ctx.fiber_start_sig_for_local(source_name);

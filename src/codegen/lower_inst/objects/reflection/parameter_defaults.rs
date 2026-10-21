@@ -16,6 +16,20 @@ pub(super) fn reflection_parameter_default_value(
     current_info: Option<&crate::types::ClassInfo>,
     default: &Expr,
 ) -> Result<Option<ReflectionParameterDefaultValue>> {
+    if let Some(value) = reflection_deferred_default_value(default) {
+        return Ok(Some(value));
+    }
+    if let Some(helper) = ctx.module.functions.iter().chain(ctx.module.closures.iter())
+        .find(|function| (function.lexical_class.is_none() && current_class.is_empty()
+            || function.lexical_class.as_deref().is_some_and(|scope|
+            scope == current_class || current_info.is_some_and(|info|
+                info.method_impl_classes.values().chain(info.static_method_impl_classes.values())
+                    .any(|owner| owner == scope))))
+            && function.callable_default.as_ref()
+                .is_some_and(|value| value == default && value.span == default.span))
+    {
+        return Ok(Some(ReflectionParameterDefaultValue::EirHelper(helper.name.clone())));
+    }
     if let Some(value) =
         reflection_object_parameter_default_value(ctx, current_class, current_info, default)?
     {
@@ -24,6 +38,15 @@ pub(super) fn reflection_parameter_default_value(
     if let Some(value) = reflection_literal_parameter_default_value(default) {
         return Ok(Some(value));
     }
+    let context = crate::codegen::const_default_values::ConstDefaultContext {
+        module: ctx.module,
+        current_class: (!current_class.is_empty()).then_some(current_class),
+    };
+    if let Some(kind) = crate::codegen::const_default_values::resolve_const_default(default, &context)
+        .and_then(crate::codegen::const_default_values::resolved_scalar_literal)
+    {
+        return Ok(reflection_literal_parameter_default_value(&Expr::new(kind, default.span)));
+    }
     match &default.kind {
         ExprKind::ClassConstant { .. } | ExprKind::ScopedConstantAccess { .. } => {
             let value = reflection_constant_value(ctx, current_class, current_info, default, 0)?;
@@ -31,6 +54,17 @@ pub(super) fn reflection_parameter_default_value(
         }
         _ => Ok(None),
     }
+}
+
+/// Retains the message from a compiler-generated lazy default Error without evaluating it.
+pub(super) fn reflection_deferred_default_value(default: &Expr) -> Option<ReflectionParameterDefaultValue> {
+    let ExprKind::Throw(exception) = &default.kind else { return None; };
+    let ExprKind::NewObject { class_name, args } = &exception.kind else { return None; };
+    let [Expr { kind: ExprKind::StringLiteral(message), .. }] = args.as_slice() else {
+        return None;
+    };
+    (class_name.as_str() == "Error")
+        .then(|| ReflectionParameterDefaultValue::DeferredError(message.clone()))
 }
 
 /// Converts a top-level object parameter default into Reflection metadata.
@@ -162,6 +196,8 @@ pub(super) fn reflection_default_value_contains_object(value: &ReflectionParamet
         | ReflectionParameterDefaultValue::Bool(_)
         | ReflectionParameterDefaultValue::Float(_)
         | ReflectionParameterDefaultValue::Str(_)
+        | ReflectionParameterDefaultValue::DeferredError(_)
+        | ReflectionParameterDefaultValue::EirHelper(_)
         | ReflectionParameterDefaultValue::Null => false,
     }
 }
@@ -265,33 +301,7 @@ pub(super) fn reflection_parameter_default_from_constant_value(
 
 /// Returns PHP's constant-name metadata for parameter defaults that name a class constant.
 pub(super) fn reflection_parameter_default_constant_name(default: &Expr) -> Option<String> {
-    match &default.kind {
-        ExprKind::ScopedConstantAccess { receiver, name } => Some(format!(
-            "{}::{}",
-            reflection_static_receiver_label(receiver),
-            name
-        )),
-        _ => None,
-    }
-}
-
-/// Returns the PHP source-visible receiver label for ReflectionParameter constant defaults.
-pub(super) fn reflection_static_receiver_label(receiver: &StaticReceiver) -> String {
-    // A receiver written `Box<int>::of()` names `Box` until instantiation renames
-    // it, and this pass can run on a generic function's template body — which is
-    // walked and then stripped, never instantiated.
-    let receiver = &receiver.written_class_receiver();
-    match receiver {
-        // A generic receiver is instantiated into an ordinary named one before type checking;
-        // a template has no class to reach through.
-        StaticReceiver::Generic(_) => unreachable!(
-            "StaticReceiver::Generic must be instantiated by generics::classes"
-        ),
-        StaticReceiver::Named(name) => name.as_str().trim_start_matches('\\').to_string(),
-        StaticReceiver::Self_ => "self".to_string(),
-        StaticReceiver::Static => "static".to_string(),
-        StaticReceiver::Parent => "parent".to_string(),
-    }
+    crate::types::deferred_defaults::source_constant_name(default)
 }
 
 /// Converts a normalized parameter type into a supported `ReflectionType` subset.

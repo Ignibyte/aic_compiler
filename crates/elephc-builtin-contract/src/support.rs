@@ -372,7 +372,10 @@ mod tests {
         // The shared INI helper is internal but participates in both runtime registries.
         // Sixty-four of these are the `xml_*` / `xmlwriter_*` contracts, which eval binds
         // through forwarding homes (see `eval_support`).
-        assert_eq!(eval_registry, 683 + curl_surface);
+        // Plus the four `ptr_read_f32`/`ptr_write_f32`/`ptr_read_f64`/`ptr_write_f64`
+        // raw-memory builtins, bound in eval through their own registry homes, and the fork's
+        // `flush`.
+        assert_eq!(eval_registry, 688 + curl_surface);
         // 83 compiler-internal registry helpers plus the 17 `_`-prefixed helper functions the
         // image prelude declares for its own use, plus the ELEVEN
         // `__elephc_opcache_rt_*` runtime script-cache helpers this branch adds.
@@ -398,7 +401,10 @@ mod tests {
         // The shared mbstring catalog adds sixty-four registry contracts, including
         // its internal INI helper, to the prior compiler registry surface; the eleven
         // `__elephc_opcache_rt_*` runtime script-cache helpers rolled through above add the rest.
-        assert_eq!(aot_registry, 752);
+        // The four float pointer builtins (`ptr_read_f32`, `ptr_write_f32`, `ptr_read_f64`,
+        // `ptr_write_f64`) are ordinary registry builtins on both backends; +1 is the fork's
+        // `flush`.
+        assert_eq!(aot_registry, 757);
         // Compiler transforms, constructs, dedicated syntax, preludes, and
         // name-resolver rewrites remain outside the ordinary AOT registry, the `--web` upload
         // pair included.
@@ -449,7 +455,9 @@ mod tests {
         let curl_surface = if cfg!(feature = "curl") { 34 } else { 0 };
         assert_eq!(shared_runtime, 85);
         assert_eq!(hybrid_adapter, 2);
-        assert_eq!(interpreter_adapter, 596 + curl_surface);
+        // Includes the four float pointer builtins, which eval runs through interpreter adapters,
+        // and the fork's `flush`.
+        assert_eq!(interpreter_adapter, 601 + curl_surface);
         // Includes the eleven `__elephc_opcache_rt_*` helpers: they lower to an eval-bridge
         // call from AOT code and have no eval execution route of their own. +2: the `--web`
         // prelude's `is_uploaded_file` and `move_uploaded_file`.

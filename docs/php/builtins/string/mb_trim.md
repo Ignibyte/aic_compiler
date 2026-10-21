@@ -2,7 +2,7 @@
 title: "mb_trim()"
 description: "Removes Unicode whitespace or the specified characters from both ends."
 sidebar:
-  order: 892
+  order: 895
 ---
 
 ## mb_trim()

@@ -88,6 +88,9 @@ pub(crate) struct Usage {
     /// something different for the rest of its life. Nothing approximates that, so it disables
     /// pruning outright.
     pub(crate) introspects: bool,
+    /// Walk state, not a finding: true while the parsed source of a literal `eval` is being
+    /// scanned, where an `include` resolves at runtime and names nothing this walk can read.
+    pub(crate) scanning_eval_fragment: bool,
 }
 
 impl Usage {
@@ -235,13 +238,19 @@ fn record_literal_callable(usage: &mut Usage, expr: &Expr) -> bool {
         }
         ExprKind::ArrayLiteral(items) => match items.as_slice() {
             [receiver, method] => {
-                if let ExprKind::StringLiteral(name) = &receiver.kind {
+                let receiver_read = if let ExprKind::StringLiteral(name) = &receiver.kind {
                     record_class(usage, name);
-                }
+                    true
+                } else {
+                    // Inline, `[$obj, 'm']` roots every class declaring `m`. Inside a literal
+                    // fragment the interpreter resolves `[$c, 'fromArray']` against whatever
+                    // builtin classes were registered, so an opaque receiver is a dynamic call.
+                    !usage.scanning_eval_fragment
+                };
                 match &method.kind {
                     ExprKind::StringLiteral(name) => {
                         record_method(usage, name);
-                        true
+                        receiver_read
                     }
                     _ => false,
                 }
@@ -262,6 +271,44 @@ pub(crate) fn collect(program: &[Stmt]) -> Usage {
 }
 
 
+
+/// Scans the source of a literal `eval` as the inline code it will run as, returning false
+/// when the argument is not a string literal or does not parse (the interpreter reports the
+/// latter at runtime). The fragment's own names, literals and hazards land in `usage` exactly
+/// as if the statements were spelled inline; a runtime `include` inside it is introspection.
+fn scan_literal_eval_fragment(source: Option<&Expr>, usage: &mut Usage) -> bool {
+    let Some(Expr {
+        kind: ExprKind::StringLiteral(source),
+        ..
+    }) = source
+    else {
+        return false;
+    };
+    let Some(fragment) =
+        crate::eval_aot::parse_literal_fragment(source, crate::strict_php::is_enabled())
+    else {
+        return false;
+    };
+    let outer = std::mem::replace(&mut usage.scanning_eval_fragment, true);
+    // The fragment's own dynamic calls are judged on their own: the two flags are cleared for
+    // the scan and restored afterwards, so inline code that already made a computed call does
+    // not hide the one the fragment makes.
+    let dynamic_call_before = std::mem::take(&mut usage.dynamic_function_call);
+    let dynamic_class_before = std::mem::take(&mut usage.constructs_dynamic_class);
+    scan_program(&fragment, usage);
+    usage.scanning_eval_fragment = outer;
+    // Inline, a computed call or `new $c` is answered by rooting the names the program spells,
+    // because the compiled call site fails loudly when the pruner guessed wrong. The interpreter
+    // resolves the same constructs against whatever the binary registered and reports a missing
+    // builtin as if the program never had it, so inside a fragment they are introspection: the
+    // whole surface stays registered, exactly as it did when every eval was opaque.
+    if usage.dynamic_function_call || usage.constructs_dynamic_class {
+        usage.introspects = true;
+    }
+    usage.dynamic_function_call |= dynamic_call_before;
+    usage.constructs_dynamic_class |= dynamic_class_before;
+    true
+}
 
 /// Records one normalized PHP function name.
 fn record_name(usage: &mut Usage, name: &str) {
@@ -371,8 +418,16 @@ fn scan_stmt(stmt: &Stmt, usage: &mut Usage) {
         | StmtKind::Return(Some(expr))
         | StmtKind::ArrayPush { value: expr, .. }
         | StmtKind::StaticPropertyAssign { value: expr, .. }
-        | StmtKind::StaticPropertyArrayPush { value: expr, .. }
-        | StmtKind::Include { path: expr, .. } => scan_expr(expr, usage),
+        | StmtKind::StaticPropertyArrayPush { value: expr, .. } => scan_expr(expr, usage),
+        StmtKind::Include { path: expr, .. } => {
+            // The resolver has already inlined every include it could read, so one still here
+            // resolves at runtime. Inside a literal eval fragment that is the normal case, and the
+            // included file's contents are exactly what this walk cannot see.
+            if usage.scanning_eval_fragment {
+                usage.introspects = true;
+            }
+            scan_expr(expr, usage)
+        }
         StmtKind::RefAssign { source, .. } => scan_expr(source, usage),
         StmtKind::PropertyAssign { object, value, .. }
         | StmtKind::PropertyArrayPush { object, value, .. } => {
@@ -465,15 +520,28 @@ fn scan_stmt(stmt: &Stmt, usage: &mut Usage) {
                 scan_program(body, usage);
             }
         }
+        StmtKind::NamespaceBlock { body, .. } => {
+            // Names inside a namespaced fragment resolve through aliases this walk does not
+            // perform, so such a fragment is introspection.
+            if usage.scanning_eval_fragment {
+                usage.introspects = true;
+            }
+            scan_program(body, usage)
+        }
         StmtKind::Synthetic(body)
-        | StmtKind::NamespaceBlock { body, .. }
         | StmtKind::IncludeOnceGuard { body, .. } => scan_program(body, usage),
         StmtKind::FunctionDecl {
+            name,
             params,
             return_type,
             body,
             ..
         } => {
+            // A function the fragment declares keeps a builtin or native declaration of the
+            // same name registered, so the interpreter can refuse the duplicate as PHP does.
+            if usage.scanning_eval_fragment {
+                record_name(usage, name);
+            }
             scan_params(params, usage);
             if let Some(ty) = return_type {
                 scan_type(ty, usage);
@@ -498,6 +566,7 @@ fn scan_stmt(stmt: &Stmt, usage: &mut Usage) {
             }
         }
         StmtKind::ClassDecl {
+            name,
             extends,
             implements,
             properties,
@@ -505,6 +574,11 @@ fn scan_stmt(stmt: &Stmt, usage: &mut Usage) {
             constants,
             ..
         } => {
+            // A class the fragment declares keeps a builtin of the same name registered, so the
+            // interpreter can refuse the duplicate as PHP does (`eval('class SplStack {}')`).
+            if usage.scanning_eval_fragment {
+                record_class(usage, name);
+            }
             // A supertype is a reference: keeping a class means keeping what it inherits from.
             if let Some(parent) = extends {
                 record_class(usage, &parent.as_canonical());
@@ -522,18 +596,22 @@ fn scan_stmt(stmt: &Stmt, usage: &mut Usage) {
                 scan_class_const(constant, usage);
             }
         }
-        StmtKind::TraitDecl {
-            properties,
-            methods,
-            constants,
-            ..
-        }
-        | StmtKind::InterfaceDecl {
+        StmtKind::InterfaceDecl {
+            name,
+            extends,
             properties,
             methods,
             constants,
             ..
         } => {
+            // Same as a class declaration: the declared name keeps a builtin of that name, and
+            // a parent interface is a reference (`interface Child extends DateTimeInterface`).
+            if usage.scanning_eval_fragment {
+                record_class(usage, name);
+            }
+            for parent in extends {
+                record_class(usage, &parent.as_canonical());
+            }
             for property in properties {
                 scan_property(property, usage);
             }
@@ -544,7 +622,31 @@ fn scan_stmt(stmt: &Stmt, usage: &mut Usage) {
                 scan_class_const(constant, usage);
             }
         }
-        StmtKind::EnumDecl { cases, methods, constants, .. } => {
+        StmtKind::TraitDecl {
+            name,
+            properties,
+            methods,
+            constants,
+            ..
+        } => {
+            // Same as a class declaration: the declared name keeps a builtin of that name.
+            if usage.scanning_eval_fragment {
+                record_class(usage, name);
+            }
+            for property in properties {
+                scan_property(property, usage);
+            }
+            for method in methods {
+                scan_method(method, usage);
+            }
+            for constant in constants {
+                scan_class_const(constant, usage);
+            }
+        }
+        StmtKind::EnumDecl { name, cases, methods, constants, .. } => {
+            if usage.scanning_eval_fragment {
+                record_class(usage, name);
+            }
             for case in cases {
                 if let Some(value) = &case.value {
                     scan_expr(value, usage);
@@ -561,11 +663,19 @@ fn scan_stmt(stmt: &Stmt, usage: &mut Usage) {
         // resolution — so by the time anything could resolve `ic()` back to it, the pruner has
         // already decided. The IMPORT is the reference, whichever kind it is.
         StmtKind::UseDecl { imports } => {
+            // An import inside a fragment aliases names this walk cannot follow.
+            if usage.scanning_eval_fragment {
+                usage.introspects = true;
+            }
             for import in imports {
                 let name = import.name.as_canonical();
                 record_name(usage, &name);
                 record_class(usage, &name);
             }
+        }
+        StmtKind::NamespaceDecl { .. } if usage.scanning_eval_fragment => {
+            // A namespaced fragment resolves its names through aliases this walk does not perform.
+            usage.introspects = true;
         }
         StmtKind::Return(None)
         | StmtKind::Break(_)
@@ -585,7 +695,14 @@ fn scan_stmt(stmt: &Stmt, usage: &mut Usage) {
 /// Scans every child and callable position of one expression.
 fn scan_expr(expr: &Expr, usage: &mut Usage) {
     match &expr.kind {
-        ExprKind::IncludeValue { path, .. } => scan_expr(path, usage),
+        ExprKind::IncludeValue { path, .. } => {
+            // Like the include statement: a runtime include inside a fragment loads code this
+            // walk cannot read.
+            if usage.scanning_eval_fragment {
+                usage.introspects = true;
+            }
+            scan_expr(path, usage)
+        }
         ExprKind::FunctionCall { name, args } => {
             let name = php_symbol_key(name.as_str().trim_start_matches('\\'));
             record_name(usage, &name);
@@ -644,6 +761,12 @@ fn scan_expr(expr: &Expr, usage: &mut Usage) {
                 // arguments exist but say nothing — `usort($a, $cmp)`, `call_user_func($x)` — is.
                 if !read && !args.is_empty() {
                     usage.dynamic_function_call = true;
+                }
+            } else if name == "eval" {
+                // Only a runtime-sourced (or unparsable) eval hands the whole symbol table over;
+                // a literal one is scanned as the inline code it is.
+                if !scan_literal_eval_fragment(args.first(), usage) {
+                    usage.introspects = true;
                 }
             } else if INTROSPECTION_BUILTINS.contains(&name.as_str()) {
                 usage.introspects = true;
@@ -799,7 +922,18 @@ fn scan_expr(expr: &Expr, usage: &mut Usage) {
             args,
         } => {
             if let crate::parser::ast::StaticReceiver::Named(name) = receiver {
-                record_class(usage, &name.as_canonical());
+                let class = name.as_canonical();
+                record_class(usage, &class);
+                // `Closure::fromCallable('f')` invokes what it names, like `call_user_func`; one
+                // whose argument this walk cannot read is a dynamic call.
+                if php_symbol_key(&class) == "closure" && php_symbol_key(method) == "fromcallable" {
+                    let read = args.iter().fold(false, |seen, arg| {
+                        record_literal_callable(usage, arg) || seen
+                    });
+                    if !read && !args.is_empty() {
+                        usage.dynamic_function_call = true;
+                    }
+                }
             }
             record_method(usage, method);
             for arg in args {
@@ -924,5 +1058,119 @@ fn scan_expr(expr: &Expr, usage: &mut Usage) {
         | ExprKind::This
         | ExprKind::MagicConstant(_) => {}
         ExprKind::ObjectClassName { object } => scan_expr(object, usage),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::ast::Program;
+
+    /// Parses one tagged fixture without resolution or optimization passes.
+    fn parse(source: &str) -> Program {
+        let tokens = crate::lexer::tokenize(source).expect("fixture must tokenize");
+        crate::parser::parse(&tokens).expect("fixture must parse")
+    }
+
+    /// A literal eval contributes the names and literals of its source and is not introspection.
+    #[test]
+    fn literal_eval_is_collected_as_inline_code() {
+        let usage = collect(&parse(
+            "<?php eval('throw new DomainException(\"x\"); echo imagecreate(1, 1);');",
+        ));
+        assert!(!usage.introspects);
+        assert!(!usage.scanning_eval_fragment);
+        assert!(usage.classes.contains("domainexception"));
+        assert!(usage.references("imagecreate"));
+    }
+
+    /// A runtime-sourced eval, an unparsable literal, and a runtime include inside a literal
+    /// fragment are all introspection: nothing the walk can read names what they reach.
+    #[test]
+    fn opaque_evals_remain_introspection() {
+        for source in [
+            "<?php eval($argv[1]);",
+            "<?php eval('not php at all');",
+            "<?php eval('include \"part.php\";');",
+        ] {
+            let usage = collect(&parse(source));
+            assert!(usage.introspects, "{source}");
+            assert!(!usage.scanning_eval_fragment, "{source}");
+        }
+    }
+
+    /// A computed call inside a literal fragment is introspection: the interpreter resolves it
+    /// against whatever was registered, with no literal fallback roots to lean on.
+    #[test]
+    fn literal_eval_dynamic_call_is_introspection() {
+        let usage = collect(&parse("<?php eval('$f = \"strlen\"; echo $f(\"x\");');"));
+        assert!(usage.introspects);
+        assert!(usage.dynamic_function_call);
+    }
+
+    /// A computed call outside the fragment stays a plain dynamic call even when a literal eval
+    /// is present, so the fragment scan does not retroactively reclassify inline code.
+    #[test]
+    fn inline_dynamic_call_beside_a_literal_eval_stays_a_dynamic_call() {
+        let usage = collect(&parse("<?php $f = $argv[1]; $f(); eval('echo 1;');"));
+        assert!(!usage.introspects);
+        assert!(usage.dynamic_function_call);
+    }
+
+    /// A computed call inside the fragment is introspection even when inline code already made
+    /// one: the fragment is judged on its own calls, not on the flags it inherited.
+    #[test]
+    fn literal_eval_dynamic_call_after_an_inline_one_is_still_introspection() {
+        let usage = collect(&parse(
+            "<?php $f = 'strlen'; $f('x'); eval('$p = $argv[1]; echo $p($argv[2]) ? \"yes\" : \"no\";');",
+        ));
+        assert!(usage.introspects);
+        assert!(usage.dynamic_function_call);
+    }
+
+    /// An array callable with an opaque receiver, `Closure::fromCallable` with a computed
+    /// argument, and a runtime include expression are introspection inside a fragment, while
+    /// the fully literal pair stays a plain reference.
+    #[test]
+    fn literal_eval_opaque_callables_and_include_values_are_introspection() {
+        for source in [
+            "<?php eval('class F {} $c = $argv[1]; $a = $c::fromArray([1]); echo count($a);');",
+            "<?php eval('echo call_user_func([$argv[1], \"fromArray\"], [1]);');",
+            "<?php eval('$c = Closure::fromCallable($argv[1]); echo $c();');",
+            "<?php eval('$result = require \"part.php\"; echo $result;');",
+        ] {
+            let usage = collect(&parse(source));
+            assert!(usage.introspects, "{source}");
+        }
+        let usage = collect(&parse("<?php eval('echo call_user_func([\"SplFixedArray\", \"fromArray\"], [1]);');"));
+        assert!(!usage.introspects);
+        assert!(usage.classes.contains("splfixedarray"));
+        let usage = collect(&parse("<?php $o = new SplStack(); call_user_func([$o, 'push'], 1);"));
+        assert!(!usage.introspects);
+    }
+
+    /// A function the fragment declares is recorded by name, so a builtin of that name stays
+    /// registered for the interpreter to refuse the duplicate.
+    #[test]
+    fn literal_eval_declared_functions_are_recorded() {
+        let usage = collect(&parse("<?php eval('function strlen(string $s): int { return 1; }');"));
+        assert!(usage.references("strlen"));
+        assert!(!usage.introspects);
+    }
+
+    /// A class, interface, trait or enum the fragment declares is recorded by name for the same
+    /// reason, without turning the fragment into introspection.
+    #[test]
+    fn literal_eval_declared_class_likes_are_recorded() {
+        let usage = collect(&parse(
+            "<?php eval('class SplStack {} interface DateTimeInterface {} trait Fiber {} enum Generator {}');",
+        ));
+        for name in ["splstack", "datetimeinterface", "fiber", "generator"] {
+            assert!(usage.classes.contains(name), "{name}");
+        }
+        assert!(!usage.introspects);
+        let usage = collect(&parse("<?php eval('interface Child extends DateTimeInterface {}');"));
+        assert!(usage.classes.contains("datetimeinterface"));
+        assert!(!usage.introspects);
     }
 }

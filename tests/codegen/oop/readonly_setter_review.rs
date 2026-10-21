@@ -29,14 +29,11 @@ echo isset($fresh->x) ? "bad" : "U"; unset($object, $fresh);
     assert!(out.stderr.contains("leak summary: clean"), "{}", out.stderr);
 }
 
-/// Relative setter contracts bind to their original owner, not global or unrelated caller scope.
-#[test]
-fn test_readonly_setter_greptile_current_eval_relative_scope() {
-    for (hint, storage) in [("self", "Base"), ("parent", "Root")] {
-        for native_root in [false, true] {
-            let parent = format!("abstract class Base extends Root {{ abstract public {hint} $x {{ set; }} }}");
-            let child = format!("abstract class Child extends Base {{ public public(set) readonly {storage} $x; }} class Grandchild extends Child {{}}");
-            let body = r#"class Caller {
+/// Checks one relative setter contract so each compile has its own test timeout budget.
+fn verify_eval_relative_setter_scope(hint: &str, storage: &str, native_root: bool) {
+    let parent = format!("abstract class Base extends Root {{ abstract public {hint} $x {{ set; }} }}");
+    let child = format!("abstract class Child extends Base {{ public public(set) readonly {storage} $x; }} class Grandchild extends Child {{}}");
+    let body = r#"class Caller {
     public static function write(Grandchild $value): void { $value->x = $value; }
 }
 $object = new Grandchild(); $object->x = $object;
@@ -44,13 +41,35 @@ echo isset($object->x) ? "bad" : "U";
 Caller::write($object); echo isset($object->x) ? "bad" : "|U";
 try { $object->x = new stdClass(); } catch (TypeError $error) { echo "|", $error->getMessage(); }
 "#;
-            // Native property declarations do not yet parse relative hints; keep Base in eval.
-            let (native, dynamic_root) = if native_root { ("class Root {}", "") }
-                else { ("", "class Root {}") };
-            assert_eq!(compile_and_run(&format!("<?php {native} eval('{dynamic_root} {parent} {child} {body}');")),
-                format!("U|U|Base::$x::set(): Argument #1 ($value) must be of type {storage}, stdClass given"));
-        }
-    }
+    // Native property declarations do not yet parse relative hints; keep Base in eval.
+    let (native, dynamic_root) = if native_root { ("class Root {}", "") }
+        else { ("", "class Root {}") };
+    assert_eq!(compile_and_run(&format!("<?php {native} eval('{dynamic_root} {parent} {child} {body}');")),
+        format!("U|U|Base::$x::set(): Argument #1 ($value) must be of type {storage}, stdClass given"));
+}
+
+/// The self setter contract retains its owner with a root class declared in eval.
+#[test]
+fn test_readonly_setter_eval_relative_scope_self_eval_root() {
+    verify_eval_relative_setter_scope("self", "Base", false);
+}
+
+/// The self setter contract retains its owner with a native root class.
+#[test]
+fn test_readonly_setter_eval_relative_scope_self_native_root() {
+    verify_eval_relative_setter_scope("self", "Base", true);
+}
+
+/// The parent setter contract retains its owner with a root class declared in eval.
+#[test]
+fn test_readonly_setter_eval_relative_scope_parent_eval_root() {
+    verify_eval_relative_setter_scope("parent", "Root", false);
+}
+
+/// The parent setter contract retains its owner with a native root class.
+#[test]
+fn test_readonly_setter_eval_relative_scope_parent_native_root() {
+    verify_eval_relative_setter_scope("parent", "Root", true);
 }
 
 /// Storage accepts direct and inherited interfaces even before the setter's class is built.
@@ -112,10 +131,28 @@ fn test_readonly_setter_greptile_current_nullable_source_owners_no_ir_opt() {
     without_ir_opt(test_readonly_setter_greptile_current_nullable_source_owners);
 }
 
-/// Relative setter scopes are independent of EIR optimization.
+/// The self setter contract with a root declared in eval is independent of EIR optimization.
 #[test]
-fn test_readonly_setter_greptile_current_eval_relative_scope_no_ir_opt() {
-    without_ir_opt(test_readonly_setter_greptile_current_eval_relative_scope);
+fn test_readonly_setter_eval_relative_scope_self_eval_root_no_ir_opt() {
+    without_ir_opt(test_readonly_setter_eval_relative_scope_self_eval_root);
+}
+
+/// The self setter contract with a native root is independent of EIR optimization.
+#[test]
+fn test_readonly_setter_eval_relative_scope_self_native_root_no_ir_opt() {
+    without_ir_opt(test_readonly_setter_eval_relative_scope_self_native_root);
+}
+
+/// The parent setter contract with a root declared in eval is independent of EIR optimization.
+#[test]
+fn test_readonly_setter_eval_relative_scope_parent_eval_root_no_ir_opt() {
+    without_ir_opt(test_readonly_setter_eval_relative_scope_parent_eval_root);
+}
+
+/// The parent setter contract with a native root is independent of EIR optimization.
+#[test]
+fn test_readonly_setter_eval_relative_scope_parent_native_root_no_ir_opt() {
+    without_ir_opt(test_readonly_setter_eval_relative_scope_parent_native_root);
 }
 
 /// Complete interface storage checks do not depend on EIR optimization.

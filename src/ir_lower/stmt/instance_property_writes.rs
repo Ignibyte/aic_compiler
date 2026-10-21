@@ -257,6 +257,9 @@ fn lower_property_assign_value(
     // store would write the box POINTER into fixed field storage; with a coercion it would
     // silently truncate the overflow promotion the box exists to carry.
     let value = narrow_mixed_value_for_packed_int_field(ctx, object.value, property, value, span);
+    // An extern struct's integer field (any C width) takes the same strict narrowing: the
+    // store writes raw bits, so the box pointer must never reach it.
+    let value = narrow_mixed_value_for_extern_int_field(ctx, object.value, property, value, span);
     let retained_abstract_setter = receiver_retains_abstract_setter(ctx, object.value, property);
     let value = box_value_for_runtime_shaped_receiver(ctx, object, value, span);
     // The backing slot may be wider than its inherited setter. Preserve the runtime value's
@@ -407,7 +410,8 @@ fn narrow_mixed_value_for_packed_int_field(
     value: LoweredValue,
     span: Span,
 ) -> LoweredValue {
-    let PhpType::Packed(class_name) = ctx.builder.value_php_type(object).codegen_repr() else {
+    let object_ty = ctx.builder.value_php_type(object);
+    let Some(class_name) = crate::ir_lower::expr::packed_receiver_class(ctx, &object_ty) else {
         return value;
     };
     if !matches!(
@@ -432,6 +436,53 @@ fn narrow_mixed_value_for_packed_int_field(
         "Packed field {}::${} must be of type int, ",
         normalized, property
     );
+    let data = ctx.intern_string(&message);
+    let narrowed = ctx.emit_value(
+        Op::PackedFieldMixedToInt,
+        vec![value.value],
+        Some(Immediate::Data(data)),
+        PhpType::Int,
+        Op::PackedFieldMixedToInt.default_effects(),
+        Some(span),
+    );
+    if ctx.value_is_owning_temporary(value) {
+        crate::ir_lower::ownership::release_if_owned(ctx, value, Some(span));
+    }
+    narrowed
+}
+
+/// Narrows a boxed Mixed value assigned to an integer field of a `ptr<ExternClass>` receiver.
+///
+/// Integer arithmetic is typed for its overflow-to-float promotion, so `$rect->w = $w * 2`
+/// reaches the store as a box. The same strict `Op::PackedFieldMixedToInt` narrowing packed
+/// fields use turns the int tag into the raw payload the C field stores and throws a catchable
+/// `TypeError` for any other runtime type. Other receivers and field types pass through.
+fn narrow_mixed_value_for_extern_int_field(
+    ctx: &mut LoweringContext<'_, '_>,
+    object: crate::ir::ValueId,
+    property: &str,
+    value: LoweredValue,
+    span: Span,
+) -> LoweredValue {
+    let object_ty = ctx.builder.value_php_type(object);
+    let Some(normalized) = crate::ir_lower::expr::extern_receiver_class(ctx, &object_ty) else {
+        return value;
+    };
+    if !matches!(
+        ctx.builder.value_php_type(value.value).codegen_repr(),
+        PhpType::Mixed
+    ) {
+        return value;
+    }
+    let field_is_int = ctx
+        .extern_classes
+        .get(&normalized)
+        .and_then(|info| info.fields.iter().find(|field| field.name == property))
+        .is_some_and(|field| field.php_type == PhpType::Int);
+    if !field_is_int {
+        return value;
+    }
+    let message = format!("Extern field {}::${} must be of type int, ", normalized, property);
     let data = ctx.intern_string(&message);
     let narrowed = ctx.emit_value(
         Op::PackedFieldMixedToInt,

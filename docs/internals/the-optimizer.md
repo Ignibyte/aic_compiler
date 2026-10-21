@@ -563,6 +563,49 @@ are target-independent. See the
 [compilation guide](../compiling/optimization.md#tail-recursion) for eligibility
 and a PHP example.
 
+## EIR buffer resolution hoisting
+
+`src/ir_passes/buffer_access.rs` runs once after the module fixed point (and
+after tail recursion), then the scalar passes run again. Every `buffer_get` and
+`buffer_set` normally resolves its generation-safe handle through
+`__rt_buffer_resolve` before the bounds check. In a loop whose natural body
+cannot free, allocate or rebind a buffer, that answer cannot change between
+iterations, so the pass appends one `buffer_resolve` to the preheader and turns
+each access with a loop-invariant handle into `buffer_get_resolved` or
+`buffer_set_resolved`.
+
+The hoisted `buffer_resolve` calls `__rt_buffer_try_resolve`, which applies the
+same registry, activity and generation checks but answers 0 instead of failing.
+The resolved access tests the descriptor before its bounds check, so a stale
+handle still raises the use-after-free fatal at the access, and a loop that never
+runs its body never reports anything. A loop qualifies only when every
+instruction in its body is on a default-deny allowlist: buffer element accesses,
+packed field reads and writes, local loads, stores to scalar locals, concat
+resets, and instructions whose effects only read state or fatal. That last group
+includes direct user function and method calls once effect refinement has proven
+the callee's whole summary read-only; every other call, and releases, allocations,
+warnings, output and throws, disqualify the loop, because each can run user code
+(a callee, a destructor, an error handler, an output callback) that frees a buffer
+through an alias. The handle must be an SSA value defined outside the loop
+or a `load_local` of a slot that nothing in the loop writes and no by-reference
+alias reaches. Generators, functions with exception handlers or dynamic `eval`,
+and modules that call `pcntl_async_signals()` (whose backend dispatches signal
+handlers after every instruction) are skipped.
+
+Inside a rewritten loop, packed `buffer_get_resolved` instructions with the same
+descriptor and index compute the same record address, so a dominated access
+reuses its dominator's result. Index operands are compared after seeing through
+block parameters whose every incoming edge passes the same value, which scalar
+promotion leaves at each join. Scalar element reads are not shared: a
+`buffer_set_resolved` between them can change the loaded value.
+
+Packed field reads and writes (`prop_get`/`prop_set` on a packed record) also get
+their exact effects during effect refinement (`reads_heap` for a read;
+`reads_heap`, `writes_heap` and `may_fatal` for a write, which may copy a whole
+nested record), count as concat-inert, and consume their operands by value for the
+by-reference alias analysis, so the loop index and the locals they store stay in
+SSA. See the [compilation guide](../compiling/optimization.md#buffer-loops).
+
 ## Effect summaries: purity and `may_throw`
 
 The optimizer now maintains a small local effect-analysis layer that sits underneath the pruning and dead-code-elimination passes.

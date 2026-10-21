@@ -108,6 +108,33 @@ pub(super) fn lower_method_call_with_receiver(
     op: Op,
     expr: &Expr,
 ) -> LoweredValue {
+    if let Some(call) = enum_interface_calls::lower_enum_interface_call(ctx, object, method, args, op, expr) {
+        return call;
+    }
+    lower_method_call_with_receiver_direct(ctx, object, method, args, op, expr)
+}
+
+/// Lowers an already selected concrete or fallback receiver without redispatching its interface.
+pub(super) fn lower_method_call_with_receiver_direct(
+    ctx: &mut LoweringContext<'_, '_>, object: LoweredValue, method: &str,
+    args: &[Expr], op: Op, expr: &Expr,
+) -> LoweredValue {
+    lower_method_call_with_binding(ctx, object, method, args, op, expr, false)
+}
+
+/// Checks the selected enum signature without changing direct reference-return adoption.
+pub(super) fn lower_selected_enum_method_call(
+    ctx: &mut LoweringContext<'_, '_>, object: LoweredValue, method: &str,
+    args: &[Expr], op: Op, expr: &Expr,
+) -> LoweredValue {
+    lower_method_call_with_binding(ctx, object, method, args, op, expr, true)
+}
+
+/// Keeps selected parameter validation inside the published argument and result-owner scope.
+fn lower_method_call_with_binding(
+    ctx: &mut LoweringContext<'_, '_>, object: LoweredValue, method: &str,
+    args: &[Expr], op: Op, expr: &Expr, selected_enum: bool,
+) -> LoweredValue {
     if op == Op::MethodCall && is_reflection_class_new_instance_call(ctx, object.value, method) {
         return lower_reflection_class_new_instance(ctx, None, object, args, expr);
     }
@@ -129,7 +156,6 @@ pub(super) fn lower_method_call_with_receiver(
             (method, args)
         };
     let result_type = method_call_result_type(ctx, object.value, dispatch_method, op, expr);
-    let mut operands = vec![object.value];
     let sig = method_signature(ctx, object.value, dispatch_method);
     promote_pdo_binding_ref_argument(ctx, object.value, dispatch_method, args);
     // A by-reference-returning method transfers a lease that must outlive this caller's
@@ -143,8 +169,25 @@ pub(super) fn lower_method_call_with_receiver(
     let result_staging = prepublish_user_call_result(
         ctx, sig.as_ref(), &return_alias, &result_type, expr.span,
     );
+    // Nullable and nullsafe dispatch need the same pre-default receiver root as direct calls.
+    let (object, default_receiver_owner) = if sig.as_ref().is_some_and(|signature| {
+        signature.defaults.iter().flatten()
+            .any(crate::types::deferred_defaults::contains_deferred_error)
+    }) {
+        root_owned_call_operand(ctx, object, expr.span)
+    } else {
+        (object, None)
+    };
+    let mut operands = vec![object.value];
     begin_call_argument_evaluation(ctx);
-    let arg_values = lower_args_with_signature(ctx, sig.as_ref(), args);
+    let enum_args = singular_object_class(&ctx.builder.value_php_type(object.value))
+        .and_then(|(class, _)| ctx.enums.contains_key(class).then(|| class.to_string()))
+        .and_then(|class| sig.as_ref().and_then(|signature|
+            enum_method_args::lower_arguments(ctx, signature, args, &class, dispatch_method, expr.span)
+                .or_else(|| selected_enum.then(|| enum_static_args::lower_arguments(
+                    ctx, signature, args, &class, dispatch_method, expr.span,
+                )).flatten())));
+    let arg_values = enum_args.unwrap_or_else(|| lower_args_with_signature(ctx, sig.as_ref(), args));
     let mut arg_values = arg_values;
     let evaluation_intermediates = finish_call_argument_evaluation(ctx, &mut arg_values);
     let roots = root_user_call_operands(
@@ -155,7 +198,13 @@ pub(super) fn lower_method_call_with_receiver(
         &result_type,
         expr.span,
     );
-    operands.extend(arg_values.iter().copied());
+    // Selected enum implementations may have fewer parameters than another implementor.
+    // PHP ignores surplus positionals, but their values still belong to ordinary cleanup.
+    let operand_limit = sig.as_ref().filter(|sig| sig.variadic.is_none())
+        .filter(|_| singular_object_class(&ctx.builder.value_php_type(object.value))
+            .is_some_and(|(class, _)| ctx.enums.contains_key(class)))
+        .map_or(arg_values.len(), |sig| sig.params.len());
+    operands.extend(arg_values.iter().take(operand_limit).copied());
     let data = ctx.intern_string(dispatch_method);
     let call = ctx.emit_value(
         op,
@@ -179,7 +228,11 @@ pub(super) fn lower_method_call_with_receiver(
         expr.span,
     );
     retire_call_argument_intermediates(ctx, &evaluation_intermediates);
-    release_owning_receiver_temporary(ctx, object, expr.span);
+    if let Some(owner) = default_receiver_owner {
+        retire_owned_call_operand(ctx, owner, expr.span);
+    } else {
+        release_owning_receiver_temporary(ctx, object, expr.span);
+    }
     let call = take_prepublished_call_result(ctx, result_staging, call, expr.span);
     finish_reference_return_value(ctx, call, reference_staging, expr.span)
 }

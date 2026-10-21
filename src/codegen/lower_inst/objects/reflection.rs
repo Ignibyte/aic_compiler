@@ -47,6 +47,7 @@ mod class_members;
 mod member_resolution;
 mod method_members;
 mod property_members;
+mod property_defaults_fold;
 mod default_members;
 mod parameter_defaults;
 mod names_constants;
@@ -70,6 +71,7 @@ use class_members::*;
 use member_resolution::*;
 use method_members::*;
 use property_members::*;
+use property_defaults_fold::*;
 use default_members::*;
 use parameter_defaults::*;
 use names_constants::*;
@@ -256,6 +258,8 @@ enum ReflectionParameterDefaultValue {
     Float(f64),
     Str(String),
     Null,
+    DeferredError(String),
+    EirHelper(String),
     Object {
         class_name: String,
         args: Vec<ReflectionParameterDefaultValue>,

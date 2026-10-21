@@ -604,13 +604,19 @@ impl Checker {
 
         for i in arg_idx..decl.params.len() {
             if let Some(default_expr) = &decl.defaults[i] {
+                let deferred_scope_error =
+                    crate::types::deferred_defaults::deferred_error_message(default_expr).is_some();
                 if let Some(type_ann) = decl.param_types.get(i).and_then(|t| t.as_ref()) {
                     let declared_ty = self.resolve_declared_param_type_hint(
                         type_ann,
                         decl.span,
                         &format!("Function '{}' parameter ${}", name, decl.params[i]),
                     )?;
-                    let default_ty = self.infer_type(default_expr, caller_env)?;
+                    let default_ty = if deferred_scope_error {
+                        declared_ty.clone()
+                    } else {
+                        self.infer_type(default_expr, caller_env)?
+                    };
                     self.require_compatible_arg_type(
                         &declared_ty,
                         &default_ty,
@@ -619,7 +625,11 @@ impl Checker {
                     )?;
                     param_types.push((decl.params[i].clone(), declared_ty));
                 } else {
-                    let ty = self.infer_type(default_expr, caller_env)?;
+                    let ty = if deferred_scope_error {
+                        PhpType::Mixed
+                    } else {
+                        self.infer_type(default_expr, caller_env)?
+                    };
                     param_types.push((decl.params[i].clone(), ty));
                 }
             }

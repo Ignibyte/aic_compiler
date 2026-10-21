@@ -87,14 +87,17 @@ pub(super) fn populate_metadata(module: &mut Module, program: &Program, check_re
             params: sig
                 .params
                 .iter()
-                .map(|(name, php_type)| ExternParamDecl {
+                .zip(sig.abi_params.iter())
+                .map(|((name, php_type), abi)| ExternParamDecl {
                     name: name.clone(),
                     ir_type: value_or_void_ir_type(php_type),
                     php_type: php_type.clone(),
+                    abi: *abi,
                 })
                 .collect(),
             return_type: value_or_void_ir_type(&sig.return_type),
             return_php_type: sig.return_type.clone(),
+            return_abi: sig.abi_return,
             link_libs: sig.library.iter().cloned().collect(),
         })
         .collect();

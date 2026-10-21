@@ -6,6 +6,7 @@
 //!
 //! Key details:
 //! - Preserves source-order evaluation, EIR typing, effects, and ownership contracts.
+//! - Descriptor calls carry physical-source strictness separately from their PHP arguments.
 
 use super::*;
 
@@ -535,10 +536,11 @@ pub(super) fn emit_callable_descriptor_invoke(
     // or a separate retain of a prebuilt Mixed box. Root both raw and boxed
     // owners so a throw cannot bypass their EIR retirement.
     let (arg_container, container_owner) = root_owned_call_operand(ctx, arg_container, span);
+    let strict_types = ctx.builder.emit_const_bool(crate::source::current_strict_types());
     let result = emit_descriptor_invoker_value(
         ctx,
         Op::CallableDescriptorInvoke,
-        vec![callback.value, arg_container.value],
+        vec![callback.value, arg_container.value, strict_types],
         callable_profile_immediate(),
         result_type,
         span,

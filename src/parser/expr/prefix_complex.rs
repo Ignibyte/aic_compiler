@@ -782,8 +782,14 @@ pub(super) fn parse_named_expr(
         && tokens[*pos].0 == Token::Less
     {
         *pos += 1;
-        let target_type = parse_name(tokens, pos, span, "Expected type name after 'ptr_cast<'")?
-            .as_canonical();
+        let target_name = parse_name(tokens, pos, span, "Expected type name after 'ptr_cast<'")?;
+        // Keep the leading `\` of a fully qualified target: the name resolver applies the current
+        // namespace to every other spelling, so `ptr_cast<\Pair>` must stay distinguishable.
+        let target_type = if target_name.is_fully_qualified() {
+            format!("\\{}", target_name.as_canonical())
+        } else {
+            target_name.as_canonical()
+        };
         if *pos >= tokens.len() || tokens[*pos].0 != Token::Greater {
             return Err(CompileError::new(span, "Expected '>' after ptr_cast<T"));
         }

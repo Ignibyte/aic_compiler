@@ -13,8 +13,8 @@
 //!   unqualified names, and fully-qualified names are never expanded.
 
 use crate::errors::CompileError;
-use crate::names::{php_symbol_key, Name};
-use crate::parser::ast::{TypeExpr, TypeParam, UseItem, UseKind};
+use crate::names::{php_symbol_key, Name, NameKind};
+use crate::parser::ast::{CType, TypeExpr, TypeParam, UseItem, UseKind};
 
 use super::{resolved_name, Imports, Symbols};
 
@@ -212,6 +212,56 @@ pub(super) fn expand_qualified_namespace_alias(name: &Name, imports: &Imports) -
     } else {
         Some(format!("{}\\{}", alias, suffix.join("\\")))
     }
+}
+
+/// Resolves the class a `ptr<T>` target names in the C grammar or in `ptr_cast<T>`, applying the
+/// same namespace/import rules as a `ptr<T>` type expression.
+///
+/// Extern function signatures, extern class fields, extern globals and `ptr_cast<T>` spell the
+/// target as a bare string, so `ptr<Pair>` inside `namespace App` must name `App\Pair` (or a
+/// `use` alias) exactly like `function f(ptr<Pair> $p)` does; otherwise a field access through
+/// it looks up a class that does not exist, or a same-named global one with another layout.
+/// The target spellings the checker treats as builtins (`int`, `float`, `bool`, `string`, `ptr`
+/// and their aliases) pass through unchanged. A leading `\` (kept by the `ptr_cast<T>` parser)
+/// marks a fully qualified target that the current namespace must not prefix.
+pub(super) fn resolve_pointer_target(
+    target: &str,
+    current_namespace: Option<&str>,
+    imports: &Imports,
+    symbols: &Symbols,
+) -> String {
+    let (rooted, bare) = match target.strip_prefix('\\') {
+        Some(rest) => (true, rest),
+        None => (false, target),
+    };
+    if matches!(
+        bare,
+        "int" | "integer" | "float" | "double" | "real" | "bool" | "boolean" | "string" | "ptr"
+            | "pointer"
+    ) {
+        return bare.to_string();
+    }
+    let parts = bare.split('\\').map(str::to_string).collect();
+    let name = if rooted {
+        Name::from_parts(NameKind::FullyQualified, parts)
+    } else {
+        Name::qualified(parts)
+    };
+    resolve_special_or_class_name(&name, current_namespace, imports, symbols)
+}
+
+/// Resolves the class a C `ptr<T>` type names (see `resolve_pointer_target`); every other C type
+/// passes through unchanged.
+pub(super) fn resolve_ctype(
+    c_type: &CType,
+    current_namespace: Option<&str>,
+    imports: &Imports,
+    symbols: &Symbols,
+) -> CType {
+    let CType::TypedPtr(target) = c_type else {
+        return c_type.clone();
+    };
+    CType::TypedPtr(resolve_pointer_target(target, current_namespace, imports, symbols))
 }
 
 /// Resolves "self", "parent", "static" to their lowercase special-name form;

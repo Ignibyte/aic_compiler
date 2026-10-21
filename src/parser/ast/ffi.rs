@@ -14,11 +14,46 @@ use super::TypeExpr;
 
 // --- FFI ---
 
+/// Explicit C integer width in an extern declaration.
+///
+/// Plain `int` (and its alias `i64`) is the 64-bit default and stays `CType::Int`; these
+/// variants let a declaration name the real width of a narrower or unsigned C integer so
+/// the call boundary can normalize registers the C ABI leaves partially unspecified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CIntWidth {
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    U64,
+}
+
+impl CIntWidth {
+    /// Returns the bit width of the C integer.
+    pub fn bits(self) -> u8 {
+        match self {
+            Self::I8 | Self::U8 => 8,
+            Self::I16 | Self::U16 => 16,
+            Self::I32 | Self::U32 => 32,
+            Self::U64 => 64,
+        }
+    }
+
+    /// Returns whether the C integer is signed.
+    pub fn signed(self) -> bool {
+        matches!(self, Self::I8 | Self::I16 | Self::I32)
+    }
+}
+
 /// C type annotation for extern declarations.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CType {
-    Int,
-    Float,
+    Int,                    // int64_t / long, also spelled `i64`
+    IntWidth(CIntWidth),    // explicit narrower or unsigned C integer (i8..u32, u64)
+    Float,                  // double, also spelled `f64`
+    F32,                    // C float; widened to a PHP double at the call boundary
     Str,        // char* (null-terminated)
     Bool,
     Void,
