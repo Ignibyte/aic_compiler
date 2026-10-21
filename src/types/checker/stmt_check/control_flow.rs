@@ -561,6 +561,9 @@ impl Checker {
                     }
                 }
                 self.break_continue_depth += 1;
+                // The facts each case that can reach the end of the `switch` kept; with a
+                // `default`, the ones they all share hold after it.
+                let mut reaching_facts = Vec::new();
                 for (_, body) in cases {
                     let invalidated = self
                         .conditional_boxed_ref_invalidations
@@ -572,7 +575,14 @@ impl Checker {
                         .filter(|name| !invalidated.contains(*name))
                         .cloned()
                         .collect();
+                    // A case runs only for its own values, so what its early exits kept holds
+                    // for the rest of that case; after the `switch` only what every path shares.
+                    let mark = self.kept_narrowings.len();
                     errors.extend(self.check_body(body, env));
+                    let facts = self.take_kept_narrowings_since(mark, env);
+                    if let Some(facts) = self.switch_case_reaching_facts(body, facts) {
+                        reaching_facts.push(facts);
+                    }
                 }
                 if let Some(body) = default {
                     let invalidated = self
@@ -584,7 +594,16 @@ impl Checker {
                         .into_iter()
                         .filter(|name| !invalidated.contains(name))
                         .collect();
+                    let mark = self.kept_narrowings.len();
                     errors.extend(self.check_body(body, env));
+                    let facts = self.take_kept_narrowings_since(mark, env);
+                    if let Some(facts) = self.switch_case_reaching_facts(body, facts) {
+                        reaching_facts.push(facts);
+                    }
+                }
+                // Without a `default`, a value no case matches reaches the end with none of them.
+                if default.is_some() {
+                    self.keep_facts_every_path_shares(&reaching_facts, env);
                 }
                 self.break_continue_depth -= 1;
                 self.callable_array_targets.clear();
@@ -810,7 +829,16 @@ impl Checker {
             StmtKind::DoWhile { body, condition } => {
                 self.boxed_ref_aliased_locals.clear();
                 stabilize_loop_storage(self, stmt.span, body, None, env, None);
-                let errors = self.check_break_continue_target_body(body, env);
+                let mark = self.kept_narrowings.len();
+                let errors = self.check_loop_body(body, env, false);
+                // The body always runs once. When no `break` or `continue` can leave it early,
+                // every path to the condition, and so out of the loop, went through the whole
+                // body, and the facts its early exits kept still hold after the loop.
+                if crate::termination::block_may_break_current_loop(body)
+                    || crate::optimize::block_continues_enclosing_loop(body, 0)
+                {
+                    self.undo_kept_narrowings_since(mark, env);
+                }
                 self.infer_type_with_assignment_effects(condition, env)?;
                 self.callable_array_targets.clear();
                 self.callable_array_target_versions.clear();
@@ -939,11 +967,21 @@ impl Checker {
             } => {
                 let mut errors = Vec::new();
                 let branch_entry_boxed_refs = self.boxed_ref_aliased_locals.clone();
+                // An exception can leave the try body at any statement, so the catches, the
+                // `finally` and the code after a caught exception may all run without what the
+                // body's early exits kept: they are checked without those facts. When no catch
+                // can fall out of the `try`, only a completed body reaches what follows, so the
+                // facts come back after the `finally` for every local nothing has reassigned.
+                let try_mark = self.kept_narrowings.len();
                 for s in try_body {
                     if let Err(error) = self.check_stmt(s, env) {
                         errors.extend(error.flatten());
                     }
                 }
+                let completed_facts = self.take_kept_narrowings_since(try_mark, env);
+                let only_completion_falls_out = catches
+                    .iter()
+                    .all(|catch_clause| self.body_cannot_fall_through(&catch_clause.body));
                 for catch_clause in catches {
                     self.boxed_ref_aliased_locals = branch_entry_boxed_refs.clone();
                     let mut resolved_types = Vec::new();
@@ -975,11 +1013,13 @@ impl Checker {
                             PhpType::Object(self.common_catch_type_name(&resolved_types)),
                         );
                     }
+                    let catch_mark = self.kept_narrowings.len();
                     for s in &catch_clause.body {
                         if let Err(error) = self.check_stmt(s, env) {
                             errors.extend(error.flatten());
                         }
                     }
+                    self.undo_kept_narrowings_since(catch_mark, env);
                 }
                 if let Some(body) = finally_body {
                     let invalidated = self
@@ -995,6 +1035,13 @@ impl Checker {
                         .push(self.break_continue_depth);
                     errors.extend(self.check_body(body, env));
                     self.finally_break_continue_bases.pop();
+                }
+                if only_completion_falls_out {
+                    let untouched: Vec<_> = completed_facts
+                        .into_iter()
+                        .filter(|fact| env.get(&fact.var) == fact.original.as_ref())
+                        .collect();
+                    self.keep_facts_every_path_shares(&[untouched], env);
                 }
                 self.callable_array_targets.clear();
                 self.callable_array_target_versions.clear();
@@ -1199,10 +1246,50 @@ impl Checker {
     }
 
     /// Checks a loop body with its control-flow depth and conservative property narrowings.
+    /// Returns the facts a `switch` case contributes at the end of the `switch`: `None` when it
+    /// never reaches the end (it leaves the function), none when a `break` or `continue` before
+    /// its last statement can leave it before they were established, else what it kept.
+    fn switch_case_reaching_facts(
+        &self,
+        body: &[Stmt],
+        facts: Vec<crate::types::checker::KeptNarrowing>,
+    ) -> Option<Vec<crate::types::checker::KeptNarrowing>> {
+        // Only a case that leaves the function never reaches the end. A `continue` does not
+        // count: `continue 1` leaves the `switch` the way `break` does, so its path reaches
+        // the end, and the check below keeps none of the case's facts for it.
+        if crate::termination::block_guarantees_function_exit_with_divergence(body, &|expr| {
+            self.expr_is_declared_never_call(expr)
+        }) {
+            return None;
+        }
+        let before_last_break = match body.split_last() {
+            Some((last, rest)) if matches!(last.kind, StmtKind::Break(1)) => rest,
+            _ => body,
+        };
+        if crate::termination::block_may_break_current_loop(before_last_break)
+            || crate::optimize::block_continues_enclosing_loop(before_last_break, 0)
+        {
+            return Some(Vec::new());
+        }
+        Some(facts)
+    }
+
     fn check_break_continue_target_body(
         &mut self,
         body: &[Stmt],
         env: &mut TypeEnv,
+    ) -> Vec<CompileError> {
+        self.check_loop_body(body, env, true)
+    }
+
+    /// Checks a loop body one level deeper for `break`/`continue`. With `undo_kept`, the facts
+    /// the body's early exits kept are undone once it has been checked; `do`/`while` passes
+    /// `false` and decides itself, since its body always runs once.
+    fn check_loop_body(
+        &mut self,
+        body: &[Stmt],
+        env: &mut TypeEnv,
+        undo_kept: bool,
     ) -> Vec<CompileError> {
         // A loop body may observe a property write made by an earlier iteration (the write site
         // is *after* the read site in source order), so property narrowings from outside the
@@ -1213,7 +1300,9 @@ impl Checker {
         let errors = self.check_body(body, env);
         // An early exit inside the body narrows the rest of one iteration, not the code after
         // the loop, which may run after no iteration at all.
-        self.undo_kept_narrowings_since(body_mark, env);
+        if undo_kept {
+            self.undo_kept_narrowings_since(body_mark, env);
+        }
         self.break_continue_depth -= 1;
         errors
     }
