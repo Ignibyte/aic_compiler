@@ -219,30 +219,6 @@ impl Checker {
         }
     }
 
-    /// Undoes the narrowings kept by `if`s inside a body that has just been checked, newest
-    /// first: each local still holding the kept type gets back the type it had before that
-    /// `if`'s guard. A local reassigned since keeps its new type. `mark` is the log length
-    /// taken before the body.
-    pub(crate) fn undo_kept_narrowings_since(&mut self, mark: usize, env: &mut TypeEnv) {
-        if mark >= self.kept_narrowings.len() {
-            return;
-        }
-        let undone = self.kept_narrowings.split_off(mark);
-        for kept in undone.into_iter().rev() {
-            if env.get(&kept.var) != Some(&kept.narrowed) {
-                continue;
-            }
-            match kept.original {
-                Some(ty) => {
-                    env.insert(kept.var, ty);
-                }
-                None => {
-                    env.remove(&kept.var);
-                }
-            }
-        }
-    }
-
     /// Like `undo_kept_narrowings_since`, but returns the facts it undid that still held, each
     /// local with the type the body left it, so a construct can keep the ones every path shares.
     pub(crate) fn take_kept_narrowings_since(
