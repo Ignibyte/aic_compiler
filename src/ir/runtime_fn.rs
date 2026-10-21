@@ -884,7 +884,13 @@ impl RuntimeFnId {
             RuntimeFnId::ArrayValues if arg_types.first().is_some_and(PhpType::is_php_array) => {
                 PhpType::Array(Box::new(PhpType::Mixed))
             }
-            RuntimeFnId::ArrayMerge if arg_types.iter().any(PhpType::is_php_array) => {
+            RuntimeFnId::ArrayMerge
+                if arg_types.len() != 2
+                    || !crate::builtins::array_merge_takes_indexed_fast_path(
+                        &arg_types[0],
+                        &arg_types[1],
+                    ) =>
+            {
                 PhpType::php_array()
             }
             RuntimeFnId::ArrayValues => match arg_types.first().map(PhpType::codegen_repr) {

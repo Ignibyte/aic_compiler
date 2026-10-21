@@ -47,10 +47,40 @@ fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
             "array_merge() second argument must be array",
         ));
     }
-    if ty1.is_php_array() || ty2.is_php_array() {
+    if !takes_indexed_fast_path(&ty1, &ty2) {
         return Ok(PhpType::php_array());
     }
     Ok(array_merge_return_type(ty1, ty2))
+}
+
+/// Returns whether `array_merge(first, second)` takes the concrete indexed helper: both operands
+/// packed, with pointer-sized elements of one type (or one of them statically empty). Anything
+/// else (a boxed or associative operand, string elements, two element types) merges through the
+/// boxed path into a boxed array, which accepts packed and associative storage alike. The checker,
+/// the EIR result type and the backend decide by this one rule.
+pub(crate) fn takes_indexed_fast_path(first: &PhpType, second: &PhpType) -> bool {
+    let element = |ty: &PhpType| match ty.codegen_repr() {
+        PhpType::Array(element) => {
+            let element = element.codegen_repr();
+            (matches!(
+                element,
+                PhpType::Int
+                    | PhpType::Bool
+                    | PhpType::Float
+                    | PhpType::Callable
+                    | PhpType::Void
+                    | PhpType::Never
+            ) || element.is_refcounted())
+            .then_some(element)
+        }
+        _ => None,
+    };
+    let (Some(first), Some(second)) = (element(first), element(second)) else {
+        return false;
+    };
+    first == second
+        || matches!(first, PhpType::Never | PhpType::Void)
+        || matches!(second, PhpType::Never | PhpType::Void)
 }
 
 
