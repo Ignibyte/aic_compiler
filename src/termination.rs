@@ -128,33 +128,45 @@ fn stmt_terminal_effect_with_divergence(
         }
         StmtKind::While { condition, body }
             if expr_is_truthy_literal(condition)
-                && (block_guarantees_function_exit_with_divergence(
-                    body,
-                    additional_expr_diverges,
-                ) || !block_may_break_current_loop(body)) =>
+                && (loop_body_exits_function_before_breaking(body, additional_expr_diverges)
+                    || !block_may_break_current_loop(body)) =>
         {
             TerminalEffect::ExitsCurrentBlock
         }
         StmtKind::DoWhile { condition, body }
-            if block_guarantees_function_exit_with_divergence(
-                body,
-                additional_expr_diverges,
-            ) || (expr_is_truthy_literal(condition) && !block_may_break_current_loop(body)) =>
+            if loop_body_exits_function_before_breaking(body, additional_expr_diverges)
+                || (expr_is_truthy_literal(condition) && !block_may_break_current_loop(body)) =>
         {
             TerminalEffect::ExitsCurrentBlock
         }
         StmtKind::For {
             condition, body, ..
         } if condition.as_ref().is_none_or(expr_is_truthy_literal)
-            && (block_guarantees_function_exit_with_divergence(
-                body,
-                additional_expr_diverges,
-            ) || !block_may_break_current_loop(body)) =>
+            && (loop_body_exits_function_before_breaking(body, additional_expr_diverges)
+                || !block_may_break_current_loop(body)) =>
         {
             TerminalEffect::ExitsCurrentBlock
         }
         _ => TerminalEffect::FallsThrough,
     }
+}
+
+/// Returns true when a loop body leaves the function on every path before any statement that may
+/// break out of the loop. `while (true) { if ($c) { break; } return 1; }` leaves through its
+/// `break`, so the code after the loop is reachable even though the body ends in a `return`.
+fn loop_body_exits_function_before_breaking(
+    stmts: &[Stmt],
+    additional_expr_diverges: &dyn Fn(&Expr) -> bool,
+) -> bool {
+    for stmt in stmts {
+        if stmt_may_break_current_loop(stmt, 1) {
+            return false;
+        }
+        if stmt_guarantees_function_exit(stmt, additional_expr_diverges) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Returns true if the statement guarantees function exit under the supplied divergence model.
@@ -222,13 +234,11 @@ fn stmt_guarantees_function_exit(
         }
         StmtKind::While { condition, body } => {
             expr_is_truthy_literal(condition)
-                && (block_guarantees_function_exit_with_divergence(
-                    body,
-                    additional_expr_diverges,
-                ) || !block_may_break_current_loop(body))
+                && (loop_body_exits_function_before_breaking(body, additional_expr_diverges)
+                    || !block_may_break_current_loop(body))
         }
         StmtKind::DoWhile { body, condition } => {
-            block_guarantees_function_exit_with_divergence(body, additional_expr_diverges)
+            loop_body_exits_function_before_breaking(body, additional_expr_diverges)
                 || (expr_is_truthy_literal(condition) && !block_may_break_current_loop(body))
         }
         StmtKind::For {
@@ -237,10 +247,8 @@ fn stmt_guarantees_function_exit(
             condition
                 .as_ref()
                 .is_none_or(expr_is_truthy_literal)
-                && (block_guarantees_function_exit_with_divergence(
-                    body,
-                    additional_expr_diverges,
-                ) || !block_may_break_current_loop(body))
+                && (loop_body_exits_function_before_breaking(body, additional_expr_diverges)
+                    || !block_may_break_current_loop(body))
         }
         _ => false,
     }
