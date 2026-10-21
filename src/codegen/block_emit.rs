@@ -292,6 +292,7 @@ fn emit_user_function(
         regalloc_linear,
         true,
         frame::module_uses_backtrace(module) && !function.flags.is_synthetic,
+        false,
     );
     let epilogue_label = user_function_epilogue_symbol(function);
     let mut ctx = FunctionContext::new(
@@ -329,6 +330,7 @@ pub(super) fn emit_synthetic_function_with_label(
         emitter.target,
         regalloc_linear,
         true,
+        false,
         false,
     );
     let epilogue_label = format!("{}_epilogue", entry_label);
@@ -458,6 +460,7 @@ fn emit_class_method(
         regalloc_linear,
         true,
         frame::module_uses_backtrace(module) && !function.flags.is_synthetic,
+        false,
     );
     let epilogue_label = format!("{}_epilogue", entry_label);
     let mut ctx = FunctionContext::new(
@@ -770,6 +773,7 @@ fn emit_generator_body(
         regalloc_linear,
         true,
         frame::module_uses_backtrace(module) && !function.flags.is_synthetic,
+        false,
     );
     let epilogue_label = format!("{}_epilogue", body_label);
     let mut ctx = FunctionContext::new(
@@ -1009,6 +1013,7 @@ fn emit_main_function(
         regalloc_linear,
         false,
         false,
+        web,
     );
     let mut ctx = FunctionContext::new(
         module, function, emitter, data, shared, layout, true, gc_stats, heap_debug, None,

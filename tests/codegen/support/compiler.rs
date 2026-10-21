@@ -159,6 +159,22 @@ pub(crate) fn compile_source_to_asm_with_defines_repr_and_php_version(
     )
 }
 
+thread_local! {
+    /// Set by `compile_source_to_web_user_asm` so the fixture pipeline emits the `--web` entry.
+    static WEB_FIXTURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Compiles `source` as a `--web --web-isolation=pool` program and returns its user assembly,
+/// whose top-level body is the C-callable `_elephc_web_handler`.
+pub(crate) fn compile_source_to_web_user_asm(source: &str) -> String {
+    let dir = make_cli_test_dir("elephc_web_asm");
+    WEB_FIXTURE.with(|web| web.set(true));
+    let (user_asm, _, _) = compile_source_to_asm_with_options(source, &dir, 8_388_608, false, false);
+    WEB_FIXTURE.with(|web| web.set(false));
+    let _ = std::fs::remove_dir_all(&dir);
+    user_asm
+}
+
 /// Runs the full fixture pipeline with explicit regex and PHP-version settings.
 #[allow(clippy::too_many_arguments)]
 fn compile_source_to_asm_with_defines_repr_regex_and_php_version(
@@ -428,8 +444,12 @@ fn try_compile_source_to_asm_with_defines_repr_inner(
         elephc::codegen::Emit::Executable,
         &exported_functions,
         regalloc_linear,
-        false,
-        elephc::codegen::WebIsolation::Worker,
+        WEB_FIXTURE.with(std::cell::Cell::get),
+        if WEB_FIXTURE.with(std::cell::Cell::get) {
+            elephc::codegen::WebIsolation::Pool
+        } else {
+            elephc::codegen::WebIsolation::Worker
+        },
     );
     let mut runtime_features = ir_module.required_runtime_features;
     if let Ok(output) = &generated_user_asm {

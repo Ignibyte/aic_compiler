@@ -24,7 +24,7 @@ fn native_catalog_initialization_is_target_aware_and_module_private() {
         let module = Module::new(target);
         let mut function = helper_function("catalog_probe", PhpType::Void);
         function.add_local(Some("context".into()), IrType::I64, PhpType::Int, LocalKind::EvalContext);
-        let layout = frame::layout_for_function(&function, target, false, false, false);
+        let layout = frame::layout_for_function(&function, target, false, false, false, false);
         let mut emitter = Emitter::new(target);
         let mut data = DataSection::new();
         let mut shared = SharedCodegenState::default();
