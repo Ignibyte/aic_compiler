@@ -1285,7 +1285,6 @@ impl Checker {
         }
     }
 
-    /// Checks a loop body with its control-flow depth and conservative property narrowings.
     /// Returns the facts a `switch` case contributes at the end of the `switch`: `None` when it
     /// never reaches the end (it leaves the function or the loop around it), none when a `break`
     /// or `continue` before its last statement can leave it before they were established, else
@@ -1354,6 +1353,7 @@ impl Checker {
         }
     }
 
+    /// Checks a loop body with its control-flow depth and conservative property narrowings.
     fn check_break_continue_target_body(
         &mut self,
         body: &[Stmt],
