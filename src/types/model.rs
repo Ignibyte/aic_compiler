@@ -12,6 +12,48 @@
 use std::collections::HashMap;
 use std::fmt;
 
+/// What a declared parameter or return type accepts from a boxed `mixed` value that only a
+/// run-time check can verify (see [`PhpType::mixed_boundary`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct MixedBoundary {
+    /// Either runtime array shape, indexed or hash.
+    pub(crate) arrays: bool,
+    /// `null`.
+    pub(crate) null: bool,
+    /// Objects that are instances of one of these classes or interfaces.
+    pub(crate) classes: Vec<String>,
+    /// Every object, as the bare `object` type declares.
+    pub(crate) any_object: bool,
+}
+
+impl MixedBoundary {
+    /// Adds an object member: the bare `object` type is the class with an empty name.
+    fn add_object(&mut self, name: &str) {
+        if name.is_empty() {
+            self.any_object = true;
+        } else {
+            self.classes.push(name.to_string());
+        }
+    }
+
+    /// Spells the declared type the way php-src's `TypeError` does: the classes in declaration
+    /// order, then `array`, then `null`, joined by `|`; a single member with `null` is `?X`.
+    pub(crate) fn php_type_name(&self) -> String {
+        let mut members: Vec<&str> = self.classes.iter().map(String::as_str).collect();
+        if self.any_object {
+            members.push("object");
+        }
+        if self.arrays {
+            members.push("array");
+        }
+        match (members.as_slice(), self.null) {
+            ([only], true) => format!("?{only}"),
+            (_, true) => format!("{}|null", members.join("|")),
+            (_, false) => members.join("|"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)] // Callable used in match arms, constructed when closures are added
 /// PHP runtime type.
@@ -62,6 +104,34 @@ impl PhpType {
             && members.iter().any(|member| matches!(member, Self::Array(value) if **value == Self::Mixed))
             && members.iter().any(|member| matches!(member, Self::AssocArray { key, value }
                 if **key == Self::Mixed && **value == Self::Mixed)))
+    }
+
+    /// Describes what this DECLARED parameter or return type accepts from a boxed `mixed` value,
+    /// when only a run-time check can decide it: either array shape, `null`, and objects of the
+    /// named classes. `None` for every other declaration, scalars included (they have their own
+    /// cast funnels), and for `iterable`, whose raw-pointer storage the boxed cell does not share.
+    pub(crate) fn mixed_boundary(&self) -> Option<MixedBoundary> {
+        let mut boundary = MixedBoundary::default();
+        let members = match self {
+            Self::Object(name) => {
+                boundary.add_object(name);
+                return Some(boundary);
+            }
+            Self::Union(members) => members,
+            _ => return None,
+        };
+        for member in members {
+            match member {
+                Self::Array(value) if **value == Self::Mixed => boundary.arrays = true,
+                Self::AssocArray { key, value } if **key == Self::Mixed && **value == Self::Mixed => {
+                    boundary.arrays = true;
+                }
+                Self::Void => boundary.null = true,
+                Self::Object(name) => boundary.add_object(name),
+                _ => return None,
+            }
+        }
+        (boundary.arrays || boundary.any_object || !boundary.classes.is_empty()).then_some(boundary)
     }
 
     /// Returns a `PhpType::Resource(Some("stream"))` representing a stream resource.

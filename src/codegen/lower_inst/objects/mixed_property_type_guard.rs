@@ -552,7 +552,11 @@ fn mixed_from_value_payload_regs(emitter: &Emitter) -> (&'static str, &'static s
 }
 
 /// Branches to `accepted_label` when the unboxed object belongs to an accepted class.
-fn emit_accept_object_classes(emitter: &mut Emitter, class_ids: &[u64], accepted_label: &str) {
+pub(in crate::codegen::lower_inst) fn emit_accept_object_classes(
+    emitter: &mut Emitter,
+    class_ids: &[u64],
+    accepted_label: &str,
+) {
     if class_ids.is_empty() {
         return;
     }
@@ -1042,7 +1046,10 @@ fn object_actions(ctx: &FunctionContext<'_>, class_names: &[String]) -> Vec<TagA
 }
 
 /// Collects the runtime class ids in this module that satisfy any of the declared classes.
-fn compatible_class_ids(ctx: &FunctionContext<'_>, class_names: &[String]) -> Vec<u64> {
+pub(in crate::codegen::lower_inst) fn compatible_class_ids(
+    ctx: &FunctionContext<'_>,
+    class_names: &[String],
+) -> Vec<u64> {
     let mut ids = ctx
         .module
         .class_infos

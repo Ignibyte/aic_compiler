@@ -16,6 +16,7 @@ pub(super) fn coerce_to_return_type(
     value: LoweredValue,
     span: Option<Span>,
 ) -> LoweredValue {
+    guard_declared_mixed_return(ctx, value, span);
     if let Some(value) = coerce_container_to_return_type(ctx, value, span) {
         return value;
     }
@@ -60,6 +61,40 @@ pub(super) fn coerce_to_return_type(
         ),
         IrType::Void => value,
     }
+}
+
+/// Verifies a boxed `Mixed` value against a DECLARED `array`, `?array` or class return.
+///
+/// The checker admits these returns because php checks them at run time; this emits that
+/// check. It only reads the value, so the coercion below still decides the storage: the cell
+/// itself for an array or nullable return, its owned unboxed object for an exact class.
+/// INFERRED returns are untouched: an undeclared function never throws on its own value.
+fn guard_declared_mixed_return(
+    ctx: &mut LoweringContext<'_, '_>,
+    value: LoweredValue,
+    span: Option<Span>,
+) {
+    if !ctx.return_type_is_declared
+        || ctx.builder.value_php_type(value.value) != PhpType::Mixed
+    {
+        return;
+    }
+    let Some(boundary) = ctx.return_php_type.mixed_boundary() else {
+        return;
+    };
+    let prefix = format!(
+        "{}(): Return value must be of type {}, ",
+        ctx.owner_name(),
+        boundary.php_type_name()
+    );
+    let data = ctx.intern_string(&prefix);
+    ctx.emit_void(
+        Op::ReturnBoundaryMixedGuard,
+        vec![value.value],
+        Some(Immediate::Data(data)),
+        Op::ReturnBoundaryMixedGuard.default_effects(),
+        span,
+    );
 }
 
 /// Verifies a dynamically-typed value against a DECLARED `int` return boundary.
