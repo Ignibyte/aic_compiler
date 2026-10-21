@@ -514,3 +514,32 @@ echo $x, "\n";
         )
     );
 }
+
+/// Verifies a loop whose body ends in `return` still reaches the code after it through an
+/// earlier `break`, in each loop form, and through a `break 2` out of a `switch`.
+#[test]
+fn test_break_before_a_returning_loop_body_reaches_the_code_after_the_loop() {
+    let out = compile_and_run(
+        r#"<?php
+function viaWhile(bool $c): string { while (true) { if ($c) { break; } return "r"; } return "after"; }
+function viaFor(bool $c): string { for (;;) { if ($c) { break; } return "r"; } return "after"; }
+function viaDo(bool $c): string { do { if ($c) { break; } return "r"; } while (true); return "after"; }
+function viaDoCond(bool $c, int $n): string { do { if ($c) { break; } return "r"; } while ($n > 0); return "after"; }
+function viaSwitch(int $k): string {
+    while (true) {
+        switch ($k) {
+            case 0:
+                break 2;
+            default:
+                echo "d";
+        }
+        return "r";
+    }
+    return "after";
+}
+echo viaWhile(true), viaWhile(false), "|", viaFor(true), viaFor(false), "|", viaDo(true), viaDo(false), "|";
+echo viaDoCond(true, 1), viaDoCond(false, 1), "|", viaSwitch(0), viaSwitch(1), "\n";
+"#,
+    );
+    assert_eq!(out, "afterr|afterr|afterr|afterr|afterdr\n");
+}
