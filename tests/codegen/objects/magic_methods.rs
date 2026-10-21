@@ -517,3 +517,55 @@ echo $n, "\n";
         out.stderr
     );
 }
+
+/// Verifies that a cast, a concatenation and an echo of a value typed by an interface that
+/// declares `__toString()` call the implementing class's method.
+#[test]
+fn test_string_conversion_through_an_interface_calls_the_implementation() {
+    let out = compile_and_run(
+        r#"<?php
+interface Body { public function __toString(): string; }
+interface Page extends Body {}
+final class Text implements Page {
+    public function __construct(private string $s) {}
+    public function __toString(): string { return str_repeat($this->s, 2); }
+}
+function cast(Body $b): string { return (string) $b; }
+function glue(Body $b): string { return "<" . $b . ">"; }
+function show(Page $p): void { echo $p, "|"; }
+for ($i = 0; $i < 3; $i++) {
+    echo cast(new Text("a")), "|", glue(new Text("b")), "|";
+    show(new Text("c"));
+    echo "\n";
+}
+"#,
+    );
+    assert_eq!(out, "aa|<bb>|cc|\n".repeat(3));
+}
+
+/// Verifies that the implicit `__toString()` of a cast or an echo, and the `count()` of a
+/// Countable, run a subclass's override when the value is typed by its parent class.
+#[test]
+fn test_implicit_object_method_calls_run_the_subclass_override() {
+    let out = compile_and_run(
+        r#"<?php
+class Base implements Countable {
+    public function __toString(): string { return "base"; }
+    public function count(): int { return 1; }
+}
+class Child extends Base {
+    public function __toString(): string { return "child"; }
+    public function count(): int { return 2; }
+}
+function cast(Base $b): string { return (string) $b; }
+function show(Base $b): void { echo $b, "|"; }
+function size(Base $b): int { return count($b); }
+foreach ([new Base(), new Child()] as $o) {
+    echo cast($o), "|";
+    show($o);
+    echo size($o), "\n";
+}
+"#,
+    );
+    assert_eq!(out, "base|base|1\nchild|child|2\n");
+}
