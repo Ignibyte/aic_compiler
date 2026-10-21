@@ -377,17 +377,13 @@ fn test_error_negate_string() {
     );
 }
 
-/// Verifies that a relational comparison MIXING a string and a number is still rejected.
-///
-/// Two strings order fine since issue #507 — PHP's own rule, through the runtime ordering
-/// helper. A string against a number is a different conversion (PHP casts the number to a
-/// string when the string is non-numeric) and stays unsupported, so the diagnostic now names
-/// both accepted shapes.
+/// Verifies that comparison operators on strings produce an error.
+/// Input: `$x = "a"; echo $x < 1;` — string vs int comparison is invalid.
 #[test]
-fn test_error_comparison_mixing_string_and_number() {
+fn test_error_comparison_on_string() {
     expect_error(
         "<?php $x = \"a\"; echo $x < 1;",
-        "Comparison operators require numeric or string operands",
+        "Comparison operators require numeric operands",
     );
 }
 
