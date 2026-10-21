@@ -1011,7 +1011,7 @@ impl Checker {
                 // `finally` and the code after a caught exception may all run without what the
                 // body's early exits kept: they are checked without those facts. When no catch
                 // can fall out of the `try`, only a completed body reaches what follows, so the
-                // facts come back after the `finally` for every local nothing has reassigned.
+                // facts come back after a `finally` that provably writes no local.
                 let try_mark = self.kept_narrowings.len();
                 for s in try_body {
                     if let Err(error) = self.check_stmt(s, env) {
@@ -1076,12 +1076,12 @@ impl Checker {
                     errors.extend(self.check_body(body, env));
                     self.finally_break_continue_bases.pop();
                 }
-                if only_completion_falls_out {
-                    let untouched: Vec<_> = completed_facts
-                        .into_iter()
-                        .filter(|fact| env.get(&fact.var) == fact.original.as_ref())
-                        .collect();
-                    self.keep_facts_every_path_shares(&[untouched], env);
+                if only_completion_falls_out
+                    && finally_body
+                        .as_deref()
+                        .is_none_or(finally_cannot_write_locals)
+                {
+                    self.keep_facts_every_path_shares(&[completed_facts], env);
                 }
                 self.callable_array_targets.clear();
                 self.callable_array_target_versions.clear();
@@ -1287,19 +1287,18 @@ impl Checker {
 
     /// Checks a loop body with its control-flow depth and conservative property narrowings.
     /// Returns the facts a `switch` case contributes at the end of the `switch`: `None` when it
-    /// never reaches the end (it leaves the function), none when a `break` or `continue` before
-    /// its last statement can leave it before they were established, else what it kept.
+    /// never reaches the end (it leaves the function or the loop around it), none when a `break`
+    /// or `continue` before its last statement can leave it before they were established, else
+    /// what it kept.
     fn switch_case_reaching_facts(
         &self,
         body: &[Stmt],
         facts: Vec<crate::types::checker::KeptNarrowing>,
     ) -> Option<Vec<crate::types::checker::KeptNarrowing>> {
-        // Only a case that leaves the function never reaches the end. A `continue` does not
-        // count: `continue 1` leaves the `switch` the way `break` does, so its path reaches
-        // the end, and the check below keeps none of the case's facts for it.
-        if crate::termination::block_guarantees_function_exit_with_divergence(body, &|expr| {
-            self.expr_is_declared_never_call(expr)
-        }) {
+        // A case that leaves the function, or the loop around the `switch` (`break 2`,
+        // `continue 2`), never reaches the end. `continue 1` does: it leaves the `switch` the
+        // way `break` does, and the check below keeps none of the case's facts for it.
+        if self.case_never_reaches_switch_end(body) {
             return None;
         }
         let before_last_break = match body.split_last() {
@@ -1312,6 +1311,47 @@ impl Checker {
             return Some(Vec::new());
         }
         Some(facts)
+    }
+
+    /// Returns whether every path through a `switch` case body leaves past the end of the
+    /// `switch` (a function exit, or a `break`/`continue` of two levels or more) before any
+    /// statement that could reach that end.
+    fn case_never_reaches_switch_end(&self, body: &[Stmt]) -> bool {
+        for stmt in body {
+            if self.stmt_leaves_past_switch_end(stmt) {
+                return true;
+            }
+            if matches!(stmt.kind, StmtKind::Break(_) | StmtKind::Continue(_))
+                || crate::termination::stmt_may_leave_current_switch_from_nested(stmt)
+            {
+                return false;
+            }
+        }
+        false
+    }
+
+    /// Returns whether one statement of a `switch` case leaves past the end of the `switch` on
+    /// every path: see `case_never_reaches_switch_end`.
+    fn stmt_leaves_past_switch_end(&self, stmt: &Stmt) -> bool {
+        match &stmt.kind {
+            StmtKind::Break(levels) | StmtKind::Continue(levels) => *levels >= 2,
+            StmtKind::If {
+                then_body,
+                elseif_clauses,
+                else_body: Some(else_body),
+                ..
+            } => {
+                self.case_never_reaches_switch_end(then_body)
+                    && elseif_clauses
+                        .iter()
+                        .all(|(_, body)| self.case_never_reaches_switch_end(body))
+                    && self.case_never_reaches_switch_end(else_body)
+            }
+            _ => crate::termination::block_guarantees_function_exit_with_divergence(
+                std::slice::from_ref(stmt),
+                &|expr| self.expr_is_declared_never_call(expr),
+            ),
+        }
     }
 
     fn check_break_continue_target_body(
@@ -1431,4 +1471,24 @@ impl Checker {
         }
         errors
     }
+}
+
+/// Returns whether a `finally` body provably writes no local: it is empty or only echoes
+/// literals. Anything else may reassign a local (directly, by reference, or through `global` in
+/// a function it calls) to a value of the type it already had, which the types alone cannot
+/// tell apart from an untouched local.
+fn finally_cannot_write_locals(body: &[Stmt]) -> bool {
+    body.iter().all(|stmt| {
+        matches!(
+            &stmt.kind,
+            StmtKind::Echo(expr) if matches!(
+                expr.kind,
+                ExprKind::StringLiteral(_)
+                    | ExprKind::IntLiteral(_)
+                    | ExprKind::FloatLiteral(_)
+                    | ExprKind::BoolLiteral(_)
+                    | ExprKind::Null
+            )
+        )
+    })
 }

@@ -221,19 +221,24 @@ impl Checker {
 
     /// Like `undo_kept_narrowings_since`, but returns the facts it undid that still held, each
     /// local with the type the body left it, so a construct can keep the ones every path shares.
+    /// A chain of guards on one local (`null` excluded, then `string`) is one fact: the last
+    /// guard's type with the type from before the first, which is what undoing it must restore.
     pub(crate) fn take_kept_narrowings_since(
         &mut self,
         mark: usize,
         env: &mut TypeEnv,
     ) -> Vec<crate::types::checker::KeptNarrowing> {
-        let held = self
-            .kept_narrowings
-            .get(mark..)
-            .unwrap_or_default()
-            .iter()
-            .filter(|kept| env.get(&kept.var) == Some(&kept.narrowed))
-            .cloned()
-            .collect();
+        let mut held: Vec<crate::types::checker::KeptNarrowing> = Vec::new();
+        for kept in self.kept_narrowings.get(mark..).unwrap_or_default() {
+            match held.iter_mut().find(|fact| fact.var == kept.var) {
+                Some(fact) if kept.original.as_ref() == Some(&fact.narrowed) => {
+                    fact.narrowed = kept.narrowed.clone();
+                }
+                Some(fact) => *fact = kept.clone(),
+                None => held.push(kept.clone()),
+            }
+        }
+        held.retain(|fact| env.get(&fact.var) == Some(&fact.narrowed));
         self.undo_kept_narrowings_since(mark, env);
         held
     }

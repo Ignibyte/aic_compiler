@@ -1146,3 +1146,82 @@ echo $total, "\n";
     );
     assert_eq!(out, "3\n");
 }
+
+/// Verifies a `switch` case that leaves the loop around it (`break 2`, `continue 2`) does not
+/// count as reaching the end of the `switch`, so the other cases' facts hold after it.
+#[test]
+fn test_switch_case_leaving_the_enclosing_loop_keeps_the_other_cases_facts() {
+    let out = compile_and_run(
+        r#"<?php
+function viaBreak(int $kind, ?array $v): array {
+    foreach ([$kind] as $k) {
+        switch ($k) {
+            case 0:
+                break 2;
+            default:
+                if ($v === null) { throw new Exception("x"); }
+        }
+        return $v;
+    }
+    return [];
+}
+function viaContinue(array $kinds, ?array $v): int {
+    $n = 0;
+    foreach ($kinds as $kind) {
+        switch ($kind) {
+            case 0:
+                continue 2;
+            default:
+                if ($v === null) { throw new Exception("x"); }
+        }
+        $n += count($v);
+    }
+    return $n;
+}
+echo count(viaBreak(0, null)), "|", count(viaBreak(1, [1, 2])), "|", viaContinue([0, 0], null), "|", viaContinue([0, 1], [1, 2, 3]), "\n";
+"#,
+    );
+    assert_eq!(out, "0|2|0|3\n");
+}
+
+/// Verifies a guard in a `try` body is not trusted after a `finally` that reassigns the local
+/// to a value of the same type: `$v` may be null again when it is returned.
+#[test]
+fn test_finally_reassignment_does_not_revive_a_try_body_guard() {
+    let err = compile_expect_type_error(
+        r#"<?php
+function f(?array $v, ?array $other): array {
+    try {
+        if ($v === null) { throw new Exception("x"); }
+    } finally {
+        $v = $other;
+    }
+    return $v;
+}
+var_dump(f([1], null));
+"#,
+    );
+    assert!(err.contains("return type expects array"), "{err}");
+}
+
+/// Verifies a chain of guards on one local inside a `switch` restores the type from before the
+/// whole chain when the enclosing `if` ends: the path that skipped the `if` keeps the array.
+#[test]
+fn test_chained_switch_guards_restore_the_type_from_before_the_chain() {
+    let err = compile_expect_type_error(
+        r#"<?php
+function g(int|string|array $v, bool $c, int $k): int|string {
+    if ($c) {
+        switch ($k) {
+            default:
+                if (is_array($v)) { return "a"; }
+                if (is_string($v)) { return "s"; }
+        }
+    }
+    return $v;
+}
+var_dump(g([1], false, 0));
+"#,
+    );
+    assert!(err.contains("return type expects int|string"), "{err}");
+}
