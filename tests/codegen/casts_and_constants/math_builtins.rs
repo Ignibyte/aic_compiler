@@ -432,4 +432,17 @@ echo show([1200, 34.27], 0), "|", show([1200, 34.27], 1), "|", show([1200], 5), 
 "#,
     );
     assert_eq!(out, "1,200.0|34.3|0.0|98,765|-|1,234\n");
+
+/// Verifies `number_format()` rounds halves away from zero as PHP's `round()` does, including
+/// exact binary ties (`34.25`, `0.125`, `2.5`) and doubles just below a decimal tie (`1.005`).
+#[test]
+fn test_number_format_rounds_halves_away_from_zero() {
+    let out = compile_and_run(
+        r#"<?php
+echo number_format(34.25, 1), "|", number_format(0.125, 2), "|", number_format(2.5), "|";
+echo number_format(-2.5), "|", number_format(1.005, 2), "|", number_format(0.285, 2), "|";
+echo number_format(1234567.891, 2), "|", number_format(1234.5678, -2), "|", number_format(0.5), "|";
+"#,
+    );
+    assert_eq!(out, "34.3|0.13|3|-3|1.01|0.29|1,234,567.89|1,200|1|");
 }

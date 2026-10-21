@@ -74,12 +74,39 @@ pub(crate) fn lower_number_format(
     abi::emit_push_float_reg(ctx.emitter, abi::float_result_reg(ctx.emitter));
 
     push_decimal_count(ctx, inst)?;
+    round_staged_number_like_php(ctx);
     push_separator_byte(ctx, inst, 2, 46, false, "decimal separator")?;
     push_separator_byte(ctx, inst, 3, 44, true, "thousands separator")?;
     pop_number_format_args(ctx);
     abi::emit_call_label(ctx.emitter, "__rt_number_format");
     store_if_result(ctx, inst)
 }
+/// Rounds the staged number to the staged decimal count with `round()`'s HALF_UP rule.
+///
+/// PHP's `number_format()` calls `_php_math_round()` before it formats, so an exact binary
+/// tie such as `34.25` rounds away from zero (`34.3`) and `1.005` reaches `1.01`; `snprintf`
+/// alone rounds ties to even. Leaves the stack as it found it: the number under the count.
+fn round_staged_number_like_php(ctx: &mut FunctionContext<'_>) {
+    let int_reg = abi::int_result_reg(ctx.emitter);
+    let float_reg = abi::float_result_reg(ctx.emitter);
+    abi::emit_pop_reg(ctx.emitter, int_reg);
+    abi::emit_pop_float_reg(ctx.emitter, float_reg);
+    abi::emit_push_reg(ctx.emitter, int_reg);
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.emitter.instruction("mov x1, #1");                              // round with PHP_ROUND_HALF_UP; x0 already holds $decimals
+        }
+        Arch::X86_64 => {
+            ctx.emitter.instruction("mov rdi, rax");                            // pass $decimals as the round precision
+            ctx.emitter.instruction("mov esi, 1");                              // round with PHP_ROUND_HALF_UP
+        }
+    }
+    abi::emit_call_label(ctx.emitter, "__rt_round_mode");
+    abi::emit_pop_reg(ctx.emitter, int_reg);
+    abi::emit_push_float_reg(ctx.emitter, float_reg);
+    abi::emit_push_reg(ctx.emitter, int_reg);
+}
+
 /// Pushes the explicit or default decimal-count argument.
 pub(super) fn push_decimal_count(ctx: &mut FunctionContext<'_>, inst: &Instruction) -> Result<()> {
     if inst.operands.len() >= 2 {
