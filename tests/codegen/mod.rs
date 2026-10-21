@@ -21,6 +21,7 @@ mod namespaces;
 mod null_sentinel;
 mod case_insensitive_symbols;
 mod cli;
+mod web_handler_abi;
 mod repl;
 mod strict_php;
 mod strict_php_source_guards;

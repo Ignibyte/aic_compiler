@@ -65,6 +65,7 @@ pub(super) fn emit_shared_helper(
         regalloc_linear,
         false,
         false,
+        false,
     );
     let mut ctx = FunctionContext::new(
         module, &function, emitter, data, shared, layout, false, false, false, None,

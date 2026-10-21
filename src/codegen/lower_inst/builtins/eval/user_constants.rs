@@ -204,7 +204,7 @@ mod tests {
     fn user_constant_registration_asm(target: Target) -> String {
         let module = user_constant_module(target);
         let function = helper_function("user_constant_registration_probe", PhpType::Void);
-        let layout = frame::layout_for_function(&function, target, false, false, false);
+        let layout = frame::layout_for_function(&function, target, false, false, false, false);
         let mut emitter = Emitter::new(target);
         let mut data = DataSection::new();
         let mut shared = SharedCodegenState::default();
