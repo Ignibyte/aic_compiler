@@ -410,3 +410,26 @@ try { span(9, 2); } catch (ValueError $e) { echo get_class($e), ": ", $e->getMes
         out.stderr
     );
 }
+
+/// Verifies `number_format()` accepts a boxed `mixed` argument: an untyped array's int and
+/// float elements, a `?? 0` fallback, an int sum (it may overflow to float), and a nullable int.
+#[test]
+fn test_number_format_of_mixed_and_nullable_values() {
+    let out = compile_and_run(
+        r#"<?php
+declare(strict_types=1);
+/** @param list<int|float> $values */
+function show(array $values, int $index): string {
+    return number_format($values[$index] ?? 0, 1);
+}
+function maybe(?int $n): string {
+    return $n === null ? "-" : number_format($n);
+}
+function lot(int $inStock, int $onHold): string {
+    return number_format($inStock + $onHold);
+}
+echo show([1200, 34.27], 0), "|", show([1200, 34.27], 1), "|", show([1200], 5), "|", maybe(98765), "|", maybe(null), "|", lot(1200, 34), "\n";
+"#,
+    );
+    assert_eq!(out, "1,200.0|34.3|0.0|98,765|-|1,234\n");
+}

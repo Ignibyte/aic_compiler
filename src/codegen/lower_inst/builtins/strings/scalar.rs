@@ -188,7 +188,7 @@ pub(super) fn pop_number_format_args(ctx: &mut FunctionContext<'_>) {
     }
 }
 
-/// Loads a concrete scalar value as a floating-point runtime argument.
+/// Loads a scalar or boxed `Mixed` value as a floating-point runtime argument.
 pub(super) fn load_as_float(ctx: &mut FunctionContext<'_>, value: ValueId, name: &str) -> Result<()> {
     match ctx.load_value_to_result(value)?.codegen_repr() {
         PhpType::Float => Ok(()),
@@ -203,6 +203,17 @@ pub(super) fn load_as_float(ctx: &mut FunctionContext<'_>, value: ValueId, name:
         }
         PhpType::Str => {
             abi::emit_call_label(ctx.emitter, "__rt_str_to_number");
+            Ok(())
+        }
+        PhpType::TaggedScalar => {
+            crate::codegen::sentinels::emit_tagged_scalar_to_int_null_as_zero(ctx.emitter);
+            abi::emit_int_result_to_float_result(ctx.emitter);
+            Ok(())
+        }
+        // An element of an untyped array, or `$list[$i] ?? 0`, arrives boxed.
+        PhpType::Mixed | PhpType::Union(_) => {
+            load_value_to_first_int_arg(ctx, value)?;
+            abi::emit_call_label(ctx.emitter, "__rt_mixed_cast_float");
             Ok(())
         }
         other => Err(CodegenIrError::unsupported(format!(
