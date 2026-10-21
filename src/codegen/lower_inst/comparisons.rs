@@ -1067,9 +1067,11 @@ fn intish_or_null(ty: &PhpType) -> bool {
 
 /// Returns true for the scalar loose-equality subset that can normalize through integer slots.
 fn loose_intish_comparable(lhs_ty: &PhpType, rhs_ty: &PhpType) -> bool {
-    // Boxed runtime tags must select PHP's rule, not an integer coercion of every payload.
-    !matches!(lhs_ty, PhpType::Mixed) && !matches!(rhs_ty, PhpType::Mixed)
-        && intish_or_null(lhs_ty) && intish_or_null(rhs_ty)
+    if intish_or_null(lhs_ty) && intish_or_null(rhs_ty) {
+        return true;
+    }
+    matches!(lhs_ty, PhpType::Mixed) && intish_or_null(rhs_ty)
+        || matches!(rhs_ty, PhpType::Mixed) && intish_or_null(lhs_ty)
 }
 
 /// Emits the target compare instruction for integer-like spaceship operands.
