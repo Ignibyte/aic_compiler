@@ -514,3 +514,54 @@ echo $x, "\n";
         )
     );
 }
+
+/// Verifies that a `break` nested in an `if`, an `else` or a `try` of a falling-through switch
+/// case still reaches the statements after the switch.
+#[test]
+fn test_nested_break_in_a_falling_through_switch_case_reaches_the_tail() {
+    let out = compile_and_run(
+        r#"<?php
+function viaIf(int $k): string {
+    switch ($k) {
+        case 0:
+            if ($k === 0) {
+                break;
+            }
+        default:
+            echo "d";
+    }
+    return "after";
+}
+function viaElse(int $k): string {
+    switch ($k) {
+        case 0:
+            if ($k > 0) {
+                echo "x";
+            } else {
+                break;
+            }
+            echo "y";
+            break;
+        default:
+            echo "d";
+    }
+    return "tail";
+}
+function viaTry(int $k): string {
+    switch ($k) {
+        case 0:
+            try {
+                break;
+            } finally {
+                echo "f";
+            }
+        default:
+            echo "d";
+    }
+    return "end";
+}
+echo viaIf(0), "|", viaIf(1), "|", viaElse(0), "|", viaElse(1), "|", viaTry(0), "|", viaTry(1), "\n";
+"#,
+    );
+    assert_eq!(out, "after|dafter|tail|dtail|fend|dend\n");
+}
