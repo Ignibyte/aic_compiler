@@ -134,7 +134,7 @@ mod tests {
                 let module = Module::new(target);
                 let mut function = helper_function("deferred_probe", PhpType::Void);
                 function.add_local(Some("context".into()), IrType::I64, PhpType::Int, LocalKind::EvalContext);
-                let layout = frame::layout_for_function(&function, target, false, false, false);
+                let layout = frame::layout_for_function(&function, target, false, false, false, false);
                 let mut emitter = if pic { Emitter::new_pic(target) } else { Emitter::new(target) };
                 let mut data = DataSection::new();
                 let mut shared = SharedCodegenState::default();
