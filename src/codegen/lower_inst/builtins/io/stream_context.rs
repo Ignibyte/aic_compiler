@@ -9,6 +9,9 @@
 
 use super::*;
 
+mod provenance;
+use provenance::transparent_callback_source;
+
 /// Lowers `stream_wrapper_register(protocol, class, flags?)`.
 pub(crate) fn lower_stream_wrapper_register(
     ctx: &mut FunctionContext<'_>,
@@ -245,28 +248,6 @@ pub(super) fn is_capturable_notification_callable(
         return Err(CodegenIrError::missing_entry("instruction", inst.as_raw()));
     };
     Ok(matches!(inst.op, Op::ClosureNew | Op::FirstClassCallableNew))
-}
-
-/// Follows identity-preserving ownership operations used to stage call operands.
-fn transparent_callback_source(
-    function: &crate::ir::Function,
-    mut value: ValueId,
-) -> Result<ValueId> {
-    loop {
-        let Some(value_ref) = function.value(value) else {
-            return Err(CodegenIrError::missing_entry("value", value.as_raw()));
-        };
-        let ValueDef::Instruction { inst, .. } = value_ref.def else {
-            return Ok(value);
-        };
-        let Some(inst) = function.instruction(inst) else {
-            return Err(CodegenIrError::missing_entry("instruction", inst.as_raw()));
-        };
-        if !matches!(inst.op, Op::Acquire | Op::Move | Op::Borrow) {
-            return Ok(value);
-        }
-        value = expect_operand(inst, 0)?;
-    }
 }
 
 #[cfg(test)]

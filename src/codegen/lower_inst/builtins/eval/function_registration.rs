@@ -116,6 +116,11 @@ pub(super) fn register_eval_native_function(
         registration.is_internal,
     );
     let param_type_specs = eval_native_callable_param_type_specs(&registration.signature);
+    let source_constant_names = ctx.module.functions.iter()
+        .find(|function| function.name == registration.name)
+        .map(|function| function.source_defaults.iter().map(|default|
+            default.as_ref().and_then(crate::types::deferred_defaults::source_constant_name))
+            .collect::<Vec<_>>()).unwrap_or_default();
     let default_context = EvalNativeDefaultContext::global(ctx.module);
     for (registered_index, physical_index) in visible_indexes.into_iter().enumerate() {
         // `source_declared_param_indexes` only yields in-range indexes, so this loop registers exactly
@@ -165,6 +170,16 @@ pub(super) fn register_eval_native_function(
         if is_variadic {
             continue;
         }
+        if register_eval_native_param_default_error(ctx, context_offset,
+            (&name_label, name_len), registered_index,
+            registration.signature.defaults.get(physical_index).and_then(Option::as_ref),
+            &default_context, "__elephc_eval_register_native_function_param_default_error")
+        {
+            register_eval_native_function_param_default_constant_name(ctx, context_offset,
+                (&name_label, name_len), registered_index,
+                source_constant_names.get(physical_index).and_then(Option::as_deref));
+            continue;
+        }
         let Some(default) = registration
             .signature
             .defaults
@@ -182,6 +197,9 @@ pub(super) fn register_eval_native_function(
             registered_index,
             &default,
         );
+        register_eval_native_function_param_default_constant_name(ctx, context_offset,
+            (&name_label, name_len), registered_index,
+            source_constant_names.get(physical_index).and_then(Option::as_deref));
     }
     if let Some(type_spec) = eval_native_callable_return_type_spec(&registration.signature) {
         register_eval_native_function_return_type(

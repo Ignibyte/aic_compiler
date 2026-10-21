@@ -6,7 +6,7 @@
 //! - `crate::main()` before invoking `crate::pipeline::compile()`.
 //!
 //! Key details:
-//! - Only an exact `args[1] == "native"` selects native dependency commands.
+//! - Only an exact `args[1]` of `native`, `repl`, `monitor`, or `test` selects a subcommand.
 //! - Exits immediately on invalid CLI state so later stages receive normalized options.
 
 use std::collections::HashSet;
@@ -121,6 +121,8 @@ Arguments:
 Subcommands:
   native <COMMAND>        Native dependency management (see `elephc native --help`)
   repl                    Interactive PHP through eval (see `elephc repl --help`)
+  test [PATH]             Compile and run the test suite under PATH, default `tests`
+                          (see `elephc test --help`)
   monitor <TARGET>        Profile a program built with --with-monitoring: a .php
                           source, a binary, or a running service's address
                           (see `elephc monitor --help`)
@@ -271,6 +273,8 @@ pub(crate) enum Command {
     Native(NativeCommand),
     /// One validated `elephc monitor` sampling invocation.
     Monitor(crate::monitor::MonitorCommand),
+    /// One `elephc test` run: compile the suite under a path and run it.
+    Test(crate::test_command::TestCommand),
 }
 
 /// Dispatches exact top-level subcommand selectors before falling back to compilation.
@@ -280,6 +284,15 @@ pub(crate) fn parse_args(args: &[String]) -> Command {
             Ok(command) => Command::Repl(command),
             Err(error) => {
                 eprintln!("{error}\n\n{}", crate::repl::HELP);
+                process::exit(1);
+            }
+        };
+    }
+    if args.get(1).map(String::as_str) == Some("test") {
+        return match crate::test_command::parse_args(&args[2..]) {
+            Ok(command) => Command::Test(command),
+            Err(error) => {
+                eprintln!("{error}\n\n{}", crate::test_command::HELP);
                 process::exit(1);
             }
         };

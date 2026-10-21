@@ -105,14 +105,14 @@ free($src);
     assert_eq!(out, "305419896");
 }
 
-/// Verifies that a plain `extern function` returning `int` is resolved and called correctly.
+/// Verifies that a plain `extern function` returning a C `int` (`i32`) is resolved and called correctly.
 ///
-/// Fixture: extern function getpid() returning int, asserts the returned pid is positive.
+/// Fixture: extern function getpid() returning i32, asserts the returned pid is positive.
 #[test]
 fn test_ffi_extern_getpid() {
     let out = compile_and_run(
         r#"<?php
-extern function getpid(): int;
+extern function getpid(): i32;
 $pid = getpid();
 echo $pid > 0 ? "yes" : "no";
 "#,

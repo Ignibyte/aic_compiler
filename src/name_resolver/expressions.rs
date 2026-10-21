@@ -12,8 +12,8 @@ use crate::names::php_symbol_key;
 use crate::parser::ast::{ArrayEntry, CallableTarget, Expr, ExprKind, InstanceOfTarget, StaticReceiver};
 
 use super::names::{
-    resolve_constant_name, resolve_function_name, resolve_function_reference, resolve_special_or_class_name,
-    resolve_type_expr, resolved_class_constant_name,
+    resolve_constant_name, resolve_function_name, resolve_function_reference, resolve_pointer_target,
+    resolve_special_or_class_name, resolve_type_expr, resolved_class_constant_name,
 };
 use super::statements::{resolve_params, resolve_stmt_list};
 use super::{
@@ -492,7 +492,7 @@ pub(super) fn resolve_expr(
             },
         }),
         ExprKind::PtrCast { target_type, expr } => ExprKind::PtrCast {
-            target_type: target_type.clone(),
+            target_type: resolve_pointer_target(target_type, current_namespace, imports, symbols),
             expr: Box::new(resolve_expr(expr, current_namespace, imports, symbols)),
         },
         ExprKind::BufferNew { element_type, len } => ExprKind::BufferNew {

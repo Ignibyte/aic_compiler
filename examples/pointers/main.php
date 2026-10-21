@@ -15,6 +15,11 @@ echo "Null pointer: ";
 echo $null;
 echo "\n";
 
+// Pointers convert to the same "0x..." text in concatenation and interpolation
+$label = "p = " . $p;
+echo $label === "p = $p" ? "Concatenation matches interpolation\n" : "mismatch\n";
+echo "Null as string: " . (string)$null . "\n";
+
 // Checking for null
 echo "Is null? ";
 echo ptr_is_null($null) ? "yes" : "no";

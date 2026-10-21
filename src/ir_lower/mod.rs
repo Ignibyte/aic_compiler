@@ -25,10 +25,11 @@ mod loop_closures;
 /// The padding-thunk symbol codegen calls for a dynamic `new` that omits defaulted arguments.
 pub(crate) use function::dynamic_constructor_thunk_name;
 pub(crate) use function::eval_native_default_helper_name;
-pub(crate) use function::{lower_array_merge_callable, lower_boxed_usort_callable};
+pub(crate) use function::{lower_array_merge_callable, lower_boxed_usort_callable, lower_prepared_builtin_callable};
 mod ownership;
 mod program;
 mod property_initializers;
+mod property_default_errors;
 mod reflection;
 mod stmt;
 mod throwable_constructors;

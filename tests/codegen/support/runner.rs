@@ -5,7 +5,8 @@
 //! - `cargo test` through Rust's test harness.
 //!
 //! Key details:
-//! - Handles platform-specific linker flags, qemu ARM64 execution, and runtime object caching.
+//! - Handles platform-specific linker flags, qemu ARM64 execution, and runtime object caching
+//!   (one on-disk object per runtime shape, shared across nextest's per-test processes).
 //! - Archived CI shards trust the bridge staticlibs packaged by the build job,
 //!   avoiding source-mtime rebuilds and network access on test runners.
 //! - Translates typed runtime requirements through `LinkPlan` and supplies a test-only,
@@ -209,29 +210,79 @@ fn assemble_from_stdin(asm: &str, obj_path: &Path) {
     assert!(status.success(), "assembler failed");
 }
 
+/// Returns the directory every test process shares for assembled runtime objects.
+///
+/// `ELEPHC_TEST_RUNTIME_CACHE_DIR` overrides the location; otherwise the objects live under
+/// the system temp dir. nextest runs every test in its own process, so a per-process cache
+/// re-generated and re-assembled the ~2 MB runtime for every single test (about a third of a
+/// trivial fixture's wall time); this directory lets processes share one object per runtime
+/// shape while the content hash in the file name keeps distinct shapes apart.
+fn runtime_cache_dir() -> std::path::PathBuf {
+    static DIR: OnceLock<std::path::PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::var_os("ELEPHC_TEST_RUNTIME_CACHE_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::env::temp_dir().join("elephc_test_runtime_cache"));
+        fs::create_dir_all(&dir).expect("failed to create the runtime object cache directory");
+        dir
+    })
+    .clone()
+}
+
+/// Returns a runtime object assembled from `runtime_asm`, reusing the on-disk copy when
+/// another process (or an earlier run on this machine) already assembled it.
+///
+/// The key is the target name plus an FNV-1a hash of the full runtime assembly, so
+/// feature-gated runtimes, custom heap sizes and targets get distinct objects. A miss
+/// assembles into a process-unique temporary file in the same directory and renames it into
+/// place: a concurrent reader never sees a partially written object, and when two processes
+/// race on the same key both copies are byte-identical, so whichever rename lands last is as
+/// good as the other.
+fn disk_cached_runtime_obj(runtime_asm: &str) -> std::path::PathBuf {
+    static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+    let hash = runtime_asm_hash(runtime_asm);
+    let dir = runtime_cache_dir();
+    let obj_path = dir.join(format!("runtime_{}_{hash:016x}.o", target().as_str()));
+    if fs::metadata(&obj_path).map(|meta| meta.len() > 0).unwrap_or(false) {
+        return obj_path;
+    }
+    let temp_path = dir.join(format!(
+        "runtime_{}_{hash:016x}.{}.{}.tmp",
+        target().as_str(),
+        std::process::id(),
+        TEMP_ID.fetch_add(1, Ordering::SeqCst)
+    ));
+    assemble_from_stdin(runtime_asm, &temp_path);
+    if let Err(err) = fs::rename(&temp_path, &obj_path) {
+        let _ = fs::remove_file(&temp_path);
+        assert!(
+            obj_path.exists(),
+            "failed to publish runtime object {}: {err}",
+            obj_path.display()
+        );
+    }
+    obj_path
+}
+
 /// Returns the cached base runtime object path, assembling the runtime on first call.
-/// Creates a temp directory, generates an 8_388_608-byte heap runtime without optional
-/// feature families, assembles it with `as`, and caches the `.o` path for legacy tests.
+/// Generates an 8_388_608-byte heap runtime without optional feature families, assembles it
+/// through the shared on-disk cache, and keeps the path for the rest of the process.
 pub(crate) fn get_runtime_obj() -> &'static Path {
     RUNTIME_OBJ.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("elephc_test_runtime_{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
         let runtime_asm = elephc::codegen::generate_runtime_with_features(
             8_388_608,
             target(),
             elephc::codegen::RuntimeFeatures::none(),
         );
-        let obj_path = dir.join("runtime.o");
-        assemble_from_stdin(&runtime_asm, &obj_path);
-        obj_path
+        disk_cached_runtime_obj(&runtime_asm)
     })
 }
 
 /// Returns a cached runtime object assembled from the exact runtime assembly string.
 ///
-/// The cache key is an FNV-1a hash of the full runtime assembly, so feature-gated
-/// runtimes and custom heap sizes get distinct objects while repeated tests can
-/// still share the assembled output.
+/// The in-process map answers repeated requests without hashing the file system; the
+/// shared on-disk cache behind it answers them across processes, which is what nextest's
+/// process-per-test model needs for the cache to pay off at all.
 pub(crate) fn runtime_obj_for_asm(runtime_asm: &str) -> std::path::PathBuf {
     let hash = runtime_asm_hash(runtime_asm);
     let cache = RUNTIME_OBJS_BY_ASM.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
@@ -239,20 +290,7 @@ pub(crate) fn runtime_obj_for_asm(runtime_asm: &str) -> std::path::PathBuf {
     if let Some(path) = cache.get(&hash) {
         return path.clone();
     }
-
-    let dir = std::env::temp_dir().join(format!("elephc_test_runtime_{}", std::process::id()));
-    fs::create_dir_all(&dir).unwrap();
-    let asm_path = dir.join(format!("runtime_{hash:016x}.s"));
-    let obj_path = dir.join(format!("runtime_{hash:016x}.o"));
-    fs::write(&asm_path, runtime_asm).unwrap();
-
-    let mut cmd = Command::new(assembler_cmd());
-    if target().platform == Platform::MacOS {
-        cmd.args(["-arch", target().darwin_arch_name()]);
-    }
-    cmd.arg("-o").arg(&obj_path).arg(&asm_path);
-    let status = cmd.status().expect("failed to assemble feature runtime");
-    assert!(status.success(), "feature runtime assembler failed");
+    let obj_path = disk_cached_runtime_obj(runtime_asm);
     cache.insert(hash, obj_path.clone());
     obj_path
 }
@@ -267,18 +305,48 @@ fn runtime_asm_hash(asm: &str) -> u64 {
     hash
 }
 
-/// Assembles a base runtime object with a custom heap size, writing the `.o` to `dir`.
-/// Generates ARM64/x86_64 runtime assembly without optional feature families and assembles
-/// it using `assembler_cmd()`. Used by tests that need non-default heap sizes.
-pub(crate) fn assemble_custom_runtime(heap_size: usize, dir: &Path) -> std::path::PathBuf {
+/// Returns a base runtime object with a custom heap size, through the shared on-disk cache.
+/// Generates ARM64/x86_64 runtime assembly without optional feature families; used by tests
+/// that need non-default heap sizes.
+pub(crate) fn assemble_custom_runtime(heap_size: usize) -> std::path::PathBuf {
     let runtime_asm = elephc::codegen::generate_runtime_with_features(
         heap_size,
         target(),
         elephc::codegen::RuntimeFeatures::none(),
     );
-    let obj_path = dir.join("runtime.o");
-    assemble_from_stdin(&runtime_asm, &obj_path);
-    obj_path
+    disk_cached_runtime_obj(&runtime_asm)
+}
+
+#[cfg(test)]
+mod runtime_cache_tests {
+    use super::*;
+
+    /// Two requests for the same runtime assembly share one on-disk object, a different
+    /// assembly gets a different one, and every returned object is a non-empty file.
+    #[test]
+    fn runtime_objects_are_shared_on_disk_by_assembly_hash() {
+        let base = elephc::codegen::generate_runtime_with_features(
+            8_388_608,
+            target(),
+            elephc::codegen::RuntimeFeatures::none(),
+        );
+        let bigger = elephc::codegen::generate_runtime_with_features(
+            16_777_216,
+            target(),
+            elephc::codegen::RuntimeFeatures::none(),
+        );
+        let first = disk_cached_runtime_obj(&base);
+        let second = disk_cached_runtime_obj(&base);
+        let other = disk_cached_runtime_obj(&bigger);
+        assert_eq!(first, second);
+        assert_ne!(first, other);
+        for path in [&first, &other] {
+            assert!(fs::metadata(path).unwrap().len() > 0, "{}", path.display());
+            assert!(path.starts_with(runtime_cache_dir()));
+        }
+        assert_eq!(get_runtime_obj(), runtime_obj_for_asm(&base).as_path());
+        assert_eq!(assemble_custom_runtime(16_777_216), other);
+    }
 }
 
 /// Returns the bridge staticlibs requested by a fixture's effective link libraries.

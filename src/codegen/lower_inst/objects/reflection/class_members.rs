@@ -188,13 +188,14 @@ pub(super) fn reflection_class_constant_members(
 
 /// Returns materializable property defaults for `ReflectionClass::getDefaultProperties()`.
 pub(super) fn reflection_class_default_property_members(
+    ctx: &FunctionContext<'_>,
     info: &crate::types::ClassInfo,
     property_names: &[String],
 ) -> Vec<ReflectionDefaultPropertyMember> {
     property_names
         .iter()
         .filter_map(|property_name| {
-            reflection_property_default_value(info, property_name).map(|value| {
+            reflection_property_default_value(ctx, info, property_name).map(|value| {
                 ReflectionDefaultPropertyMember {
                     name: property_name.clone(),
                     value,

@@ -2,7 +2,7 @@
 title: "xml_parser_create() - internals"
 description: "Compiler internals for xml_parser_create(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 1015
+  order: 1017
 ---
 
 ## `xml_parser_create()` - internals

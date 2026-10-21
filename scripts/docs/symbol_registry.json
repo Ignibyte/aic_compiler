@@ -1586,6 +1586,96 @@
     },
     {
       "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": false,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": true,
+      "internal": false,
+      "kind": "class",
+      "module": "elephc",
+      "name": "Elephc\\Testing\\AssertionFailedError",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": false,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": true,
+      "internal": false,
+      "kind": "class",
+      "module": "elephc",
+      "name": "Elephc\\Testing\\IncompleteTestError",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": false,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": true,
+      "internal": false,
+      "kind": "class",
+      "module": "elephc",
+      "name": "Elephc\\Testing\\Runner",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": false,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": true,
+      "internal": false,
+      "kind": "class",
+      "module": "elephc",
+      "name": "Elephc\\Testing\\SkippedTestError",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": false,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": true,
+      "internal": false,
+      "kind": "class",
+      "module": "elephc",
+      "name": "Elephc\\Testing\\TestCase",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
         "kind": "checker-injected",
         "supported": true
       },
@@ -2844,6 +2934,24 @@
       "kind": "class",
       "module": "standard",
       "name": "php_user_filter",
+      "php_manual": null,
+      "since": null
+    },
+    {
+      "aot": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "bundled": false,
+      "eval": {
+        "kind": "prelude",
+        "supported": true
+      },
+      "extension": false,
+      "internal": false,
+      "kind": "class",
+      "module": "elephc",
+      "name": "PHPUnit\\Framework\\TestCase",
       "php_manual": null,
       "since": null
     },

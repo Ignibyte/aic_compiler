@@ -167,6 +167,19 @@ pub(crate) fn literal_default_value(
     if let Some(folded) = fold_named_class_constant(expr) {
         return literal_default_value(context, php_type, &folded, op_name);
     }
+    if php_type.coerces_integer_to_float() {
+        let integer = match expr {
+            ExprKind::IntLiteral(value) => Some(*value),
+            ExprKind::Negate(inner) => match inner.kind {
+                ExprKind::IntLiteral(value) => value.checked_neg(),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(value) = integer {
+            return literal_default_value(context, php_type, &ExprKind::FloatLiteral(value as f64), op_name);
+        }
+    }
     match (php_type, expr) {
         (PhpType::Int, ExprKind::IntLiteral(value)) => Ok(LiteralDefaultValue::Int(*value)),
         (PhpType::Int, ExprKind::Negate(inner)) => match &inner.kind {

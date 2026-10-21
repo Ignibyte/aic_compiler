@@ -33,7 +33,7 @@ ifdef DEBUG {
 <?php
 ifdef USE_SDL {
     extern "SDL2" {
-        function SDL_Init(int $flags): int;
+        function SDL_Init(u32 $flags): i32;
     }
     SDL_Init(0x20);
 }

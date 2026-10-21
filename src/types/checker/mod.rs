@@ -64,6 +64,8 @@ pub use inference::{infer_expr_type_syntactic, infer_return_type_syntactic};
 pub(crate) use loop_storage::loop_carried_storage_types;
 pub(crate) use inference::closure_body_uses_this;
 pub(crate) use builtin_types::InterfaceDeclInfo;
+pub(crate) use schema::normalize_signature_default_receivers;
+pub(crate) use schema::normalize_lexical_callable_default;
 pub(crate) use builtin_types::REFLECTION_CLASS_NAMES;
 use builtin_types::validate_magic_method_contracts;
 use schema::propagate_abstract_return_types;
@@ -248,6 +250,10 @@ pub(crate) struct Checker {
     pub declared_trait_methods: HashMap<String, HashMap<String, FunctionSig>>,
     /// Reflection-visible class constant names declared directly on each trait.
     pub declared_trait_constants: HashMap<String, HashSet<String>>,
+    /// Properties imported from traits, distinguished from directly declared class defaults.
+    pub trait_imported_properties: HashMap<String, HashSet<String>>,
+    /// Classes whose own flattened constructor was imported from a trait.
+    pub trait_imported_constructors: HashSet<String>,
     /// Name of the class currently being type-checked (used for `$this` resolution).
     pub current_class: Option<String>,
     /// Name of the current method being type-checked, when inside a class body.
@@ -694,7 +700,7 @@ pub(crate) struct SavedNarrowingOrigin {
 impl Checker {
     /// True when `name`'s current binding may be killed (by `unset`) or re-bound to an
     /// incompatible type (by assignment) at the current program point. See
-    /// `.plans/local-retype-and-strict-locals.md` — depth-0 + non-aliased rule.
+    /// `docs/php/types.md`, Local retyping: the depth-0 and non-aliased rule.
     ///
     /// A body that calls `eval()` anywhere answers `false` for EVERY name, so both the kill and
     /// the straight-line retype step aside there and the body keeps its pre-feature behaviour

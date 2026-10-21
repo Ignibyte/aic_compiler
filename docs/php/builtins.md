@@ -749,12 +749,16 @@ Browse by category: [Array](./builtins/array.md) · [Buffer](./builtins/buffer.m
 | [`ptr_read16()`](./builtins/pointer/ptr_read16.md) | `(pointer $pointer): int` | `int` | ✓ | ✓ |
 | [`ptr_read32()`](./builtins/pointer/ptr_read32.md) | `(pointer $pointer): int` | `int` | ✓ | ✓ |
 | [`ptr_read8()`](./builtins/pointer/ptr_read8.md) | `(pointer $pointer): int` | `int` | ✓ | ✓ |
+| [`ptr_read_f32()`](./builtins/pointer/ptr_read_f32.md) | `(pointer $pointer): float` | `float` | ✓ | ✓ |
+| [`ptr_read_f64()`](./builtins/pointer/ptr_read_f64.md) | `(pointer $pointer): float` | `float` | ✓ | ✓ |
 | [`ptr_read_string()`](./builtins/pointer/ptr_read_string.md) | `(pointer $pointer, int $length): string` | `string` | ✓ | ✓ |
 | [`ptr_set()`](./builtins/pointer/ptr_set.md) | `(pointer $pointer, mixed $value): void` | `void` | ✓ | ✓ |
 | [`ptr_sizeof()`](./builtins/pointer/ptr_sizeof.md) | `(string $type): int` | `int` | ✓ | ✓ |
 | [`ptr_write16()`](./builtins/pointer/ptr_write16.md) | `(pointer $pointer, int $value): void` | `void` | ✓ | ✓ |
 | [`ptr_write32()`](./builtins/pointer/ptr_write32.md) | `(pointer $pointer, int $value): void` | `void` | ✓ | ✓ |
 | [`ptr_write8()`](./builtins/pointer/ptr_write8.md) | `(pointer $pointer, int $value): void` | `void` | ✓ | ✓ |
+| [`ptr_write_f32()`](./builtins/pointer/ptr_write_f32.md) | `(pointer $pointer, mixed $value): void` | `void` | ✓ | ✓ |
+| [`ptr_write_f64()`](./builtins/pointer/ptr_write_f64.md) | `(pointer $pointer, mixed $value): void` | `void` | ✓ | ✓ |
 | [`ptr_write_string()`](./builtins/pointer/ptr_write_string.md) | `(pointer $pointer, string $string): int` | `int` | ✓ | ✓ |
 | [`zval_free()`](./builtins/pointer/zval_free.md) | `(pointer $zval): void` | `void` | ✓ | - |
 | [`zval_pack()`](./builtins/pointer/zval_pack.md) | `(mixed $value): pointer` | `pointer` | ✓ | - |
@@ -933,6 +937,7 @@ Browse by category: [Array](./builtins/array.md) · [Buffer](./builtins/buffer.m
 | [`str_word_count()`](./builtins/string/str_word_count.md) | `(string $string, int $format = 0, ?string $characters = null): array|int` | `array|int` | ✓ | ✓ |
 | [`strcasecmp()`](./builtins/string/strcasecmp.md) | `(string $string1, string $string2): int` | `int` | ✓ | ✓ |
 | [`strcmp()`](./builtins/string/strcmp.md) | `(string $string1, string $string2): int` | `int` | ✓ | ✓ |
+| [`strip_tags()`](./builtins/string/strip_tags.md) | `(string $string, array|string|null $allowed_tags = null): string` | `string` | ✓ | ✓ |
 | [`stripos()`](./builtins/string/stripos.md) | `(string $haystack, string $needle, int $offset = 0): mixed` | `mixed` | ✓ | ✓ |
 | [`stripslashes()`](./builtins/string/stripslashes.md) | `(string $string): string` | `string` | ✓ | ✓ |
 | [`strlen()`](./builtins/string/strlen.md) | `(string $string): int` | `int` | ✓ | ✓ |

@@ -2,7 +2,7 @@
 title: "iconv_mime_decode_headers()"
 description: "Decodes a block of MIME header fields into an associative array."
 sidebar:
-  order: 815
+  order: 818
 ---
 
 ## iconv_mime_decode_headers()

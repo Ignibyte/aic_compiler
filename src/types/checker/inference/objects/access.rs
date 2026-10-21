@@ -85,12 +85,22 @@ impl Checker {
             // No object class at all: surface the strict diagnostic.
             self.nullsafe_object_receiver(&obj_ty, expr, "property access")?;
         }
+        // A nested packed field is an embedded record: reading it yields the record's ADDRESS,
+        // typed exactly like a packed buffer element, so `$b[0]->pos->x` resolves the inner
+        // field from the outer one's compile-time offset.
+        let obj_ty = match obj_ty {
+            PhpType::Packed(class_name) => PhpType::Pointer(Some(class_name)),
+            other => other,
+        };
         if let PhpType::Pointer(Some(class_name)) = &obj_ty {
             if let Some(field_ty) = self.extern_field_type(class_name, property) {
                 return Ok(field_ty);
             }
             if let Some(field_ty) = self.packed_field_type(class_name, property) {
-                return Ok(field_ty);
+                return Ok(match field_ty {
+                    PhpType::Packed(inner) => PhpType::Pointer(Some(inner)),
+                    other => other,
+                });
             }
             if self.extern_classes.contains_key(class_name) {
                 return Err(CompileError::new(

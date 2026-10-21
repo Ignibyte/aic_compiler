@@ -16,7 +16,7 @@ use crate::parser::ast::{
 };
 use crate::span::Span;
 
-use super::{FunctionSig, PhpType};
+use super::{ExternAbiType, FunctionSig, PhpType};
 
 mod abstract_setters;
 
@@ -355,6 +355,8 @@ pub struct ClassInfo {
     pub property_offsets: HashMap<String, usize>,
     pub property_declaring_classes: HashMap<String, String>,
     pub defaults: Vec<Option<Expr>>,
+    /// A trait's unbound parent default fails only when this class initializes its properties.
+    pub deferred_property_default_error: Option<String>,
     pub property_visibilities: HashMap<String, Visibility>,
     /// PHP 8.4 asymmetric write (`set`) visibility, only for properties whose write visibility
     /// differs from their read visibility (e.g. `public private(set)`). Properties absent here
@@ -840,12 +842,16 @@ pub struct EnumInfo {
 pub struct ExternFunctionSig {
     pub name: String,
     pub params: Vec<(String, PhpType)>,
+    /// C ABI shape of each parameter, parallel to `params`.
+    pub abi_params: Vec<ExternAbiType>,
     pub return_type: PhpType,
+    /// C ABI shape of the return slot; decides how the return register is normalized.
+    pub abi_return: ExternAbiType,
     pub library: Option<String>,
 }
 
-/// Extern (FFI) class metadata with name, fields, total size, and field offsets
-/// for codegen to emit packed struct layout.
+/// Extern (FFI) class metadata: the C struct's fields in declaration order with their natural
+/// offsets, and `total_size`, the C `sizeof` (padded to the largest field alignment).
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ExternClassInfo {
@@ -854,14 +860,15 @@ pub struct ExternClassInfo {
     pub total_size: usize,
 }
 
-/// Extern (FFI) field metadata with name, PHP type, and offset into the
-/// containing extern class struct for codegen layout.
+/// Extern (FFI) field metadata: name, PHP-visible type, byte offset into the C struct, and the
+/// declared C shape (`abi`) that decides the access width, extension, and float precision.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ExternFieldInfo {
     pub name: String,
     pub php_type: PhpType,
     pub offset: usize,
+    pub abi: ExternAbiType,
 }
 
 /// Packed (non-nullable) class metadata with fields, total size, and per-field

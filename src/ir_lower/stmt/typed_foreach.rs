@@ -129,6 +129,12 @@ pub(in crate::ir_lower) fn coerce_typed_assign_value(
 ) -> LoweredValue {
     let target_ty = php_type.codegen_repr();
     let source_ty = ctx.builder.value_php_type(value.value).codegen_repr();
+    let value = if source_ty == PhpType::Int && php_type.coerces_integer_to_float() {
+        coerce_to_float(ctx, value, Some(span))
+    } else {
+        value
+    };
+    let source_ty = ctx.builder.value_php_type(value.value).codegen_repr();
     if source_ty == target_ty {
         return value;
     }

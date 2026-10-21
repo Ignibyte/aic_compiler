@@ -219,6 +219,47 @@ impl Checker {
         }
     }
 
+    /// Like `undo_kept_narrowings_since`, but returns the facts it undid that still held, each
+    /// local with the type the body left it, so a construct can keep the ones every path shares.
+    pub(crate) fn take_kept_narrowings_since(
+        &mut self,
+        mark: usize,
+        env: &mut TypeEnv,
+    ) -> Vec<crate::types::checker::KeptNarrowing> {
+        let held = self
+            .kept_narrowings
+            .get(mark..)
+            .unwrap_or_default()
+            .iter()
+            .filter(|kept| env.get(&kept.var) == Some(&kept.narrowed))
+            .cloned()
+            .collect();
+        self.undo_kept_narrowings_since(mark, env);
+        held
+    }
+
+    /// Re-applies the facts that every path reaching the end of a construct kept, and logs them
+    /// as kept by that construct, so an enclosing body can still undo them.
+    pub(crate) fn keep_facts_every_path_shares(
+        &mut self,
+        paths: &[Vec<crate::types::checker::KeptNarrowing>],
+        env: &mut TypeEnv,
+    ) {
+        let Some((first, rest)) = paths.split_first() else {
+            return;
+        };
+        for fact in first {
+            let shared = rest.iter().all(|path| {
+                path.iter()
+                    .any(|other| other.var == fact.var && other.narrowed == fact.narrowed)
+            });
+            if shared && env.get(&fact.var) != Some(&fact.narrowed) {
+                env.insert(fact.var.clone(), fact.narrowed.clone());
+                self.kept_narrowings.push(fact.clone());
+            }
+        }
+    }
+
     /// Synthetic `TypeEnv` key for a narrowed simple property access `$var->prop` (`None` for a
     /// more complex receiver). The `\x01` sigil bytes cannot appear in a real variable name, so
     /// this key never collides with a variable binding — a normal property read only picks it up

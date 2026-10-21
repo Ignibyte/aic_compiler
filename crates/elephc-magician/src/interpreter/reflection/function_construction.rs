@@ -222,7 +222,7 @@ pub(super) fn eval_reflection_native_function_parameters(
     let parameter_is_variadic = (0..parameter_count)
         .map(|index| function.param_variadic(index))
         .collect::<Vec<_>>();
-    eval_reflection_function_parameters(
+    let mut parameters = eval_reflection_function_parameters(
         function_name,
         &parameter_names,
         Vec::new(),
@@ -231,7 +231,16 @@ pub(super) fn eval_reflection_native_function_parameters(
         &parameter_defaults,
         &parameter_is_by_ref,
         &parameter_is_variadic,
-    )
+    );
+    for (index, parameter) in parameters.iter_mut().enumerate() {
+        if let Some(name) = function.param_default_constant_name(index) {
+            parameter.default_value_constant_name = Some(name.to_string());
+        }
+        if let Some(NativeCallableDefault::Expression { reflection_factory, .. }) = function.param_default(index) {
+            parameter.native_default_factory = *reflection_factory;
+        }
+    }
+    parameters
 }
 
 /// Converts registered native function parameter types into reflection metadata input.

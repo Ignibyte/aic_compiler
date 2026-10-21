@@ -180,6 +180,9 @@ fn print_immediate(out: &mut String, data: &DataPool, immediate: &Immediate) {
         Immediate::StringOffsetCast => {
             let _ = write!(out, " string_offset_cast");
         }
+        Immediate::ImplicitIntCast => {
+            let _ = write!(out, " implicit_int_cast");
+        }
         Immediate::Data(id) => {
             let _ = write!(out, " data[{}]", id.as_raw());
         }

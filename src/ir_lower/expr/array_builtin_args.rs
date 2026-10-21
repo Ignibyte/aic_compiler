@@ -117,6 +117,9 @@ pub(super) fn lower_builtin_call_args(
         Some(crate::builtins::semantics::BuiltinArgumentLowering::BareArrayValues { arg, sole }) => {
             lower_bare_array_values_operand(ctx, sig, args, operands, arg, sole)
         }
+        Some(crate::builtins::semantics::BuiltinArgumentLowering::WeakStringUnion { arg }) => {
+            lower_weak_string_union_operand(ctx, args, operands, arg)
+        }
         _ => operands,
     }
 }
@@ -278,6 +281,7 @@ fn lower_planned_builtin_call_args(
         | crate::builtins::semantics::BuiltinArgumentLowering::MaterializeDefaults
         | crate::builtins::semantics::BuiltinArgumentLowering::PreserveValues
         | crate::builtins::semantics::BuiltinArgumentLowering::BareArrayValues { .. }
+        | crate::builtins::semantics::BuiltinArgumentLowering::WeakStringUnion { .. }
     ) {
         if let Some(sig) = sig {
             if let Some(operands) = dynamic_spreads::lower_boxed_spread_args(ctx, sig, args, name,

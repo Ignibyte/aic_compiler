@@ -31,12 +31,17 @@ Physical source (.php or .lfc)
   -> opcache-prelude     inject OPcache declarations and a placeholder script manifest when used
   -> image-prelude      inject the image (GD/Exif/Imagick) prelude when used
   -> hash-prelude       inject the incremental HashContext/hash_* prelude when used
+  -> testing-prelude    inject the Elephc\Testing runtime when used (forced by elephc test)
   -> curl-prelude       inject the curl prelude when used
   -> xml-prelude        inject the XML/XMLWriter prelude when used
+  -> dom-html-prelude   inject the DOM HTML fragment-walker prelude when used
   -> web-prelude        inject the web runtime prelude with --web
   -> version-prelude    inject requested PHP version/SAPI surface functions
   -> name-resolve       apply namespace/use rules, canonicalize names
   -> autoload-run       run autoload insertion
+  -> (test-discovery)   find test classes and append the runner driver (elephc test)
+  -> dom-html-autoload-prelude discover DOM usage in newly autoloaded classes
+  -> testing-autoload-prelude discover testing runtime use in newly autoloaded classes
   -> object-cast-prelude inject stdClass declarations when object casts need them
   -> func-args          desugar func_num_args/get_args/get_arg to a hidden variadic
   -> opcache-manifest-bake complete and bake the post-autoload OPcache script manifest
@@ -80,11 +85,13 @@ Physical source (.php or .lfc)
   resolved, declarations are discovered, and demand-loaded PHP preludes for PDO,
   mysqli, timezone introspection, `DateTimeZone::listIdentifiers()`, `var_export()`,
   OPcache, image processing, incremental hash contexts, curl, XML/XMLWriter,
+  the [DOM HTML subset](../php/dom-html.md),
   object-cast `stdClass`, and the PHP version/SAPI surface are injected only
   when referenced. The web runtime
   prelude is injected
   with `--web`, and namespace/`use` rules rewrite references to fully-qualified
-  names. Autoloading is wired in around these steps.
+  names. After autoload insertion, DOM usage is checked again so newly loaded
+  classes receive the same declarations before type checking.
 - **func-args** — rewrites `func_num_args()`, `func_get_args()`, and
   `func_get_arg()` into a hidden variadic parameter plus ordinary PHP operations.
   This happens after autoloading but before manifest baking, optimization, and
@@ -131,7 +138,10 @@ behind a flag.
   chain fusion, constant folding,
   common-subexpression elimination,
   loop-invariant code motion, CFG-aware dead-instruction elimination, dead-store
-  elimination, branch simplification, and concat scratch-state optimization. In
+  elimination, branch simplification, and concat scratch-state optimization.
+  After the module fixed point, eligible self/mutual tail recursion becomes EIR
+  loops, scalar passes optimize those loops, and fresh numeric assignment
+  ownership is finalized without restarting representation-changing passes. In
   debug/test builds the function is re-validated after every pass. This phase
   can be turned off with [`--no-ir-opt`](optimization.md#eir-optimization-passes).
 - **ir-print** — only present with [`--emit-ir`](output-and-diagnostics.md#--emit-ir);

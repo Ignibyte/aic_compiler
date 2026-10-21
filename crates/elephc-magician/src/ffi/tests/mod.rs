@@ -194,6 +194,8 @@ fn native_object_default_push_arg(record: &mut Vec<u8>, arg: &NativeCallableObje
 /// Appends one object-default constructor argument value to a native parameter default record.
 fn native_object_default_push_arg_value(record: &mut Vec<u8>, value: &NativeCallableDefault) {
     match value {
+        NativeCallableDefault::DeferredError(_) | NativeCallableDefault::Expression { .. } =>
+            panic!("deferred defaults use dedicated registration"),
         NativeCallableDefault::ExecutablePath => {
             native_object_default_push_scalar(record, elephc_builtin_contract::EXECUTABLE_PATH_DEFAULT_KIND, 0)
         }

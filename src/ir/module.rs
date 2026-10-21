@@ -15,9 +15,10 @@ use crate::codegen::platform::Target;
 use crate::codegen::RuntimeFeatures;
 use crate::ir::function::{Function, FunctionId};
 use crate::ir::types::IrType;
-use crate::parser::ast::{ExprKind, Visibility};
+use crate::parser::ast::{Expr, ExprKind, Visibility};
 use crate::types::{
-    ClassInfo, EnumInfo, ExternClassInfo, FunctionSig, InterfaceInfo, PackedClassInfo, PhpType,
+    ClassInfo, EnumInfo, ExternAbiType, ExternClassInfo, FunctionSig, InterfaceInfo,
+    PackedClassInfo, PhpType,
 };
 
 /// Data-pool identifier shared by string, float, and name tables.
@@ -48,6 +49,8 @@ pub struct TraitMethodInfo {
     /// Position in the trait's declaration, independent of hash-map iteration order.
     pub declaration_order: usize,
     pub signature: FunctionSig,
+    /// Source defaults preserve lexical constant names after semantic defaults are normalized.
+    pub source_defaults: Vec<Option<Expr>>,
     pub visibility: Visibility,
     pub is_static: bool,
     pub is_final: bool,
@@ -210,6 +213,32 @@ impl Module {
         self.closures.push(function);
         id
     }
+
+    /// Returns whether any function-like body calls one typed PCNTL runtime operation.
+    ///
+    /// `pcntl_async_signals()` makes the backend dispatch pending signal handlers after every
+    /// instruction, so optimizations that assume no user code runs between two instructions
+    /// must check it module-wide.
+    pub(crate) fn uses_pcntl_runtime(&self, target: crate::ir::PcntlRuntime) -> bool {
+        self.functions
+            .iter()
+            .chain(self.class_methods.iter())
+            .chain(self.closures.iter())
+            .chain(self.fiber_wrappers.iter())
+            .chain(self.callback_wrappers.iter())
+            .chain(self.extern_callback_trampolines.iter())
+            .chain(self.runtime_callable_invokers.iter())
+            .any(|function| {
+                function.instructions.iter().any(|inst| {
+                    matches!(
+                        inst.immediate,
+                        Some(crate::ir::Immediate::RuntimeCall(
+                            crate::ir::RuntimeCallTarget::Pcntl(found)
+                        )) if found == target
+                    )
+                })
+            })
+    }
 }
 
 /// Deterministic literal/name pool used by IR immediates and printer output.
@@ -277,6 +306,8 @@ pub struct ExternDecl {
     pub params: Vec<ExternParamDecl>,
     pub return_type: IrType,
     pub return_php_type: PhpType,
+    /// Declared C shape of the return slot; drives register normalization after the call.
+    pub return_abi: ExternAbiType,
     pub link_libs: Vec<String>,
 }
 
@@ -286,6 +317,8 @@ pub struct ExternParamDecl {
     pub name: String,
     pub ir_type: IrType,
     pub php_type: PhpType,
+    /// Declared C shape of the parameter; narrow integers are extended by the caller.
+    pub abi: ExternAbiType,
 }
 
 /// Minimal class metadata table placeholder for Phase 02.

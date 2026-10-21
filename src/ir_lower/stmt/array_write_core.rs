@@ -99,7 +99,7 @@ pub(super) fn lower_array_assign(
     let update = desugared_element_update(value, span, |read| {
         reads_local_array_element(read, array, index)
     });
-    if matches!(&update, Some(ElementUpdate::Compound))
+    if matches!(&update, Some(ElementUpdate::Compound | ElementUpdate::IncDec { .. }))
         && crate::ir_lower::expr::lower_weak_map_incdec_stmt(ctx, value, span)
     {
         return;
@@ -120,6 +120,8 @@ pub(crate) enum ElementUpdate<'a> {
     /// A compound operator. The value already read the element, so the write reuses the key
     /// that read converted instead of diagnosing a float key a second time.
     Compound,
+    /// A captured static element uses the shared PHP string/null incdec rules.
+    IncDec { increment: bool },
     /// A null-coalescing assignment. `read` probes the element, and `default` is written only
     /// when that probe produced null, as PHP does.
     NullCoalesce { read: &'a Expr, default: &'a Expr },
@@ -146,6 +148,21 @@ pub(crate) fn desugared_element_update<'a>(
         ExprKind::BinaryOp { left, .. } if reads_target(left) => Some(ElementUpdate::Compound),
         ExprKind::NullCoalesce { value: read, default } if reads_target(read) => {
             Some(ElementUpdate::NullCoalesce { read, default })
+        }
+        ExprKind::Assignment { value, prelude, result_target: None, .. }
+            if matches!(prelude.len(), 1 | 2) => {
+            let StmtKind::Assign { name, value: read } = &prelude[0].kind else { return None; };
+            if !reads_target(read) { return None; }
+            let working = if let Some(copy) = prelude.get(1) {
+                let StmtKind::Assign { name: working, value: copy } = &copy.kind else { return None; };
+                if !matches!(&copy.kind, ExprKind::Variable(source) if source == name) { return None; }
+                working
+            } else { name };
+            match &value.kind {
+                ExprKind::PreIncrement(local) if local == working => Some(ElementUpdate::IncDec { increment: true }),
+                ExprKind::PreDecrement(local) if local == working => Some(ElementUpdate::IncDec { increment: false }),
+                _ => None,
+            }
         }
         _ => None,
     }
@@ -223,6 +240,16 @@ pub(crate) fn lower_array_assign_with_diagnosed_key(
         crate::ir_lower::ownership::release_if_owned(ctx, key, Some(index.span));
         return;
     }
+    if op == Op::ArraySet && index_value.ir_type == IrType::TaggedScalar {
+        // The mixed-key helper reads a boxed key. Preserve null's tag while
+        // adapting an inline nullable scalar, then retire the unconsumed box.
+        let key = ctx.box_value_as_mixed(index_value, PhpType::Mixed, Some(index.span));
+        lower_mixed_key_array_set(
+            ctx, array, array_value, key, value_value, span, key_already_diagnosed,
+        );
+        crate::ir_lower::ownership::release_if_owned(ctx, key, Some(index.span));
+        return;
+    }
     if op == Op::ArraySet
         && index_is_boxed_mixed_key(index_value.ir_type)
         && !index_is_foreach_int_key(ctx, index)
@@ -266,23 +293,35 @@ pub(crate) fn lower_array_assign_with_diagnosed_key(
         release_indexed_array_write_operand(ctx, elem_ty.as_ref(), value_value, span);
         return;
     }
+    // A function-local hash widens before a write of another value type (fork carry).
     let (array_value, updated_ty) = if op == Op::HashSet {
         prepare_assoc_array_local_set(ctx, array_value, value_value, span)
     } else {
         (array_value, None)
     };
-    ctx.emit_void(
-        op,
-        vec![array_value.value, index_value.value, value_value.value],
-        (op == Op::HashSet && key_already_diagnosed).then_some(Immediate::Bool(true)),
-        op.default_effects(),
-        Some(span),
+    lower_concrete_array_set_values(
+        ctx, array_value, index_value, value_value, span, key_already_diagnosed,
     );
     if let Some(updated_ty) = updated_ty {
         ctx.store_mutated_local(array, array_value, updated_ty, Some(span));
     }
-    release_persisted_string_operand(ctx, index_value, span);
-    release_persisted_string_operand(ctx, value_value, span);
+}
+
+/// Stores evaluated operands after concrete storage promotion and scalar coercion are complete.
+pub(super) fn lower_concrete_array_set_values(
+    ctx: &mut LoweringContext<'_, '_>, array: LoweredValue,
+    index: LoweredValue, value: LoweredValue, span: Span, key_already_diagnosed: bool,
+) {
+    let op = array_set_op(array.ir_type);
+    ctx.emit_void(
+        op,
+        vec![array.value, index.value, value.value],
+        (op == Op::HashSet && key_already_diagnosed).then_some(Immediate::Bool(true)),
+        op.default_effects(),
+        Some(span),
+    );
+    release_persisted_string_operand(ctx, index, span);
+    release_persisted_string_operand(ctx, value, span);
 }
 
 /// Roots and retires operands borrowed by the boxed writer, including on same-frame catches.

@@ -142,13 +142,18 @@ fn summarize_function(function: &Function, context: &RefinementContext<'_>) -> E
 
 /// Rewrites refinable instructions in one function to their final fixed-point effects.
 fn refine_function(function: &mut Function, context: &RefinementContext<'_>) {
+    // A packed field store is refined although `prop_set` is otherwise default-only.
     let refined = function
         .instructions
         .iter()
-        .map(|instruction| refined_instruction_effects(function, instruction, context))
+        .map(|instruction| {
+            let refinable = instruction.op.allows_effect_refinement()
+                || function.is_packed_field_access(instruction);
+            refinable.then(|| refined_instruction_effects(function, instruction, context))
+        })
         .collect::<Vec<_>>();
     for (instruction, effects) in function.instructions.iter_mut().zip(refined) {
-        if instruction.op.allows_effect_refinement() {
+        if let Some(effects) = effects {
             instruction.effects = effects;
         }
     }
@@ -167,6 +172,9 @@ fn refined_instruction_effects(
         }
         Op::MethodCall | Op::NullsafeMethodCall => {
             instance_call_effects(function, instruction, context).unwrap_or(instruction.effects)
+        }
+        Op::PropGet | Op::PropSet if function.is_packed_field_access(instruction) => {
+            instruction.op.packed_field_access_effects()
         }
         Op::PropGet | Op::NullsafePropGet => {
             named_property_effects(function, instruction, context).unwrap_or(instruction.effects)

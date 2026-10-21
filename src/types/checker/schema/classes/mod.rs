@@ -16,16 +16,28 @@ use crate::types::traits::FlattenedClass;
 use crate::types::ClassInfo;
 
 mod constants;
+mod enum_interfaces;
 mod interfaces;
 mod methods;
 mod properties;
+mod property_defaults;
 mod state;
+
+pub(crate) use property_defaults::validate_trait_property_defaults;
+pub(crate) use property_defaults::collect_trait_default_origins;
+pub(crate) use constants::validate_compile_time_default_in_scope;
+pub(crate) use constants::normalize_lexical_default_in_scope;
+pub(crate) use constants::normalize_free_function_default_in_scope;
 
 use super::super::Checker;
 use super::validation::build_constructor_param_map;
 use state::ClassBuildState;
 
 pub(super) use crate::types::{collect_attribute_args, collect_attribute_names};
+
+pub(crate) use enum_interfaces::{expand_enum_interfaces, validate_enum_interface_contracts};
+pub(super) use constants::resolve_lexical_class_value;
+pub(super) use methods::validate_method_shape;
 
 /// Recursively builds and registers `ClassInfo` for `class_name` and its inheritance chain.
 ///

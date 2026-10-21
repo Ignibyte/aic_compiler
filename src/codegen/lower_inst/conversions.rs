@@ -21,7 +21,7 @@ use super::{
     expect_operand,
     load_value_to_first_int_arg,
     lower_runtime_object_method_call, materialize_method_call_args_with_receiver_reg_and_refs,
-    mixed_method_candidates, predicates, store_if_result, strings,
+    mixed_method_candidates, output_values, predicates, store_if_result, strings,
 };
 use crate::codegen::{CodegenIrError, Result};
 
@@ -57,6 +57,9 @@ pub(super) fn lower_str_to_float(ctx: &mut FunctionContext<'_>, inst: &Instructi
 
 /// Lowers explicit scalar casts based on the target storage immediate and result PHP type.
 pub(super) fn lower_cast(ctx: &mut FunctionContext<'_>, inst: &Instruction) -> Result<()> {
+    if inst.immediate == Some(Immediate::ImplicitIntCast) {
+        return super::implicit_int_cast::lower(ctx, inst);
+    }
     match expect_cast_target(inst)? {
         IrType::I64 if inst.result_php_type == PhpType::Bool => predicates::lower_is_truthy(ctx, inst),
         IrType::I64 => lower_cast_to_int(ctx, inst),
@@ -207,9 +210,12 @@ pub(super) fn lower_cast_to_string(
             store_if_result(ctx, inst)
         }
         PhpType::Float => strings::lower_float_to_string(ctx, inst),
-        PhpType::Int | PhpType::Bool | PhpType::Void | PhpType::Never | PhpType::TaggedScalar => {
-            strings::lower_int_like_to_string(ctx, inst)
-        }
+        PhpType::Int
+        | PhpType::Bool
+        | PhpType::Void
+        | PhpType::Never
+        | PhpType::TaggedScalar
+        | PhpType::Pointer(_) => strings::lower_int_like_to_string(ctx, inst),
         PhpType::Mixed | PhpType::Union(_) => {
             emit_mixed_string_context_result(ctx, value)?;
             if let Some(result) = inst.result {
@@ -484,19 +490,16 @@ fn lower_object_to_string(
     class_name: &str,
 ) -> Result<()> {
     let normalized = class_name.trim_start_matches('\\');
-    if object_class_has_tostring(ctx, normalized) {
+    if output_values::interface_declares_tostring(ctx, normalized) {
+        let return_ty =
+            output_values::emit_object_tostring_call(ctx, expect_operand(inst, 0)?, normalized)?;
+        return super::array_access_runtime::store_runtime_object_call_result(ctx, inst, &return_ty);
+    }
+    if output_values::object_class_has_tostring(ctx, normalized) {
         return lower_runtime_object_method_call(ctx, inst, normalized, "__toString");
     }
     emit_missing_tostring_fatal(ctx, normalized);
     Ok(())
-}
-
-/// Returns true when class metadata exposes a `__toString()` method.
-fn object_class_has_tostring(ctx: &FunctionContext<'_>, class_name: &str) -> bool {
-    ctx.module
-        .class_infos
-        .get(class_name)
-        .is_some_and(|class_info| class_info.methods.contains_key("__tostring"))
 }
 
 /// Emits PHP's fatal diagnostic for object-to-string casts without `__toString()`.

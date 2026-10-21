@@ -2,7 +2,7 @@
 title: "xml_get_error_code()"
 description: "Returns the parser's last error code."
 sidebar:
-  order: 1012
+  order: 1014
 ---
 
 ## xml_get_error_code()

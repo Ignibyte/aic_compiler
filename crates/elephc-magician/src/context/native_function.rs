@@ -23,6 +23,7 @@ pub struct NativeFunction {
     pub(super) param_names: Vec<String>,
     pub(super) param_types: Vec<Option<EvalParameterType>>,
     pub(super) param_defaults: Vec<Option<NativeCallableDefault>>,
+    pub(super) param_default_constant_names: Vec<Option<String>>,
     pub(super) param_by_ref: Vec<bool>,
     pub(super) variadic_index: Option<usize>,
     pub(super) return_type: Option<EvalParameterType>,
@@ -46,6 +47,7 @@ impl NativeFunction {
             param_names: Vec::new(),
             param_types: Vec::new(),
             param_defaults: Vec::new(),
+            param_default_constant_names: Vec::new(),
             param_by_ref: Vec::new(),
             variadic_index: None,
             return_type: None,
@@ -125,6 +127,21 @@ impl NativeFunction {
     /// Returns the registered default for one parameter slot, if any.
     pub fn param_default(&self, index: usize) -> Option<&NativeCallableDefault> {
         self.param_defaults.get(index).and_then(Option::as_ref)
+    }
+
+    /// Records the source constant name without replacing its lazy executable default.
+    pub fn set_param_default_constant_name(&mut self, index: usize, name: String) -> bool {
+        if index >= self.param_count || self.param_default(index).is_none() || name.is_empty() {
+            return false;
+        }
+        self.param_default_constant_names.resize(self.param_count, None);
+        self.param_default_constant_names[index] = Some(name);
+        true
+    }
+
+    /// Returns the declared constant spelling even when evaluating its default raises Error.
+    pub fn param_default_constant_name(&self, index: usize) -> Option<&str> {
+        self.param_default_constant_names.get(index).and_then(Option::as_deref)
     }
 
     /// Records whether one positional callback parameter is by-reference.

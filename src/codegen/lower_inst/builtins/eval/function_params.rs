@@ -9,6 +9,25 @@
 
 use super::*;
 
+/// Keeps a default's source constant spelling separate from its normalized eval value.
+pub(super) fn register_eval_native_function_param_default_constant_name(
+    ctx: &mut FunctionContext<'_>, context_offset: usize, key: (&str, usize),
+    index: usize, name: Option<&str>,
+) {
+    let Some(name) = name else { return; };
+    let (label, len) = ctx.data.add_string(name.as_bytes());
+    load_eval_context_local_to_arg(ctx, context_offset, 0);
+    for (argument, label) in [(1, key.0), (4, label.as_str())] {
+        abi::emit_symbol_address(ctx.emitter, abi::int_arg_reg_name(ctx.emitter.target, argument), label);
+    }
+    for (argument, value) in [(2, key.1), (3, index), (5, len)] {
+        abi::emit_load_int_immediate(ctx.emitter,
+            abi::int_arg_reg_name(ctx.emitter.target, argument), value as i64);
+    }
+    let symbol = ctx.emitter.target.extern_symbol("__elephc_eval_register_native_function_param_default_constant_name");
+    abi::emit_call_label(ctx.emitter, &symbol);
+}
+
 /// Emits one native-function parameter-name registration call.
 pub(super) fn register_eval_native_function_param(
     ctx: &mut FunctionContext<'_>,

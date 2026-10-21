@@ -114,6 +114,7 @@ pub mod superglobals;
 pub mod synthetic_class;
 /// Termination and exit handling.
 pub mod termination;
+pub mod testing_prelude;
 /// Type system and checking.
 pub mod types;
 /// Conditionally-injected timezone-introspection prelude (extern + marshalling).

@@ -230,14 +230,24 @@ pub(super) fn check_nested_array_assign(
         return Err(CompileError::new(span, "Invalid assignment target"));
     };
 
-    let arr_ty = checker.infer_type_with_assignment_effects(array, env)?;
+    super::static_properties::promote_static_nested_write_root(checker, target, span)?;
+    let arr_ty = checker.infer_nested_write_parent_with_effects(array, env)?;
     checker.infer_type_with_assignment_effects(index, env)?;
-    checker.infer_type_with_assignment_effects(value, env)?;
+    if !nested_write_parent_can_promote(&arr_ty, array)
+        || !check_promoted_nested_update_value(checker, target, value, span, env)?
+    {
+        checker.infer_type_with_assignment_effects(value, env)?;
+    }
     match arr_ty {
         PhpType::Mixed => Ok(()),
+        PhpType::Array(_) | PhpType::AssocArray { .. } => Ok(()),
         PhpType::Str | PhpType::Bool | PhpType::False | PhpType::Int | PhpType::Float
             | PhpType::Resource(_) | PhpType::Void
             if matches!(array.kind, ExprKind::ArrayAccess { .. }) => Ok(()),
+        PhpType::Union(members)
+            if matches!(array.kind, ExprKind::ArrayAccess { .. })
+                && members.iter().all(|member| matches!(member,
+                    PhpType::Bool | PhpType::False | PhpType::Void)) => Ok(()),
         PhpType::Str => Err(CompileError::new(
             span,
             "String offset assignment is not supported",
@@ -251,6 +261,77 @@ pub(super) fn check_nested_array_assign(
             span,
             "Nested array assignment requires a Mixed or ArrayAccess target",
         )),
+    }
+}
+
+/// Returns whether a nested write parent may contain a promotable false or null.
+fn nested_write_parent_can_promote(parent: &PhpType, array: &Expr) -> bool {
+    if !matches!(array.kind, ExprKind::ArrayAccess { .. }) {
+        return false;
+    }
+    match parent {
+        // An earlier false/null ancestor is already inferred as Mixed in write context.
+        // Only recognized generated updates skip their ordinary read below.
+        PhpType::Mixed | PhpType::Bool | PhpType::False | PhpType::Void => true,
+        PhpType::Union(members) => members.iter().all(|member| matches!(member,
+            PhpType::Bool | PhpType::False | PhpType::Void)),
+        _ => false,
+    }
+}
+
+/// Checks only the user operand of a desugared update whose missing leaf reads as null.
+fn check_promoted_nested_update_value(
+    checker: &mut Checker,
+    target: &Expr,
+    value: &Expr,
+    span: Span,
+    env: &mut TypeEnv,
+) -> Result<bool, CompileError> {
+    if value.span != span {
+        return Ok(false);
+    }
+    match &value.kind {
+        ExprKind::BinaryOp { left, right, .. } if left.as_ref() == target => {
+            checker.infer_type_with_assignment_effects(right, env)?;
+            Ok(true)
+        }
+        ExprKind::NullCoalesce { value: read, default } if read.as_ref() == target => {
+            checker.infer_type_with_assignment_effects(default, env)?;
+            Ok(true)
+        }
+        ExprKind::Assignment { target: result, value, prelude, result_target: None, .. }
+            if matches!(prelude.len(), 1 | 2) =>
+        {
+            let crate::parser::ast::StmtKind::Assign { name, value: read } = &prelude[0].kind
+                else { return Ok(false); };
+            if read != target {
+                return Ok(false);
+            }
+            let working = if prelude.len() == 2 {
+                let crate::parser::ast::StmtKind::Assign { name: working, value: copy } = &prelude[1].kind
+                    else { return Ok(false); };
+                if !matches!(&copy.kind, ExprKind::Variable(source) if source == name) {
+                    return Ok(false);
+                }
+                working
+            } else {
+                name
+            };
+            if !matches!(&value.kind,
+                ExprKind::PreIncrement(local) | ExprKind::PreDecrement(local) if local == working)
+            {
+                return Ok(false);
+            }
+            let ExprKind::Variable(result) = &result.kind else { return Ok(false); };
+            // The write-context lookup supplies a boxed null for the missing leaf.
+            // Publish both captures without replaying an invalid read through false.
+            env.insert(name.clone(), PhpType::Mixed);
+            env.insert(working.clone(), PhpType::Mixed);
+            let result_type = checker.infer_type_with_assignment_effects(value, env)?;
+            env.insert(result.clone(), result_type);
+            Ok(true)
+        }
+        _ => Ok(false),
     }
 }
 

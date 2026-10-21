@@ -262,11 +262,87 @@ pub(super) fn emit_packed_field_store(
             }
             abi::emit_store_to_address(ctx.emitter, int_reg, base_reg, slot.offset);
         }
+        PhpType::Packed(record) => {
+            emit_packed_record_copy(ctx, value, record, slot.offset, base_reg)?;
+        }
         _ => {
             return Err(CodegenIrError::unsupported(format!(
                 "packed field store for PHP type {:?}",
                 slot.php_type
             )))
+        }
+    }
+    Ok(())
+}
+
+/// Copies a whole embedded record into a nested packed field.
+///
+/// `value` holds the address of a record of the same packed class (a buffer element, another
+/// nested field, or a `ptr<T>`); its `total_size` bytes are copied word by word into the field at
+/// `base_reg + field_offset`. Packed fields are all 8-byte words or nested packed records, so the
+/// size is always a multiple of 8. Like C struct assignment, the copy assumes the source and the
+/// destination are the same record or do not overlap. A `ptr<T>` source is null-checked first.
+/// The copy advances `base_reg`, the source register and two scratch registers; the store is the
+/// last thing the property write emits, so none of them is read afterwards.
+fn emit_packed_record_copy(
+    ctx: &mut FunctionContext<'_>,
+    value: crate::ir::ValueId,
+    record: &str,
+    field_offset: usize,
+    base_reg: &str,
+) -> Result<()> {
+    let size = ctx
+        .module
+        .packed_class_infos
+        .get(record.trim_start_matches('\\'))
+        .map(|info| info.total_size)
+        .ok_or_else(|| {
+            CodegenIrError::unsupported(format!("unknown packed record type {}", record))
+        })?;
+    // -- load the source record address and null-check a ptr<T> source --
+    let source_reg = abi::int_result_reg(ctx.emitter);
+    abi::emit_push_reg(ctx.emitter, base_reg);
+    ctx.load_value_to_reg(value, source_reg)?;
+    abi::emit_pop_reg(ctx.emitter, base_reg);
+    if matches!(ctx.value_php_type(value)?.codegen_repr(), PhpType::Pointer(_)) {
+        abi::emit_call_label(ctx.emitter, "__rt_ptr_check_nonnull");
+    }
+    let words = size / 8;
+    if words == 0 {
+        return Ok(());
+    }
+    let data_reg = abi::secondary_scratch_reg(ctx.emitter);
+    let count_reg = abi::tertiary_scratch_reg(ctx.emitter);
+    let loop_label = ctx.next_label("packed_record_copy");
+    if field_offset != 0 {
+        // -- point the destination at the nested record field --
+        abi::emit_load_int_immediate(ctx.emitter, count_reg, field_offset as i64);
+        match ctx.emitter.target.arch {
+            Arch::AArch64 => {
+                ctx.emitter.instruction(&format!("add {}, {}, {}", base_reg, base_reg, count_reg)); // point the destination at the nested record field
+            }
+            Arch::X86_64 => {
+                ctx.emitter.instruction(&format!("add {}, {}", base_reg, count_reg)); // point the destination at the nested record field
+            }
+        }
+    }
+    // -- copy the record one 8-byte word at a time --
+    abi::emit_load_int_immediate(ctx.emitter, count_reg, words as i64);
+    ctx.emitter.label(&loop_label);
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.emitter.instruction(&format!("ldr {}, [{}], #8", data_reg, source_reg)); // load the next source record word and advance the source
+            ctx.emitter.instruction(&format!("str {}, [{}], #8", data_reg, base_reg)); // store it into the nested field and advance the destination
+            ctx.emitter.instruction(&format!("subs {}, {}, #1", count_reg, count_reg)); // count down the record words still to copy
+            ctx.emitter.instruction(&format!("b.ne {}", loop_label));           // keep copying until the whole record is written
+        }
+        Arch::X86_64 => {
+            ctx.emitter.instruction(&format!("mov {}, QWORD PTR [{}]", data_reg, source_reg)); // load the next source record word
+            ctx.emitter.instruction(&format!("mov QWORD PTR [{}], {}", base_reg, data_reg)); // store it into the nested field
+            ctx.emitter.instruction(&format!("add {}, 8", source_reg));         // advance the source to the next record word
+            ctx.emitter.instruction(&format!("add {}, 8", base_reg));           // advance the destination to the next field word
+            ctx.emitter.instruction(&format!("sub {}, 1", count_reg));          // count down the record words still to copy
+            ctx.emitter.instruction(&format!("jne {}", loop_label));            // keep copying until the whole record is written
         }
     }
     Ok(())

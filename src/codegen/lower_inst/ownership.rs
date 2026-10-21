@@ -51,6 +51,9 @@ pub(super) fn lower_pop_call_operand_owner(ctx: &mut FunctionContext<'_>, inst: 
 pub(super) fn lower_acquire(ctx: &mut FunctionContext<'_>, inst: &Instruction) -> Result<()> {
     let value = expect_operand(inst, 0)?;
     let ty = ctx.load_value_to_result(value)?;
+    if crate::codegen::stack_numeric::is_stack_value(ctx.function, &ctx.numeric_cell_offsets, value) {
+        return store_if_result(ctx, inst);
+    }
     match ty {
         PhpType::Str => {
             abi::emit_call_label(ctx.emitter, "__rt_str_persist");
@@ -153,6 +156,14 @@ pub(super) fn lower_release(ctx: &mut FunctionContext<'_>, inst: &Instruction) -
 pub(super) fn release_value_if_owned(ctx: &mut FunctionContext<'_>, value: ValueId) -> Result<()> {
     let ownership = ctx.value_ownership(value)?;
     if !ownership.may_require_release() {
+        return Ok(());
+    }
+    if crate::codegen::stack_numeric::is_stack_value(ctx.function, &ctx.numeric_cell_offsets, value) {
+        return Ok(());
+    }
+    if crate::codegen::stack_numeric::numeric_local_read(ctx.function, &ctx.numeric_local_slots, value) {
+        ctx.load_value_to_result(value)?;
+        abi::emit_decref_if_refcounted(ctx.emitter, &PhpType::Mixed);
         return Ok(());
     }
     if value_is_scratch_string(ctx, value)? {

@@ -6,6 +6,7 @@
 //!
 //! Key details:
 //! - Preserves source-order evaluation, EIR typing, effects, and ownership contracts.
+//! - Construction and owned operands remain rooted across later expressions and hash writes.
 
 use super::*;
 
@@ -18,22 +19,31 @@ pub(super) fn lower_assoc_array_literal(ctx: &mut LoweringContext<'_, '_>, pairs
 pub(super) fn lower_assoc_array_literal_with_guard(
     ctx: &mut LoweringContext<'_, '_>, pairs: &[(Expr, Expr)], expr: &Expr, guarded: bool,
 ) -> LoweredValue {
+    let hash_ty = assoc_array_literal_type_for_ir(ctx, pairs, expr);
     let hash = ctx.emit_value(
         Op::HashNew,
         Vec::new(),
         Some(Immediate::Capacity(pairs.len() as u32)),
-        assoc_array_literal_type_for_ir(ctx, pairs, expr),
+        hash_ty.clone(),
         Op::HashNew.default_effects(),
         Some(expr.span),
     );
+    let owner = publish_constructed_container(ctx, hash, expr.span);
     if guarded { guard_descriptor_container(ctx, hash, expr.span); }
     for (key, value) in pairs {
-        let key = lower_expr(ctx, key);
-        let value = lower_expr(ctx, value);
+        let mut roots = Vec::new();
+        let key_value = lower_expr(ctx, key);
+        let key = root_array_literal_item(ctx, key_value, key.span, &mut roots);
+        let value_operand = lower_expr(ctx, value);
+        let value = root_array_literal_item(ctx, value_operand, value.span, &mut roots);
+        let hash = load_published_container(ctx, owner, hash_ty.clone(), expr.span);
         ctx.emit_void(Op::HashSet, vec![hash.value, key.value, value.value], None, Op::HashSet.default_effects(), Some(expr.span));
         if guarded { ctx.refresh_argument_array_guard(hash, expr.span); }
+        for slot in roots.into_iter().rev() {
+            retire_owned_call_operand(ctx, slot, expr.span);
+        }
     }
-    hash
+    take_published_container(ctx, owner, hash_ty, expr.span)
 }
 
 /// Returns the associative-array type for a literal that contains at least one associative
@@ -132,7 +142,7 @@ fn assoc_array_literal_value_type_for_ir_inner(
         return storage;
     }
     match &value.kind {
-        ExprKind::Null => PhpType::Mixed,
+        ExprKind::Null | ExprKind::Throw(_) => PhpType::Mixed,
         ExprKind::Cast {
             target: CastType::Array,
             expr: inner,

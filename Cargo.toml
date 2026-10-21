@@ -1,6 +1,6 @@
 [package]
 name = "elephc"
-version = "0.27.3"
+version = "0.27.4"
 edition = "2021"
 default-run = "elephc"
 description = "A PHP-to-native AOT compiler"
@@ -62,7 +62,7 @@ sha2 = "0.10"
 # protocol. Same rustls/ring pair the TLS bridge already pins, so the workspace
 # keeps one TLS stack and stays musl-friendly for the Docker test images.
 rustls = { version = "0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
-webpki-roots = "0.26"
+webpki-roots = "1.0.10"
 toml = "0.9"
 toml_edit = "0.25"
 tar = "0.4"

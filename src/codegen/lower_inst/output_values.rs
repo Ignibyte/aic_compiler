@@ -55,26 +55,51 @@ pub(super) fn emit_object_tostring_call(
     value: ValueId,
     class_name: &str,
 ) -> Result<PhpType> {
-    let target = resolve_method_call_target(ctx, class_name, "__toString", 1)?;
     let args = [value];
     let param_types = [PhpType::Object(class_name.to_string())];
     let ref_params = [false];
+    if interface_declares_tostring(ctx, class_name) {
+        // The receiver is only known by its interface: the implementing class's table
+        // selects the body, as `$value->__toString()` would.
+        let (interface_name, method_key, callee_sig) =
+            resolve_interface_call_signature(ctx, class_name, "__toString", 1)?;
+        let call_args =
+            materialize_direct_call_args_with_refs(ctx, &args, &param_types, &ref_params)?;
+        let caller_stack_pad_bytes = direct_call_stack_pad_bytes(ctx, call_args.overflow_bytes);
+        abi::emit_reserve_temporary_stack(ctx.emitter, caller_stack_pad_bytes);
+        iterators::emit_interface_dispatch_call(ctx, &interface_name, &method_key, None)?;
+        abi::emit_release_temporary_stack(ctx.emitter, caller_stack_pad_bytes);
+        abi::emit_release_temporary_stack(ctx.emitter, call_args.overflow_bytes);
+        emit_ref_arg_writebacks(ctx, &call_args)?;
+        return Ok(callee_sig.return_type);
+    }
+    let target = resolve_method_call_target(ctx, class_name, "__toString", 1)?;
     let call_args = materialize_direct_call_args_with_refs(ctx, &args, &param_types, &ref_params)?;
     let caller_stack_pad_bytes = direct_call_stack_pad_bytes(ctx, call_args.overflow_bytes);
     abi::emit_reserve_temporary_stack(ctx.emitter, caller_stack_pad_bytes);
-    emit_direct_resolved_method_call(ctx, &target)?;
+    // A subclass may override `__toString()`; the vtable selects the runtime class's body.
+    emit_resolved_method_call(ctx, &target)?;
     abi::emit_release_temporary_stack(ctx.emitter, caller_stack_pad_bytes);
     abi::emit_release_temporary_stack(ctx.emitter, call_args.overflow_bytes);
     emit_ref_arg_writebacks(ctx, &call_args)?;
     Ok(target.return_ty)
 }
 
-/// Returns true when class metadata exposes a `__toString()` method.
+/// Returns true when class or interface metadata exposes a `__toString()` method.
 pub(super) fn object_class_has_tostring(ctx: &FunctionContext<'_>, class_name: &str) -> bool {
     ctx.module
         .class_infos
         .get(class_name)
         .is_some_and(|class_info| class_info.methods.contains_key("__tostring"))
+        || interface_declares_tostring(ctx, class_name)
+}
+
+/// Returns true when `name` is an interface whose contract includes `__toString()`.
+pub(super) fn interface_declares_tostring(ctx: &FunctionContext<'_>, name: &str) -> bool {
+    ctx.module
+        .interface_infos
+        .get(name)
+        .is_some_and(|interface_info| interface_info.methods.contains_key("__tostring"))
 }
 
 /// Emits PHP's fatal diagnostic for object-to-string conversion without `__toString()`.

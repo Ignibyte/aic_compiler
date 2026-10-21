@@ -244,6 +244,10 @@ pub(in crate::interpreter) enum EvalValuesHook {
     PtrRead16,
     /// Dispatches `ptr_read32(...)`.
     PtrRead32,
+    /// Dispatches `ptr_read_f32(...)`.
+    PtrReadF32,
+    /// Dispatches `ptr_read_f64(...)`.
+    PtrReadF64,
     /// Dispatches `ptr_read_string(...)`.
     PtrReadString,
     /// Dispatches `ptr_set(...)`.
@@ -256,12 +260,18 @@ pub(in crate::interpreter) enum EvalValuesHook {
     PtrWrite16,
     /// Dispatches `ptr_write32(...)`.
     PtrWrite32,
+    /// Dispatches `ptr_write_f32(...)`.
+    PtrWriteF32,
+    /// Dispatches `ptr_write_f64(...)`.
+    PtrWriteF64,
     /// Dispatches `ptr_write_string(...)`.
     PtrWriteString,
     /// Dispatches by-value `settype(...)` callable calls.
     Settype,
     /// Dispatches `addslashes(...)` and `stripslashes(...)`.
     Slashes,
+    /// Dispatches `strip_tags(...)`.
+    StripTags,
     /// Dispatches `sin(...)`.
     Sin,
     /// Dispatches `sinh(...)`.
@@ -582,12 +592,16 @@ impl EvalValuesHook {
             Self::PtrRead8 => eval_ptr_read8_values_result(evaluated_args, values),
             Self::PtrRead16 => eval_ptr_read16_values_result(evaluated_args, values),
             Self::PtrRead32 => eval_ptr_read32_values_result(evaluated_args, values),
+            Self::PtrReadF32 => eval_ptr_read_f32_values_result(evaluated_args, values),
+            Self::PtrReadF64 => eval_ptr_read_f64_values_result(evaluated_args, values),
             Self::PtrReadString => eval_ptr_read_string_values_result(evaluated_args, values),
             Self::PtrSet => eval_ptr_set_values_result(evaluated_args, values),
             Self::PtrSizeof => eval_ptr_sizeof_values_result(evaluated_args, context, values),
             Self::PtrWrite8 => eval_ptr_write8_values_result(evaluated_args, values),
             Self::PtrWrite16 => eval_ptr_write16_values_result(evaluated_args, values),
             Self::PtrWrite32 => eval_ptr_write32_values_result(evaluated_args, values),
+            Self::PtrWriteF32 => eval_ptr_write_f32_values_result(evaluated_args, values),
+            Self::PtrWriteF64 => eval_ptr_write_f64_values_result(evaluated_args, values),
             Self::PtrWriteString => eval_ptr_write_string_values_result(evaluated_args, values),
             Self::Settype => eval_settype_values_result(evaluated_args, values),
             Self::Sin => one_arg(evaluated_args, values, eval_sin_result),
@@ -597,6 +611,7 @@ impl EvalValuesHook {
                 "stripslashes" => eval_stripslashes_result(value, values),
                 _ => Err(EvalStatus::RuntimeFatal),
             }),
+            Self::StripTags => eval_strip_tags_values_result(evaluated_args, context, values),
             Self::Sprintf => eval_sprintf_result(evaluated_args, context, values),
             Self::Sscanf => eval_sscanf_values_result(evaluated_args, values),
             Self::StringCase => one_arg(evaluated_args, values, |value, values| match name {

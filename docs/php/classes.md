@@ -286,7 +286,28 @@ Property type declarations are checked at compile time for both instance and sta
 
 An untyped property with no explicit default (`public $x;`, instance or static) is initialized to `null`, exactly like `public $x = null;` — matching PHP, where untyped properties are implicitly nullable. When later assignments give such a property a concrete scalar or array type, the slot keeps nullable storage (the same layout as a typed `?T` property) so the null default stays observable before the first write; heterogeneous assignments widen the slot to `mixed`. Assignments made inside the class's own constructor initialize the slot before any observable read, so those keep the precise inferred type.
 
-A named `Foo::class` is a compile-time string, so it can be a property default anywhere a string literal can: `public static string $handler = JsonHandler::class;`, or as an array value or key, as in `public array $map = [Square::class => 4]`. `self::class` and `parent::class` defaults are not supported yet (#1351).
+A named `Foo::class` is a compile-time string, so it can be a property default anywhere a string literal can: `public static string $handler = JsonHandler::class;`, or as an array value or key, as in `public array $map = [Square::class => 4]`. `self::class` and `parent::class` also work in instance, static, array, and promoted-constructor defaults. They bind to the declaring class and its parent, or to the consuming class for a trait, not to a later subclass or caller. Late-static `static::class` and `static::CONST` defaults are rejected.
+
+A trait consumer without a parent may be declared with a `parent::class` default. Ordinary or static property defaults then raise a catchable `Error` when the class initializes, including construction and static-property access. An imported method or promoted constructor parameter evaluates its default only when omitted, so passing that parameter explicitly remains valid. A directly declared `parent::class` property or method-parameter default with no parent is rejected at compile time. Ordinary `parent::CONST` defaults remain legal declarations even without a parent; materializing them raises `Cannot access "parent" when current class scope has no parent`, rather than the `Cannot use "parent"` diagnostic for class-name defaults.
+
+For static array compound writes, the eager right-hand side runs before an element
+read raises a deferred class-initialization `Error`, even with a literal index.
+A throwing right-hand side therefore wins over that deferred error. Coalescing
+assignment (`??=`) keeps its lazy right-hand side.
+
+Deferred accesses inside default arrays remain part of the surrounding expression.
+An untaken literal ternary or coalescing branch does not evaluate the failing access.
+For method and constructor parameters, an omitted nested default keeps its
+`catch (Error)` handler and releases earlier supplied temporaries on failure.
+Callback calls and native `ReflectionParameter` use the same lazy default tree;
+reflection reports its presence before `getDefaultValue()` evaluates it.
+
+`ReflectionProperty::hasDefaultValue()` preserves the presence of a deferred default. `getDefaultValue()` raises its catchable `Error` only when that particular default is materialized, without evaluating other properties in the class. This also applies to native property metadata accessed through `eval()`.
+
+Interface method parameters may also declare a lazy `parent::CONST` default:
+interfaces have no parent class scope, so `ReflectionParameter::getDefaultValue()`
+raises the same catchable missing-parent `Error`. Implementations may supply
+their own valid default without evaluating the interface's default.
 
 Property default values are applied both for the normal `new ClassName()` form and for dynamic `new $variable()` instantiation (and therefore for runtime-instantiated stream wrappers and stream filters). When the class name resolves to a known class, dynamic instantiation follows the same allocation path as direct construction, so constructor arguments are evaluated and `__construct` runs normally.
 
@@ -709,7 +730,7 @@ Rules:
 
 - `self` resolves to the class the member is declared in; `parent` resolves to that class's parent.
 - A method return declared as `static` binds to the receiver class or interface at each call site, including inherited methods and fluent chains.
-- Overrides and interface implementations must preserve a required late-bound `static`; replacing it with the current concrete class is rejected. Covariant narrowing such as `static|false` to `static` remains valid.
+- Overrides and interface implementations must preserve a required late-bound `static`; replacing it with the current concrete class is rejected for classes. Enums cannot be subclassed, so an enum's `self` return may satisfy a trait or interface requirement of `static`. Covariant narrowing such as `static|false` to `static` remains valid.
 - They are accepted in parameter, return, and property type positions, and may be combined with the nullable shorthand (`?self`) or unions (`self|null`).
 - Used inside a trait, `self` resolves to the using class and a return `static` remains late-bound within that class hierarchy.
 - Using `self`, `static`, or `parent` as a type outside of a class is rejected.
@@ -840,6 +861,8 @@ A dynamically-typed (`mixed`) argument — such as a `foreach` value or an untyp
 
 Enums may declare instance methods, static methods, constants, and an `implements` clause. Instance methods dispatch on the case singleton, so `$this` is the case:
 
+Trait constants are imported alongside trait methods. Reflection lists the enum's own cases and constants in declaration order, followed by imported trait constants. Instance and static methods retain their `final` modifiers. Enum methods cannot remain abstract, including abstract requirements imported from traits.
+
 ```php
 <?php
 interface HasLabel {
@@ -877,6 +900,19 @@ Rules:
 - Instance methods may use `$this` (the case), `match ($this)`, the case `$this->name`, the backing `$this->value`, and `self::CONST`.
 - Static methods dispatch like class static methods and can act as factories.
 - An enum can `implements` one or more interfaces and be used through them.
+- Calls through an enum interface bind runtime array unpacks against the selected
+  implementation's parameter names and defaults. Supplied values are type-checked
+  before later missing arguments, including static unpacks with numeric or named
+  keys. Source arrays run once, duplicate named keys keep their last value, and
+  binding stops at the first omitted required parameter. Named omissions are
+  diagnosed by the selected enum method at runtime rather than rejected before
+  argument side effects. Fractional key conversion is diagnosed only while
+  constructing the source array, not again when checking its supplied values.
+  Literal `false`, `iterable` and `callable` hints are checked before storage
+  conversion. Variadic diagnostics report the supplied argument's PHP position,
+  not the collector parameter's position or name. Named variadic entries preserve
+  their keys without increasing the positional argument count. A method's returned
+  reference remains usable after unpacking.
 - Enums can `use` traits that provide methods, including `insteadof` and `as`
   adaptations. Traits with properties are rejected because PHP enums cannot have
   properties.
@@ -1413,7 +1449,7 @@ echo ($instance instanceof Route) ? "yes" : "no";
 | `ReflectionClass::hasConstant()` | `new ReflectionClass($class_name)` | Return whether the reflected class-like symbol has the named class constant or enum case; lookup is case-sensitive |
 | `ReflectionClass::getConstant()` | `new ReflectionClass($class_name)` | Return the reflected constant value, enum case object, or `false` when no such constant is visible |
 | `ReflectionClass::getConstants()` | `new ReflectionClass($class_name)` | Return an associative array of visible constant values keyed by constant or enum-case name |
-| `ReflectionClass::getDefaultProperties()` | `new ReflectionClass($class_name)` | Return an associative array of supported materialized instance/static property defaults keyed by property name |
+| `ReflectionClass::getDefaultProperties()` | `new ReflectionClass($class_name)` | Return an associative array of supported materialized instance/static property defaults keyed by property name; deferred native property errors remain catchable inside eval instead of silently omitting the invalid slot |
 | `ReflectionClass::getStaticProperties()` | `new ReflectionClass($class_name)` | Return an associative array of supported materialized static property values keyed by property name |
 | `ReflectionClass::getStaticPropertyValue()` | `new ReflectionClass($class_name)` | Return a supported static property value, return the explicit default when the property is missing, or throw `ReflectionException` for supported missing-property lookups without a default |
 | `ReflectionClass::setStaticPropertyValue()` | `new ReflectionClass($class_name)` | Write a supported static property value |
@@ -1524,8 +1560,8 @@ echo ($instance instanceof Route) ? "yes" : "no";
 | `ReflectionProperty::hasType()` | `new ReflectionProperty($class_name, $property_name)` or `ReflectionClass::getProperty()` / `getProperties()` | Return whether the reflected property has a retained declared type |
 | `ReflectionProperty::getType()` | Same as `ReflectionProperty::hasType()` | Return a `ReflectionNamedType`, `ReflectionUnionType`, or `ReflectionIntersectionType` for supported property types, or `null` when no type is declared |
 | `ReflectionProperty::getSettableType()` | Same as `ReflectionProperty::hasType()` | Return the retained settable property type as a `ReflectionNamedType`, `ReflectionUnionType`, or `ReflectionIntersectionType`, or `null` when no type is declared; for the supported property surface this currently matches `getType()` |
-| `ReflectionProperty::hasDefaultValue()` | Same as `ReflectionProperty::hasType()` | Return whether the reflected property has a materialized default value; untyped concrete properties without an explicit initializer report PHP's implicit `null` default |
-| `ReflectionProperty::getDefaultValue()` | Same as `ReflectionProperty::hasDefaultValue()` | Return supported materialized property defaults, or `null` when no default is available |
+| `ReflectionProperty::hasDefaultValue()` | Same as `ReflectionProperty::hasType()` | Return whether the reflected property has a default, including deferred defaults; untyped concrete properties without an explicit initializer report PHP's implicit `null` default |
+| `ReflectionProperty::getDefaultValue()` | Same as `ReflectionProperty::hasDefaultValue()` | Materialize the selected property's supported default, raising its deferred `Error` if necessary, or return `null` when no default is available |
 | `ReflectionProperty::isInitialized()` | `new ReflectionProperty($class_name, $property_name)` or `ReflectionClass::getProperty()` for supported known properties; runtime-held static reflectors use the materialized declaring-class snapshot | Return whether a supported instance/static property slot is initialized without reading the property value |
 | `ReflectionProperty::getValue()` | `ReflectionProperty` for instance properties with an explicit object argument, inline `new ReflectionProperty($class_name, $property_name)` / `ReflectionClass::getProperty()` for known static properties, or runtime-held static reflectors backed by the declaring-class snapshot | Read supported instance/static property storage; positional and named arguments are normalized |
 | `ReflectionProperty::setValue()` | Instance reflectors with an explicit object/value argument, or inline/tracked known static property reflectors | Write supported instance/static property storage |

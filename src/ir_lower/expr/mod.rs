@@ -63,6 +63,7 @@ mod callable_tracking;
 mod callable_resolution;
 mod unset;
 mod array_builtin_args;
+mod weak_string_unions;
 mod builtin_special_args;
 mod call_arg_coercion;
 mod positional_spreads;
@@ -95,6 +96,11 @@ use reference_returns::{
 };
 mod property_fetch_for_write;
 mod method_calls;
+mod enum_interface_calls;
+mod enum_argument_guards;
+mod enum_method_args;
+mod enum_static_args;
+mod enum_ref_args;
 mod reflection_class_calls;
 mod reflection_method_calls;
 mod reflection_property_calls;
@@ -147,6 +153,7 @@ pub(in crate::ir_lower) fn instance_object_class_for_ir(
 }
 use unset::*;
 use array_builtin_args::*;
+use weak_string_unions::*;
 use builtin_special_args::*;
 use call_arg_coercion::*;
 use positional_spreads::*;
@@ -193,6 +200,8 @@ pub(crate) use call_operand_owners::{
     PinnedInFlightOwner,
 };
 pub(crate) use property_access::singular_object_class;
+pub(crate) use property_access::packed_receiver_class;
+pub(crate) use property_access::extern_receiver_class;
 pub(crate) use callable_tracking::{
     lower_callable_array_for_assignment, reflection_arg_array_binding_for_expr,
     reflection_class_binding_for_expr, reflection_function_binding_for_expr,
@@ -212,6 +221,7 @@ pub(crate) use array_access::{
 };
 pub(crate) use array_access_types::type_satisfies_array_access_for_ir;
 pub(crate) use assignments::lower_null_coalesce_update_stmt;
+pub(crate) use assignments::lower_null_coalesce_update_stmt_to;
 pub(crate) use weak_map_places::lower_weak_map_incdec_stmt;
 pub(crate) use weak_map_places::lower_weak_map_append;
 pub(crate) use weak_map_places::lower_weak_map_denied_append;
@@ -626,6 +636,9 @@ fn lower_initialized_static_property_isset(
     property: &str,
     arg: &Expr,
 ) -> LoweredValue {
+    if let Some(error) = crate::ir_lower::property_default_errors::for_receiver(ctx, receiver, arg.span) {
+        return error;
+    }
     let temp_name = ctx.declare_hidden_temp(PhpType::Bool);
     let uninitialized_block = ctx
         .builder
@@ -750,6 +763,9 @@ fn lower_initialized_static_property_empty(
     construct: &str,
     arg: &Expr,
 ) -> LoweredValue {
+    if let Some(error) = crate::ir_lower::property_default_errors::for_receiver(ctx, receiver, arg.span) {
+        return error;
+    }
     let temp_name = ctx.declare_hidden_temp(PhpType::Bool);
     let uninitialized_block = ctx
         .builder

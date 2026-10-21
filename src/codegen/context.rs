@@ -60,6 +60,8 @@ pub(crate) struct FunctionContext<'a> {
     pub(super) allocation: Allocation,
     pub(super) callee_saved_offsets: Vec<(&'static str, usize)>,
     local_offsets: HashMap<LocalSlotId, usize>,
+    pub(super) numeric_cell_offsets: HashMap<ValueId, usize>,
+    pub(super) numeric_local_slots: HashSet<LocalSlotId>,
     ref_cell_state_offsets: HashMap<LocalSlotId, usize>,
     local_analysis: LocalSlotAnalysis,
     callable_reachability: CallableReachabilityAnalysis,
@@ -107,6 +109,22 @@ impl<'a> FunctionContext<'a> {
             .map_or(-1, |class| class.class_id as i64)
     }
 
+    /// Packs source strictness into the existing framed invocation-scope word.
+    /// Weak calls keep legacy class ids and global -1; strict calls use -scope-3.
+    pub(super) fn callable_invocation_profile(&self) -> i64 {
+        let strict = self.current_inst.and_then(|id| self.function.instruction(id))
+            .filter(|inst| inst.op == Op::CallableDescriptorInvoke)
+            .and_then(|inst| inst.operands.get(2))
+            .and_then(|value| self.function.value(*value))
+            .and_then(|value| match value.def {
+                ValueDef::Instruction { inst, .. } => self.function.instruction(inst),
+                _ => None,
+            })
+            .is_some_and(|inst| inst.immediate == Some(Immediate::Bool(true)));
+        let scope = self.lexical_class_id();
+        if strict { -scope - 3 } else { scope }
+    }
+
     /// Creates a lowering context with finalized frame and value-placement metadata.
     pub(super) fn new(
         module: &'a Module,
@@ -152,6 +170,8 @@ impl<'a> FunctionContext<'a> {
             allocation: layout.allocation,
             callee_saved_offsets: layout.callee_saved_offsets,
             local_offsets: layout.local_offsets,
+            numeric_cell_offsets: layout.numeric_cell_offsets,
+            numeric_local_slots: layout.numeric_local_slots,
             ref_cell_state_offsets: layout.ref_cell_state_offsets,
             local_analysis: layout.local_analysis,
             callable_reachability,
@@ -1679,23 +1699,7 @@ pub(super) fn module_uses_pcntl_signal_handlers(module: &Module) -> bool {
 
 /// Scans every emitted function-like body for one typed PCNTL operation.
 fn module_uses_pcntl_operation(module: &Module, target: crate::ir::PcntlRuntime) -> bool {
-    module
-        .functions
-        .iter()
-        .chain(module.class_methods.iter())
-        .chain(module.closures.iter())
-        .chain(module.fiber_wrappers.iter())
-        .chain(module.callback_wrappers.iter())
-        .chain(module.extern_callback_trampolines.iter())
-        .chain(module.runtime_callable_invokers.iter())
-        .any(|function| {
-            function.instructions.iter().any(|inst| {
-                matches!(
-                    inst.immediate,
-                    Some(Immediate::RuntimeCall(RuntimeCallTarget::Pcntl(found))) if found == target
-                )
-            })
-        })
+    module.uses_pcntl_runtime(target)
 }
 
 /// Rejects local ref-cell operations whose frame representation spans multiple words.

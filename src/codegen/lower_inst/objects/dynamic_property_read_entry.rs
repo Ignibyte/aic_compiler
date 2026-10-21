@@ -216,6 +216,7 @@ pub(super) fn lower_const_dynamic_prop_get(
     let slot = resolve_property_slot(ctx, object, property, inst)?;
     let base_reg = abi::symbol_scratch_reg(ctx.emitter);
     ctx.load_value_to_reg(object, base_reg)?;
+    emit_typed_pointer_receiver_null_check(ctx, object, base_reg)?;
     let read_done = emit_property_read_state_guard(
         ctx,
         &slot,

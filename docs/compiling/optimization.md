@@ -438,6 +438,37 @@ finalization. The scalar passes run again on the new loops. It uses the same EIR
 branch lowering on every supported target and is disabled by `--no-ir-opt`.
 See `examples/tail-recursion/main.php` for Euclid and a deep mutual countdown.
 
+### Buffer loops
+
+With `--ir-opt` enabled, a loop over `buffer<T>` elements resolves the buffer
+handle once in front of the loop instead of at every `$b[$i]`, and the packed
+field accesses of one iteration share a single bounds-checked record address:
+
+```php
+function step(buffer<Particle> $p, int $count, float $dt): void {
+    for ($i = 0; $i < $count; $i++) {
+        $p[$i]->x = $p[$i]->x + $p[$i]->vx * $dt;
+    }
+}
+```
+
+Diagnostics are unchanged. A stale handle still dies with `use of buffer after
+buffer_free()` at the first access, an out-of-range index still dies with
+`buffer index out of bounds`, and a loop that never runs its body reports
+nothing. The loop must not be able to free, allocate or rebind a buffer: a
+`buffer_free()`, an assignment to the buffer variable, output, a warning, a
+throw, or a call to anything that may do one of those inside it keeps the
+ordinary per-access resolution, because user code could free the buffer through
+another handle. A call to a user function or method whose whole effect summary
+only reads state (or ends in a fatal error) does not block the rewrite.
+Generators, functions with `try`, dynamic `eval`, and programs that call
+`pcntl_async_signals()` are left alone.
+
+Packed field reads and writes are also known to be plain loads and stores, so
+the loop index and locals stored into packed fields stay in registers and no
+`concat_reset` is kept between statements. The rewrite is target-independent and
+disabled by `--no-ir-opt`. See `examples/buffer-loops/main.php`.
+
 ### Fresh Mixed assignment transfer
 
 `FreshMixedTransfer` (`src/ir_passes/fresh_mixed_transfer.rs`) is registered with
@@ -450,11 +481,13 @@ repetition stays inside the finalizer. The inliner and
 [checked-integer sinking](#checked-integer-sinking) have already finished.
 
 The finalizer removes a `MixedClone` of a fresh owned `ICheckedAdd`,
-`ICheckedSub`, or `ICheckedMul` result when that result is used only by the
+`ICheckedSub`, `ICheckedMul`, or dynamic `MixedNumericBinop` add/sub/mul result
+when that result is used only by the
 clone and by the next non-`nop` instruction in the same block, which must be
 the `Release` of the source. Uses of the clone result are redirected to the
 source, and the clone and that release become `nop`. The checked operation
-stays in place, including overflow-to-float promotion. Borrowed, acquired,
+stays in place, including overflow-to-float promotion and dynamic int/float
+representation. Dynamic power and other producers remain excluded. Borrowed, acquired,
 shared, and otherwise observed sources, and a release in another block, keep
 the copy.
 

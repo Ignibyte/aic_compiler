@@ -30,6 +30,11 @@ thread_local! {
 
 /// Runtime value hooks required by the EvalIR interpreter.
 pub trait RuntimeValueOps {
+    /// Boxes a borrowed persistent native callable descriptor for Reflection default factories.
+    fn native_callable_from_raw(&mut self, _descriptor: usize) -> Result<RuntimeCellHandle, EvalStatus> {
+        Err(EvalStatus::UnsupportedConstruct)
+    }
+
     /// Invokes a reviewed static operator adapter using PHP-visible arguments.
     /// Native implementations bind hidden physical parameters before entering the method.
     fn operator_static_call(&mut self, class: &str, method: &str, args: Vec<RuntimeCellHandle>) -> Result<RuntimeCellHandle, EvalStatus> {
@@ -1080,15 +1085,15 @@ pub trait RuntimeValueOps {
     fn flush(&mut self) -> Result<(), EvalStatus>;
 }
 
-pub(super) const EVAL_TAG_INT: u64 = 0;
-pub(super) const EVAL_TAG_STRING: u64 = 1;
-pub(super) const EVAL_TAG_FLOAT: u64 = 2;
-pub(super) const EVAL_TAG_BOOL: u64 = 3;
+pub(crate) const EVAL_TAG_INT: u64 = 0;
+pub(crate) const EVAL_TAG_STRING: u64 = 1;
+pub(crate) const EVAL_TAG_FLOAT: u64 = 2;
+pub(crate) const EVAL_TAG_BOOL: u64 = 3;
 pub(super) const EVAL_TAG_ARRAY: u64 = 4;
 pub(super) const EVAL_TAG_ASSOC: u64 = 5;
 pub(super) const EVAL_TAG_OBJECT: u64 = 6;
 pub(super) const EVAL_TAG_MIXED: u64 = 7;
-pub(super) const EVAL_TAG_NULL: u64 = 8;
+pub(crate) const EVAL_TAG_NULL: u64 = 8;
 pub(super) const EVAL_TAG_RESOURCE: u64 = 9;
 pub(super) const EVAL_TAG_CALLABLE: u64 = 10;
 pub(super) const EVAL_TAG_INVOKER_REF_CELL: u64 = 11;

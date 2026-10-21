@@ -346,7 +346,7 @@ pub fn emit_implode(emitter: &mut Emitter) {
     // heap magic marker, explicitly to let callers pass concat-buffer storage). The pointer is
     // captured BEFORE the copy loop, which post-increments x1 off the allocation base.
     emitter.instruction("str x1, [sp, #48]");                                   // record the persisted mixed-cast string to release once its bytes are copied
-    emitter.instruction("b __rt_implode_copy_value");                           // copy the cast string payload into the result buffer
+    emitter.instruction("b __rt_implode_copy_value");                           // grow for the actual converted length before copying arbitrary strings
 
     // -- raw scalar element arms: 8-byte payloads formatted in the reserved destination --
     //
@@ -609,12 +609,12 @@ fn emit_implode_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov rsi, r10");                                        // format directly in the reserved implode destination window
     emitter.instruction("call __rt_itoa_into");                                 // write decimal digits without using concat scratch
     emit_x86_64_scalar_copy_setup(emitter);
-    emitter.instruction("jmp __rt_implode_copy_value");                         // compact the right-aligned digits to the destination cursor
+    emitter.instruction("jmp __rt_implode_copy");                               // compact the right-aligned digits to the destination cursor
     emitter.label("__rt_implode_tagged_scalar_null_x");
     emitter.instruction("xor r8d, r8d");                                        // a null element contributes no source bytes
     emitter.instruction("xor r9d, r9d");                                        // publish the empty string length
     emitter.instruction("mov r10, QWORD PTR [rbp - 40]");                       // restore the current destination cursor
-    emitter.instruction("jmp __rt_implode_copy_value");                         // advance past the null element without reading a slot
+    emitter.instruction("jmp __rt_implode_copy");                               // advance past the null element without reading a slot
 
     emitter.label("__rt_implode_mixed_elem");
     // The cast FORMATS an int/float element straight into the scratch before implode can
@@ -646,7 +646,7 @@ fn emit_implode_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov r8, rax");                                         // move the cast string pointer into the copy-loop source register
     emitter.instruction("mov r9, rdx");                                         // move the cast string length into the copy-loop counter register
     emitter.instruction("mov r10, QWORD PTR [rbp - 40]");                       // reload the current concat-buffer destination cursor after casting
-    emitter.instruction("jmp __rt_implode_copy_value");                         // copy the cast string payload into the result buffer
+    emitter.instruction("jmp __rt_implode_copy_value");                         // grow for the actual converted length before copying arbitrary strings
 
     // -- raw scalar element arms: 8-byte payloads formatted in the reserved destination --
     //
@@ -659,7 +659,7 @@ fn emit_implode_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov rsi, r10");                                        // format directly in the reserved implode destination window
     emitter.instruction("call __rt_itoa_into");                                 // write decimal digits → rax=ptr, rdx=len
     emit_x86_64_scalar_copy_setup(emitter);
-    emitter.instruction("jmp __rt_implode_copy_value");                         // compact the right-aligned digits to the destination cursor
+    emitter.instruction("jmp __rt_implode_copy");                               // compact the right-aligned digits to the destination cursor
 
     emitter.label("__rt_implode_raw_float_elem");
     emit_x86_64_scalar_reserve(emitter, "raw_float");
@@ -667,7 +667,7 @@ fn emit_implode_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov rsi, r10");                                        // format directly in the reserved implode destination window
     emitter.instruction("call __rt_ftoa_into");                                 // write PHP's precision=14 text → rax=ptr, rdx=len
     emit_x86_64_scalar_copy_setup(emitter);
-    emitter.instruction("jmp __rt_implode_copy_value");                         // the text already sits at the destination cursor
+    emitter.instruction("jmp __rt_implode_copy");                               // the text already sits at the destination cursor
 
     // PHP stringifies bool as "1"/"" — NOT "1"/"0" — which is why false takes a zero-length
     // copy instead of going through the formatter at all.
@@ -681,7 +681,7 @@ fn emit_implode_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov rsi, r10");                                        // format directly in the reserved implode destination window
     emitter.instruction("call __rt_itoa_into");                                 // write the digit → rax=ptr, rdx=len
     emit_x86_64_scalar_copy_setup(emitter);
-    emitter.instruction("jmp __rt_implode_copy_value");                         // compact the single character to the destination cursor
+    emitter.instruction("jmp __rt_implode_copy");                               // compact the single character to the destination cursor
 
     emitter.label("__rt_implode_raw_bool_false_elem");
     emitter.instruction("xor r9, r9");                                          // a zero-length element copies nothing and still takes its glue
@@ -734,6 +734,29 @@ fn emit_implode_linux_x86_64(emitter: &mut Emitter) {
 mod tests {
     use super::*;
     use crate::codegen_support::platform::{Arch, Platform, Target};
+
+    /// Arbitrary Mixed conversion lengths pass the full copy-capacity guard on every target.
+    #[test]
+    fn test_implode_mixed_cast_checks_full_size_on_all_targets() {
+        for name in ["macos-aarch64", "ios-arm64", "ios-sim-arm64", "linux-aarch64", "linux-x86_64"] {
+            let target = Target::parse(name).unwrap();
+            let mut emitter = Emitter::new(target);
+            emit_implode(&mut emitter);
+            let assembly = emitter.output();
+            let (call, expected) = if target.arch == Arch::AArch64 {
+                ("bl __rt_implode_cast_string", "b __rt_implode_copy_value")
+            } else {
+                ("call __rt_implode_cast_string", "jmp __rt_implode_copy_value")
+            };
+            // The runtime also defines `__rt_implode_cast_string` before the implode body.
+            // Inspect the final call site, which is the Mixed-element invocation under test,
+            // rather than an internal call made by that helper's own implementation.
+            let after_cast = assembly.rsplit_once(call).unwrap().1;
+            let jump = after_cast.lines().map(str::trim).find(|line|
+                line.starts_with("b ") || line.starts_with("jmp ")).unwrap();
+            assert_eq!(jump, expected, "{name}: converted strings may exceed formatter headroom");
+        }
+    }
 
     /// Verifies the ARM64 implode emitter releases the persisted mixed-cast string:
     /// it records the cast pointer, guards borrowed slots, and frees owned temporaries

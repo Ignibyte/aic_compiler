@@ -236,6 +236,16 @@ impl PhpType {
         matches!(self, PhpType::Float)
     }
 
+    /// Reports whether an integer must widen to satisfy this declared numeric contract.
+    pub(crate) fn coerces_integer_to_float(&self) -> bool {
+        match self {
+            Self::Float => true,
+            Self::Union(members) => members.contains(&Self::Float)
+                && !members.iter().any(|member| matches!(member, Self::Int | Self::Mixed)),
+            _ => false,
+        }
+    }
+
     /// Returns true for heap values whose lifetime is tracked with runtime refcounts.
     pub fn is_refcounted(&self) -> bool {
         matches!(
@@ -247,6 +257,20 @@ impl PhpType {
                 | PhpType::Object(_)
                 | PhpType::Union(_)
         )
+    }
+
+    /// Returns whether `codegen_repr()` lowers this type to `TaggedScalar`, without building the
+    /// lowered type: the container guards below ask it of their element type, and lowering a
+    /// deeply nested array type (`[[[...]]]`) at every level cloned each subtree again.
+    fn lowers_to_tagged_scalar(&self) -> bool {
+        match self {
+            PhpType::TaggedScalar => true,
+            PhpType::Union(members) => {
+                crate::codegen::sentinels::null_repr_is_tagged()
+                    && nullable_int_union_members(members)
+            }
+            _ => false,
+        }
     }
 
     /// Lower high-level checker-only types to the runtime representation used by codegen.
@@ -263,8 +287,14 @@ impl PhpType {
             PhpType::Union(_) => PhpType::Mixed,
             // A hash entry has no `?int` payload (`TaggedScalar`): `hash_set` boxes such a value
             // into a Mixed cell, so the hash itself is Mixed-valued and reads unbox from there.
-            PhpType::AssocArray { key, value } if value.codegen_repr() == PhpType::TaggedScalar => {
+            PhpType::AssocArray { key, value } if value.lowers_to_tagged_scalar() => {
                 PhpType::AssocArray { key: key.clone(), value: Box::new(PhpType::Mixed) }
+            }
+            // The same holds for an indexed array's elements: a `?int` element is stored boxed,
+            // so a reader that only knows the array as `mixed` sees an int or a null, not raw
+            // payload words it would take for a string.
+            PhpType::Array(value) if value.lowers_to_tagged_scalar() => {
+                PhpType::Array(Box::new(PhpType::Mixed))
             }
             PhpType::False => PhpType::Bool,
             PhpType::Resource(_) => PhpType::Int,

@@ -377,7 +377,7 @@ pub(super) unsafe fn register_native_function_param_default_array_inner(
 /// # Safety
 /// `ctx` and `function_name_ptr` must be valid for their declared use; callers
 /// are the exported ABI wrappers above.
-pub(super) unsafe fn register_native_function_param_default_inner(
+pub(in crate::ffi) unsafe fn register_native_function_param_default_inner(
     ctx: *mut ElephcEvalContext,
     function_name_ptr: *const u8,
     function_name_len: u64,

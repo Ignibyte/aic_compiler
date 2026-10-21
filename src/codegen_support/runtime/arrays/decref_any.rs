@@ -6,6 +6,8 @@
 //! - `crate::codegen_support::runtime::emitters::emit_runtime()` via `crate::codegen_support::runtime::arrays`.
 //!
 //! Key details:
+//! - Packed integer arrays are not swept graph nodes, so even the final sweep must release
+//!   their real owners normally. Other graph children retain sweep-only suppression.
 //! - Decrement helpers are release paths for refcounted values and must balance recursive frees with GC cycle collection.
 
 use crate::codegen_support::{abi, emit::Emitter};
@@ -53,6 +55,11 @@ pub fn emit_decref_any(emitter: &mut Emitter) {
     emitter.instruction("and x13, x11, #0xff");                                 // isolate the low-byte heap kind tag
     emitter.instruction("cmp x13, #2");                                         // is this a refcounted indexed array?
     emitter.instruction("b.lo __rt_decref_any_dispatch");                       // strings should still be freed immediately
+    // -- integer leaves are released normally because the collector never sweeps them --
+    emitter.instruction("b.ne __rt_decref_any_graph_kind");                     // other heap kinds keep their existing graph classification
+    emitter.instruction("ubfx x14, x11, #8, #7");                               // isolate array value_type without the COW or collector flags
+    emitter.instruction("cbz x14, __rt_decref_any_dispatch");                   // packed integers cannot form cycles and still own their array buffer
+    emitter.label("__rt_decref_any_graph_kind");
     emitter.instruction(&format!("cmp x13, #{REFERENCE_CELL_HEAP_KIND}"));      // owned reference cells are collector graph nodes
     emitter.instruction("b.eq __rt_decref_any_graph_child");                    // apply sweep suppression to reference cells
     emitter.instruction("cmp x13, #6");                                         // is this within the refcounted array/hash/object/mixed/throwable range?
@@ -143,6 +150,14 @@ fn emit_decref_any_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("and r11d, 0xff");                                      // inspect the concrete heap kind
     emitter.instruction("cmp r11d, 2");                                         // strings and raw allocations are not swept graph nodes
     emitter.instruction("jb __rt_decref_any_dispatch");                         // release non-graph children through their ordinary helper
+    // -- integer leaves are released normally because the collector never sweeps them --
+    emitter.instruction("jne __rt_decref_any_graph_kind");                      // other heap kinds keep their existing graph classification
+    emitter.instruction("mov r11, r10");                                        // preserve the full header while selecting array storage
+    emitter.instruction("shr r11, 8");                                          // move the array value_type into the low bits
+    emitter.instruction("and r11d, 0x7f");                                      // exclude the persistent COW and transient collector flags
+    emitter.instruction("jz __rt_decref_any_dispatch");                         // packed integer arrays require ordinary refcount release
+    emitter.instruction("mov r11d, 2");                                         // restore the concrete kind before the existing graph-range test
+    emitter.label("__rt_decref_any_graph_kind");
     emitter.instruction("cmp r11d, 5");                                         // the collector directly reclaims array, hash, object, and Mixed nodes
     emitter.instruction("jbe __rt_decref_any_done");                            // never decrement already reclaimed or independently pinned doomed nodes
     emitter.instruction(&format!("cmp r11d, {REFERENCE_CELL_HEAP_KIND}"));      // owned reference cells are independently swept graph nodes
@@ -189,6 +204,61 @@ fn emit_decref_any_linux_x86_64(emitter: &mut Emitter) {
 
     emitter.label("__rt_decref_any_done");
     emitter.instruction("ret");                                                 // nothing to release for null, foreign, or unsupported heap kinds
+}
+
+#[cfg(test)]
+mod packed_integer_tests {
+    use super::*;
+    use crate::codegen_support::platform::Target;
+    use std::{fs, path::PathBuf, process::Command, time::{SystemTime, UNIX_EPOCH}};
+
+    /// Removes only this test's assembly and objects on success or assertion failure.
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        /// Cleans the isolated cross-assembly directory.
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+    }
+
+    /// Integer leaves retain normal ownership even while graph nodes suppress back-edge releases.
+    #[test]
+    fn packed_integer_leaf_sweep_release_all_targets() {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let dir = Scratch(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target")
+            .join(format!("integer-leaf-release-{}-{nonce}", std::process::id())));
+        fs::create_dir_all(&dir.0).unwrap();
+        let clang = Command::new("clang").arg("--version").output().is_ok();
+        for (name, triple) in [
+            ("macos-aarch64", "arm64-apple-macos11"), ("ios-arm64", "arm64-apple-ios13.0"),
+            ("ios-sim-arm64", "arm64-apple-ios13.0-simulator"),
+            ("linux-aarch64", "aarch64-linux-gnu"), ("linux-x86_64", "x86_64-linux-gnu"),
+        ] {
+            for pic in [false, true] {
+                let mut emitter = Emitter::new(Target::parse(name).unwrap());
+                emitter.pic_data_refs = pic;
+                emit_decref_any(&mut emitter);
+                let assembly = emitter.output();
+                let x86 = name == "linux-x86_64";
+                let mask = if x86 { "and r11d, 0x7f" } else { "ubfx x14, x11, #8, #7" };
+                let (_, gate) = assembly.split_once(mask).expect("integer storage gate");
+                let dispatch = if x86 { "jz __rt_decref_any_dispatch" }
+                    else { "cbz x14, __rt_decref_any_dispatch" };
+                assert!(gate.find(dispatch).unwrap() < gate.find("__rt_decref_any_graph_kind:\n").unwrap(),
+                    "{name}, PIC={pic}: integer leaf must bypass graph suppression");
+                assert!(assembly.contains(if x86 { "test r10, 0x10000" } else { "tst x11, x14" }),
+                    "{name}: ordinary graph-child reachability remains required");
+                if clang {
+                    let path = dir.0.join(format!("{name}-{pic}.s"));
+                    let prefix = if x86 { ".intel_syntax noprefix\n" } else { "" };
+                    fs::write(&path, format!(".text\n{prefix}{assembly}")).unwrap();
+                    let result = Command::new("clang").args(["-target", triple, "-c"]).arg(&path)
+                        .arg("-o").arg(path.with_extension("o")).output().unwrap();
+                    assert!(result.status.success(), "{name}, PIC={pic}: {}",
+                        String::from_utf8_lossy(&result.stderr));
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

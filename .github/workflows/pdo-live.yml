@@ -84,17 +84,17 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache Rust build state
-        uses: actions/cache@v6
+        # Dependencies only (registry, git checkouts, and the dependency
+        # artifacts under target/); the action prunes the workspace crates'
+        # own artifacts before saving. Caching the whole target/ dir put three
+        # 4 GB entries per platform plus every other job's into the repository's
+        # 10 GB allowance, so main's entries were evicted before the next run
+        # and every archive job compiled from scratch.
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2, 2026-08-06
         with:
-          path: |
-            ~/.cargo/git
-            ~/.cargo/registry
-            target
-          key: rust-pdo-live-core-${{ matrix.suite }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rust-pdo-live-core-${{ matrix.suite }}-
-            rust-pdo-live-core-
-            rust-pdo-live-
+          prefix-key: rust-deps-pdo-live-core-${{ matrix.suite }}
+          cache-bin: false
+          cache-on-failure: true
 
       - name: Install native test dependencies
         run: |
@@ -365,17 +365,17 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache Rust build state
-        uses: actions/cache@v6
+        # Dependencies only (registry, git checkouts, and the dependency
+        # artifacts under target/); the action prunes the workspace crates'
+        # own artifacts before saving. Caching the whole target/ dir put three
+        # 4 GB entries per platform plus every other job's into the repository's
+        # 10 GB allowance, so main's entries were evicted before the next run
+        # and every archive job compiled from scratch.
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2, 2026-08-06
         with:
-          path: |
-            ~/.cargo/git
-            ~/.cargo/registry
-            target
-          key: rust-pdo-live-drivers-${{ matrix.suite }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rust-pdo-live-drivers-${{ matrix.suite }}-
-            rust-pdo-live-drivers-
-            rust-pdo-live-
+          prefix-key: rust-deps-pdo-live-drivers-${{ matrix.suite }}
+          cache-bin: false
+          cache-on-failure: true
 
       - name: Install native test dependencies
         run: |

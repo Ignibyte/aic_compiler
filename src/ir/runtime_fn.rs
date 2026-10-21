@@ -443,12 +443,16 @@ pub enum RuntimeFnId {
     PtrRead16,
     PtrRead32,
     PtrRead8,
+    PtrReadF32,
+    PtrReadF64,
     PtrReadString,
     PtrSet,
     PtrSizeof,
     PtrWrite16,
     PtrWrite32,
     PtrWrite8,
+    PtrWriteF32,
+    PtrWriteF64,
     PtrWriteString,
     ZvalFree,
     ZvalPack,
@@ -725,6 +729,7 @@ pub enum RuntimeFnId {
     Strcmp,
     Strncasecmp,
     Strncmp,
+    StripTags,
     Stripos,
     Strpos,
     Strripos,
@@ -1233,7 +1238,7 @@ impl RuntimeFnId {
             // arbitrary PHP. Discarded calls must retain these observable effects.
             // I/O inside those callbacks is monitored at its own runtime boundary;
             // the join itself does not perform a network or blocking operation.
-            RuntimeFnId::Implode | RuntimeFnId::ArrayFlip => crate::ir::Effects::from_bits_retain(
+            RuntimeFnId::Implode | RuntimeFnId::ArrayFlip | RuntimeFnId::StripTags => crate::ir::Effects::from_bits_retain(
                 crate::ir::Effects::all().bits()
                     & !crate::ir::Effects::BLOCKING_IO.bits()
                     & !crate::ir::Effects::NETWORK_IO.bits(),
@@ -2600,6 +2605,10 @@ impl RuntimeFnId {
                 | RuntimeFnId::Strpos
                 | RuntimeFnId::Strripos
                 | RuntimeFnId::Strrpos
+                // `strip_tags()` publishes its concat reservation and then persists it before
+                // returning. Scratch results are copied, while a sole oversized reservation is
+                // adopted in place; either path hands the caller one fresh owned string.
+                | RuntimeFnId::StripTags
                 // `strtr()` writes into a reservation taken from `__rt_concat_reserve` and then
                 // copies the finished bytes into owned heap storage through `__rt_str_persist`,
                 // releasing the reservation afterwards, so the result is caller-owned and can
@@ -3029,12 +3038,16 @@ impl RuntimeFnId {
             RuntimeFnId::PtrRead16 => "ptr_read16",
             RuntimeFnId::PtrRead32 => "ptr_read32",
             RuntimeFnId::PtrRead8 => "ptr_read8",
+            RuntimeFnId::PtrReadF32 => "ptr_read_f32",
+            RuntimeFnId::PtrReadF64 => "ptr_read_f64",
             RuntimeFnId::PtrReadString => "ptr_read_string",
             RuntimeFnId::PtrSet => "ptr_set",
             RuntimeFnId::PtrSizeof => "ptr_sizeof",
             RuntimeFnId::PtrWrite16 => "ptr_write16",
             RuntimeFnId::PtrWrite32 => "ptr_write32",
             RuntimeFnId::PtrWrite8 => "ptr_write8",
+            RuntimeFnId::PtrWriteF32 => "ptr_write_f32",
+            RuntimeFnId::PtrWriteF64 => "ptr_write_f64",
             RuntimeFnId::PtrWriteString => "ptr_write_string",
             RuntimeFnId::ZvalFree => "zval_free",
             RuntimeFnId::ZvalPack => "zval_pack",
@@ -3235,6 +3248,7 @@ impl RuntimeFnId {
             RuntimeFnId::Strcmp => "strcmp",
             RuntimeFnId::Strncasecmp => "strncasecmp",
             RuntimeFnId::Strncmp => "strncmp",
+            RuntimeFnId::StripTags => "strip_tags",
             RuntimeFnId::Stripos => "stripos",
             RuntimeFnId::Strpos => "strpos",
             RuntimeFnId::Strripos => "strripos",
@@ -3365,6 +3379,7 @@ mod tests {
             RuntimeFnId::Strtotime,
             RuntimeFnId::Hrtime,
             RuntimeFnId::GraphemeStrrev,
+            RuntimeFnId::StripTags,
         ] {
             assert_eq!(target.result_ownership(), BuiltinResultOwnership::Fresh);
         }

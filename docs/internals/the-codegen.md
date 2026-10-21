@@ -275,8 +275,10 @@ Synthetic builtin Reflection classes are lowered from EIR reachability rather th
 fixed full surface in every native program. The EIR lowerer collects Reflection classes found in
 value types, object construction, static calls, and method-dispatch candidates, then adds their
 parents and implementation owners before lowering concrete methods and property-initializer
-thunks. Dynamic eval keeps the full Reflection surface because its class and method names can be
-resolved only at runtime.
+thunks. An eval whose source is known only at runtime keeps the full Reflection surface because
+its class and method names resolve only then; a literal eval fragment contributes exactly the
+Reflection classes its parsed source names (`ir_lower::program::eval_demand`), the same rule the
+DateTime alias surface and the AST reachability pass apply to it.
 
 Some Reflection getters materialize a new Reflection object into a `mixed` property slot instead
 of emitting an EIR object-construction operation. For those slots, the lowerer also includes the

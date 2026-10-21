@@ -36,6 +36,8 @@ When reporting a bug, please include as much information as possible:
 
 A minimal reproducible example is always appreciated.
 
+Security vulnerabilities are the exception: do not report them in a public issue. Follow [SECURITY.md](SECURITY.md) instead.
+
 ## Working locally
 
 Do your work on a dedicated branch — one branch per feature or fix — and prefer a

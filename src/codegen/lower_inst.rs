@@ -47,6 +47,7 @@ pub(super) use callable_argument_normalizer::emit_callable_argument_normalizer;
 pub(super) use callable_argument_normalizer::CALLABLE_ARGUMENT_NORMALIZER;
 mod comparisons;
 mod conversions;
+mod implicit_int_cast;
 mod enums;
 pub(super) mod exceptions;
 mod mixed_boundary_guard;
@@ -342,6 +343,9 @@ pub(super) fn lower_instruction(ctx: &mut FunctionContext<'_>, inst_id: InstId) 
         Op::BufferNew => buffers::lower_buffer_new(ctx, &inst),
         Op::BufferGet => buffers::lower_buffer_get(ctx, &inst),
         Op::BufferSet => buffers::lower_buffer_set(ctx, &inst),
+        Op::BufferResolve => buffers::lower_buffer_resolve(ctx, &inst),
+        Op::BufferGetResolved => buffers::lower_buffer_get_resolved(ctx, &inst),
+        Op::BufferSetResolved => buffers::lower_buffer_set_resolved(ctx, &inst),
         Op::ObjectNew => objects::lower_object_new(ctx, &inst),
         Op::ObjectCloneShallow => objects::lower_object_clone_shallow(ctx, &inst),
         Op::DynamicObjectNew => objects::lower_dynamic_object_new(ctx, &inst),

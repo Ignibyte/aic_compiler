@@ -74,12 +74,39 @@ pub(crate) fn lower_number_format(
     abi::emit_push_float_reg(ctx.emitter, abi::float_result_reg(ctx.emitter));
 
     push_decimal_count(ctx, inst)?;
+    round_staged_number_like_php(ctx);
     push_separator_byte(ctx, inst, 2, 46, false, "decimal separator")?;
     push_separator_byte(ctx, inst, 3, 44, true, "thousands separator")?;
     pop_number_format_args(ctx);
     abi::emit_call_label(ctx.emitter, "__rt_number_format");
     store_if_result(ctx, inst)
 }
+/// Rounds the staged number to the staged decimal count with `round()`'s HALF_UP rule.
+///
+/// PHP's `number_format()` calls `_php_math_round()` before it formats, so an exact binary
+/// tie such as `34.25` rounds away from zero (`34.3`) and `1.005` reaches `1.01`; `snprintf`
+/// alone rounds ties to even. Leaves the stack as it found it: the number under the count.
+fn round_staged_number_like_php(ctx: &mut FunctionContext<'_>) {
+    let int_reg = abi::int_result_reg(ctx.emitter);
+    let float_reg = abi::float_result_reg(ctx.emitter);
+    abi::emit_pop_reg(ctx.emitter, int_reg);
+    abi::emit_pop_float_reg(ctx.emitter, float_reg);
+    abi::emit_push_reg(ctx.emitter, int_reg);
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.emitter.instruction("mov x1, #1");                              // round with PHP_ROUND_HALF_UP; x0 already holds $decimals
+        }
+        Arch::X86_64 => {
+            ctx.emitter.instruction("mov rdi, rax");                            // pass $decimals as the round precision
+            ctx.emitter.instruction("mov esi, 1");                              // round with PHP_ROUND_HALF_UP
+        }
+    }
+    abi::emit_call_label(ctx.emitter, "__rt_round_mode");
+    abi::emit_pop_reg(ctx.emitter, int_reg);
+    abi::emit_push_float_reg(ctx.emitter, float_reg);
+    abi::emit_push_reg(ctx.emitter, int_reg);
+}
+
 /// Pushes the explicit or default decimal-count argument.
 pub(super) fn push_decimal_count(ctx: &mut FunctionContext<'_>, inst: &Instruction) -> Result<()> {
     if inst.operands.len() >= 2 {
@@ -188,7 +215,7 @@ pub(super) fn pop_number_format_args(ctx: &mut FunctionContext<'_>) {
     }
 }
 
-/// Loads a concrete scalar value as a floating-point runtime argument.
+/// Loads a scalar or boxed `Mixed` value as a floating-point runtime argument.
 pub(super) fn load_as_float(ctx: &mut FunctionContext<'_>, value: ValueId, name: &str) -> Result<()> {
     match ctx.load_value_to_result(value)?.codegen_repr() {
         PhpType::Float => Ok(()),
@@ -203,6 +230,17 @@ pub(super) fn load_as_float(ctx: &mut FunctionContext<'_>, value: ValueId, name:
         }
         PhpType::Str => {
             abi::emit_call_label(ctx.emitter, "__rt_str_to_number");
+            Ok(())
+        }
+        PhpType::TaggedScalar => {
+            crate::codegen::sentinels::emit_tagged_scalar_to_int_null_as_zero(ctx.emitter);
+            abi::emit_int_result_to_float_result(ctx.emitter);
+            Ok(())
+        }
+        // An element of an untyped array, or `$list[$i] ?? 0`, arrives boxed.
+        PhpType::Mixed | PhpType::Union(_) => {
+            load_value_to_first_int_arg(ctx, value)?;
+            abi::emit_call_label(ctx.emitter, "__rt_mixed_cast_float");
             Ok(())
         }
         other => Err(CodegenIrError::unsupported(format!(
@@ -267,7 +305,8 @@ pub(crate) fn emit_weak_float_result_to_int(
 /// Jumps to `not_representable` for `NaN`, the infinities, and anything outside the PHP int
 /// range, which php-src refuses rather than wrapping. Otherwise it emits PHP 8.5's
 /// `Implicit conversion from float ... to int loses precision` deprecation when truncation is
-/// lossy and falls through, leaving the conversion itself to the caller.
+/// lossy and falls through, leaving final storage materialization to the caller.
+/// The accepted integer is restored in the integer-result register after diagnostic handlers.
 ///
 /// Split out of `emit_weak_float_result_to_int` so the typed-property guard raises its OWN
 /// `TypeError` wording for an unrepresentable float instead of a builtin-argument one, while
@@ -305,6 +344,11 @@ pub(crate) fn emit_float_result_int_coercion_diagnostics(
     }
     emit_float_precision_deprecation(ctx);
     ctx.emitter.label(&exact);
+    abi::emit_load_temporary_stack_slot(
+        ctx.emitter,
+        abi::int_result_reg(ctx.emitter),
+        FLOAT_TO_INT_VALUE_OFFSET,
+    );
     abi::emit_release_temporary_stack(ctx.emitter, FLOAT_TO_INT_FRAME_BYTES);
     abi::emit_jump(ctx.emitter, &done);
     ctx.emitter.label(&invalid);

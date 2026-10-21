@@ -36,6 +36,47 @@ fn test_error_buffer_new_rejects_union_element_type() {
     );
 }
 
+/// Verifies a packed class reusing an ordinary class name (case-insensitively) is still a
+/// duplicate now that packed classes are registered before the class schema pass.
+#[test]
+fn test_error_packed_class_reusing_class_name_is_duplicate() {
+    expect_error(
+        "<?php class Vec2 {} packed class vec2 { public float $x; }",
+        "Duplicate packed class declaration: vec2",
+    );
+}
+
+/// Verifies an extern class reusing an ordinary class name (case-insensitively) is still a
+/// duplicate now that extern classes are registered before the class schema pass.
+#[test]
+fn test_error_extern_class_reusing_class_name_is_duplicate() {
+    expect_error(
+        "<?php class Point {} extern class point { public int $x; }",
+        "Duplicate class declaration: point",
+    );
+}
+
+/// Verifies a packed class reusing an enum name is still a duplicate: enums are only
+/// pre-declared when the packed prescan runs.
+#[test]
+fn test_error_packed_class_reusing_enum_name_is_duplicate() {
+    expect_error(
+        "<?php enum Mode { case A; } packed class Mode { public int $x; }",
+        "Duplicate packed class declaration: Mode",
+    );
+}
+
+/// Verifies a packed class reusing a builtin enum name keeps the builtin redeclaration
+/// diagnostic: the packed prescan sees builtin enum names as pointer targets only, not as
+/// pre-declared classes that would report a packed duplicate instead.
+#[test]
+fn test_error_packed_class_reusing_builtin_enum_name_reports_builtin_redeclaration() {
+    expect_error(
+        "<?php packed class SortDirection { public int $x; }",
+        "Cannot redeclare built-in type: SortDirection",
+    );
+}
+
 /// Verifies that a packed class with a nullable field (?int) is rejected.
 #[test]
 fn test_error_packed_class_rejects_nullable_field() {
@@ -80,6 +121,69 @@ fn test_error_buffer_packed_element_requires_field_assignment() {
     expect_error(
         "<?php packed class Vec2 { public float $x; public float $y; } buffer<Vec2> $points = buffer_new<Vec2>(1); $points[0] = 1;",
         "Assign packed buffer elements through field access like $buf[$i]->field",
+    );
+}
+
+/// Verifies a nested packed field rejects a scalar where a whole record is expected.
+#[test]
+fn test_error_nested_packed_field_rejects_scalar_record_assignment() {
+    expect_error(
+        "<?php packed class Vec2 { public float $x; public float $y; } packed class Body { public Vec2 $pos; } $b = buffer_new<Body>(1); $b[0]->pos = 5;",
+        "cannot assign int to packed field Body::pos of type Vec2; a nested packed field takes a Vec2 record",
+    );
+}
+
+/// Verifies a nested packed field rejects a record of a different packed class.
+#[test]
+fn test_error_nested_packed_field_rejects_other_record_class() {
+    expect_error(
+        "<?php packed class Vec2 { public float $x; public float $y; } packed class Other { public float $x; public float $y; } packed class Body { public Vec2 $pos; } $b = buffer_new<Body>(1); $o = buffer_new<Other>(1); $b[0]->pos = $o[0];",
+        "cannot assign ptr<Other> to packed field Body::pos of type Vec2",
+    );
+}
+
+/// Verifies a packed class that embeds itself has no finite layout and is reported.
+#[test]
+fn test_error_packed_class_embedding_itself_is_rejected() {
+    expect_error(
+        "<?php packed class Node { public int $value; public Node $next; }",
+        "Packed class Node embeds itself through its packed class fields",
+    );
+}
+
+/// Verifies packed classes that embed each other in a cycle are reported.
+#[test]
+fn test_error_packed_classes_embedding_each_other_are_rejected() {
+    expect_error(
+        "<?php packed class A { public B $b; } packed class B { public A $a; }",
+        "Packed class A embeds itself through its packed class fields",
+    );
+}
+
+/// Verifies reading an undefined field of a nested record names the inner packed class.
+#[test]
+fn test_error_nested_packed_field_read_of_undefined_inner_field() {
+    expect_error(
+        "<?php packed class Vec2 { public float $x; public float $y; } packed class Body { public Vec2 $pos; } $b = buffer_new<Body>(1); echo $b[0]->pos->z;",
+        "Undefined packed field: Vec2::z",
+    );
+}
+
+/// Verifies writing an undefined field of a nested record names the inner packed class.
+#[test]
+fn test_error_nested_packed_field_write_of_undefined_inner_field() {
+    expect_error(
+        "<?php packed class Vec2 { public float $x; public float $y; } packed class Body { public Vec2 $pos; } $b = buffer_new<Body>(1); $b[0]->pos->z = 1.0;",
+        "Undefined packed field: Vec2::z",
+    );
+}
+
+/// Verifies a nested record's scalar field keeps the packed field type check.
+#[test]
+fn test_error_nested_packed_inner_field_type_mismatch() {
+    expect_error(
+        "<?php packed class Vec2 { public float $x; public float $y; } packed class Body { public Vec2 $pos; } $b = buffer_new<Body>(1); $b[0]->pos->x = \"far\";",
+        "cannot assign string to packed field Vec2::x of type float",
     );
 }
 
@@ -152,6 +256,87 @@ fn test_error_extern_unknown_type() {
     expect_error(
         "<?php extern function foo(badtype $x): int;",
         "Unknown C type: badtype",
+    );
+}
+
+/// Verifies that a C integer width elephc does not know is rejected like any other unknown C type.
+#[test]
+fn test_error_extern_unknown_int_width() {
+    expect_error(
+        "<?php extern function foo(i128 $x): int;",
+        "Unknown C type: i128",
+    );
+}
+
+/// Verifies that a `string` value cannot be stored into an extern class `f32` field: float fields
+/// take a float or an int, nothing else.
+#[test]
+fn test_error_extern_float_field_rejects_string_value() {
+    expect_error(
+        "<?php extern class FRect { public f32 $x; } $r = ptr_cast<FRect>(ptr_null()); $r->x = \"wide\";",
+        "cannot assign Str to extern field FRect::x of type Float",
+    );
+}
+
+/// Verifies that an extern function with more than eight integer arguments is rejected, whatever
+/// widths they declare: this cap is what keeps every AArch64 extern argument in a register, so
+/// Apple's natural-size stack packing of narrow arguments never applies.
+#[test]
+fn test_error_extern_rejects_more_than_eight_integer_arguments() {
+    expect_error(
+        "<?php extern function nine(i32 $a, i32 $b, i32 $c, i32 $d, i32 $e, i32 $f, i32 $g, i32 $h, i32 $i): i32;",
+        "exceeds supported ARM64 register ABI limits",
+    );
+}
+
+/// Verifies that `ptr_write_f32()` rejects a statically non-numeric value.
+#[test]
+fn test_error_ptr_write_f32_rejects_string_value() {
+    expect_error(
+        "<?php $x = 1; $p = ptr($x); ptr_write_f32($p, \"oops\");",
+        "ptr_write_f32() value must be float",
+    );
+}
+
+/// Verifies that `ptr_read_f64()` rejects a non-pointer argument.
+#[test]
+fn test_error_ptr_read_f64_rejects_int_argument() {
+    expect_error("<?php echo ptr_read_f64(42);", "ptr_read_f64()");
+}
+
+/// Verifies that an `int` cannot be stored into a one-byte extern `bool` field without a cast.
+#[test]
+fn test_error_extern_bool_field_rejects_int_value() {
+    expect_error(
+        "<?php extern class Key { public bool $down; } $k = ptr_cast<Key>(ptr_null()); $k->down = 1;",
+        "cannot assign Int to extern field Key::down of type Bool",
+    );
+}
+
+/// Verifies that a callable cannot be an extern class field: it has no C struct layout.
+#[test]
+fn test_error_extern_class_callable_field() {
+    expect_error(
+        "<?php extern class Bad { callable $field; }",
+        "Extern class 'Bad' field $field uses an unsupported type",
+    );
+}
+
+/// Verifies that a float width elephc does not know is rejected like any other unknown C type.
+#[test]
+fn test_error_extern_unknown_float_width() {
+    expect_error(
+        "<?php extern function foo(f16 $x): int;",
+        "Unknown C type: f16",
+    );
+}
+
+/// Verifies that explicit C integer widths are rejected on extern globals.
+#[test]
+fn test_error_extern_global_rejects_int_width() {
+    expect_error(
+        "<?php extern global u8 $flag;",
+        "Extern global $flag uses an explicit C width",
     );
 }
 

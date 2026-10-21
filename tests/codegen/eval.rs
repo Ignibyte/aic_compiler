@@ -14,6 +14,7 @@
 use crate::support::*;
 
 mod json_enums;
+mod literal_catalog;
 
 /// Asserts an eval failure stayed inside the C ABI/error-status contract.
 fn assert_no_rust_panic_leaked(stderr: &str) {
@@ -5495,6 +5496,31 @@ echo defined("COUNT_RECURSIVE") ? "C" : "bad";');
     assert_eq!(out, "4:2:3:6:2:3:C");
 }
 
+/// Verifies the eval float pointer builtins store the exact double: a value with 17 significant
+/// digits survives `ptr_write_f64()`/`ptr_read_f64()` inside `eval()` bit for bit (the eval runtime
+/// must read the float payload, not its 14-digit string form), `ptr_write_f32()` rounds to the
+/// same single compiled code produces, and an int value is converted. Identity comparisons keep
+/// the check independent of how `var_dump()` formats floats.
+#[test]
+fn test_eval_float_pointer_builtins_keep_full_precision() {
+    let out = compile_and_run(
+        r#"<?php
+echo eval('$buf = buffer_new(4);
+$payload = ptr_offset($buf, 16);
+ptr_write_f64($payload, 1.2345678901234567);
+var_dump(ptr_read_f64($payload) === 1.2345678901234567);
+ptr_write_f32($payload, 1.2345678901234567);
+var_dump(ptr_read_f32($payload) === 1.2345678806304932);
+$three = 3;
+ptr_write_f64($payload, $three);
+var_dump(ptr_read_f64($payload) === 3.0);
+buffer_free($buf);
+return "";');
+"#,
+    );
+    assert_eq!(out, "bool(true)\nbool(true)\nbool(true)\n");
+}
+
 /// Verifies eval can dispatch raw pointer and buffer extension builtins through the bridge.
 #[test]
 fn test_eval_dispatches_raw_memory_builtins() {
@@ -7137,6 +7163,22 @@ echo ":"; echo function_exists("html_entity_decode");');
         out,
         "&lt;b&gt;&quot;Hi&quot; &amp; &#039;bye&#039;&lt;/b&gt;:&lt;a&gt;:<b>hi</b>:&lt;x&gt;:\"q\":1:1:1"
     );
+}
+
+/// Verifies eval `strip_tags()` strips tags, honors allow-lists, and dispatches as a callable.
+#[test]
+fn test_eval_dispatches_strip_tags_builtin_calls() {
+    let out = compile_and_run(
+        r#"<?php
+eval('echo strip_tags("<p>Hello <b>World</b></p>"); echo ":";
+echo strip_tags("<p>Hello <b>World</b></p>", "<p>"); echo ":";
+echo strip_tags("<p>Hello <b>World</b></p>", ["p"]); echo ":";
+echo strip_tags("1 < 2"); echo ":";
+echo call_user_func("strip_tags", "<x>y</x>"); echo ":";
+echo function_exists("strip_tags");');
+"#,
+    );
+    assert_eq!(out, "Hello World:<p>Hello World</p>:<p>Hello World</p>:1 < 2:y:1");
 }
 
 /// Verifies eval URL codec builtins encode, decode, and dispatch as callables.

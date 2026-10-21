@@ -5,6 +5,55 @@ Releases are listed newest first.
 
 ## [Unreleased]
 
+## [0.27.4] - 2026-10-21
+
+- Changed extern C integer handling (**breaking**): `int`/`i64` now preserve 64-bit values, and explicit signed/unsigned 8-, 16-, 32-, and 64-bit widths control argument and return conversion; declarations for C `int` and `unsigned` must use `i32` and `u32`.
+- Added `f32` extern function parameters and returns for C `float`, with single-precision rounding and widening at the ABI boundary; `f64` aliases the existing `float` declaration for C `double`.
+- Added `ptr_read_f32()`, `ptr_write_f32()`, `ptr_read_f64()`, and `ptr_write_f64()` for floating-point memory access in compiled and `eval()` code.
+- Added PHP `strip_tags()` in compiled and `eval()` code, with string or array allow-lists and PHP-compatible handling of comments and PHP tags.
+- Added immutable `BcMath\Number` objects with decimal methods, arithmetic and comparison operators, serialization, and matching native-object behavior in `eval()`.
+- Added missing PHP 8.5 Core classes and constants, including `WeakReference`, `WeakMap`, `Serializable`, `ErrorException`, enum interfaces, and runtime `PHP_BINARY`, in compiled and `eval()` code.
+- Added a pay-for-use DOM HTML fragment walker for Termwind-style rendering, including `DOMDocument::loadHTML()`, node traversal, attributes, and `saveXML()`; this remains an HTML-only subset.
+- Added `JSON_UNESCAPED_LINE_TERMINATORS` and `JSON_ERROR_NON_BACKED_ENUM`, with corresponding line-separator and enum encoding behavior, including enum `JsonSerializable` overrides, in compiled and `eval()` code.
+- Added `elephc test` to compile and run native test suites, with Composer test autoloading, a PHPUnit-compatible assertion subset, data providers, per-test process isolation and timeouts, filtering, and JUnit reports.
+- Added Developer ID signing and required Apple notarization for macOS release and nightly binaries before packaging and publication.
+- Added bounded-stack lowering for eligible direct self- and mutually tail-recursive scalar functions, preserving each public entry point and argument evaluation order.
+- Reduced duplicate code and immutable data for equivalent generic instantiations while preserving nominal identities and callable contracts, and added `--report-generics`.
+- Improved eligible same-local string append by reusing unique capacity and growing geometrically while preserving copy-on-write for shared values.
+- Improved numeric loops by calling proven closure targets directly and transferring fresh boxed arithmetic results instead of cloning them.
+- Reduced dynamic `eval()` setup and scope-sync costs by sharing immutable native catalogs, synchronizing only directly accessed scalar names when safe, and skipping escape scans before foreign callable metadata is present.
+- Improved packed-array growth and scalar writes by extending unique heap-tail allocations in place and using a shorter path for unique in-bounds `int`, `float`, and `bool` slots.
+- Reduced heap and cleanup overhead by reusing small split remainders, avoiding protected release for proven scalar cells and empty indexed arrays, and skipping string-identity lookup for Mixed wrappers.
+- Improved Linux x86_64 cycle collection with cached incoming-edge counts and an exact fallback when those counts saturate.
+- Reduced mbstring bridge and executable size by sharing one immutable encoding catalog instead of duplicating codec tables.
+- Improved JSON parsing by deferring source-location scans until an error and avoiding legacy string decoding for non-string tokens.
+- Reduced startup costs for eligible short numeric dynamic `eval()` fragments by deferring native catalog initialization, with guarded fallback and a bounded deferral budget.
+- Reduced allocations for boxed add/subtract/multiply and increment/decrement by borrowing constant integer operands while keeping results independently owned.
+- Reduced heap-release and `gc_mem_caches()` overhead by skipping free-list tail scans when a freed block cannot reach the heap frontier.
+- Improved `json_decode()` memory use for integer arrays by keeping initial signed 64-bit values packed and widening to mixed storage only when needed.
+- Reduced native string-append metadata allocations by reusing unique unresolved mbstring origins, while preserving replacement behavior for shared, resolved, and literal origins.
+- Reduced compilation work and generated code for literal `eval()` fragments by retaining only the declarations and builtin surfaces they can reach, with conservative fallback for runtime source and dynamic lookups.
+- Security: updated `webpki-roots` to `1.0.10` and `rustls-webpki` to `0.103.16` to reject distrusted emSign certificate paths, addressing RUSTSEC-2026-0381 and RUSTSEC-2026-0382.
+- Fixed property and parameter defaults to bind `self::` and `parent::` in their declaring or trait-consuming scope, defer catchable default errors until use, and preserve those defaults in Reflection and `eval()`; invalid late-static property defaults are rejected.
+- Fixed literal `false` and `null` parameter contracts across inherited methods and runtime callables so invalid arguments raise `TypeError` before coercion or receiver mutation.
+- Fixed `(array)` casts of scalar, string, null, packed-array, mixed, and union values, including returns declared as `array`.
+- Fixed by-reference `foreach` so elements appended after yielding the current tail are visited, including after hash growth.
+- Fixed `unserialize()` accepting values that violate declared property types; mismatches now raise catchable `TypeError` with declaring-class diagnostics and balanced cleanup.
+- Fixed asymmetric setter visibility, readonly writes and `??=` behavior, property override validation, and Reflection modifier filtering in compiled and `eval()` code.
+- Fixed write-only array appends in assignment expressions, compound writes, and prefix/postfix increments, preserving sparse keys, evaluation order, and invalid-read diagnostics.
+- Fixed object writes through named, lexical, and late-static property receivers, preserving RHS ordering, nested append ownership, and catchable null-write errors.
+- Fixed leaks in nullable and mixed-receiver property writes, including Stringable sources and cleanup when destructors throw.
+- Fixed `json_decode()` retaining construction owners, temporary keys, and source arguments, including cleanup of partial graphs before throwing.
+- Fixed `array_unshift()` through references freeing packed-array storage still owned by a value copy, including when prepending multiple values or growing the array.
+- Fixed prefix increment and decrement of static array elements, including `self::`, `parent::`, and `static::` receivers, string values, computed keys, and copy-on-write aliases.
+- Fixed nested array writes and updates to create missing parents, preserve key and RHS evaluation order, handle false-to-array diagnostics and throwing handlers, and dispatch appended object children through `ArrayAccess` without losing ownership.
+- Fixed enum metadata and validation for imported trait constants, declaration-order Reflection, final and abstract methods, lexical magic constants, and trait/interface method contracts.
+- Fixed enum interface calls to bind the selected implementation's names and defaults, preserve unpacked and variadic arguments, check types before coercion, and transfer compatible returned references; interface adapters also honor added optional parameters.
+- Fixed boxed `iterable` argument ownership and reference-return rebinding, so payloads stay alive and replacement aliases remain visible when cleanup throws, including repeated bindings in loops.
+- Fixed stream notification callbacks in heterogeneous literal parameter arrays being lost behind compiler temporaries, including named arguments and conditional entries inside `try` blocks.
+- Fixed buffer overruns when encoding large top-level indexed-array trees containing integers by sizing and allocating the complete JSON output before writing.
+- Fixed extern C `bool` returns using unspecified upper register bits, which could turn an ABI-valid false into true on AArch64 and x86_64.
+
 ## [0.27.3] - 2026-10-15
 
 - Added `elephc repl`, an interactive PHP session driven by `eval()` that keeps variables, references, functions, classes, and constants between submissions, with multiline input, line editing, history, and a cached native host.
@@ -769,7 +818,8 @@ Releases are listed newest first.
 ## [0.1.0] - 2026-03-22
 - Initial compiler: echo, variables, integers, arithmetic and string concatenation, comparison operators, control flow (`if`/`while`/`for`/`break`/`continue`), functions, logical/assignment/increment operators.
 
-[Unreleased]: https://github.com/illegalstudio/elephc/compare/v0.27.3...HEAD
+[Unreleased]: https://github.com/illegalstudio/elephc/compare/v0.27.4...HEAD
+[0.27.4]: https://github.com/illegalstudio/elephc/compare/v0.27.3...v0.27.4
 [0.27.3]: https://github.com/illegalstudio/elephc/compare/v0.27.2...v0.27.3
 [0.27.2]: https://github.com/illegalstudio/elephc/compare/v0.27.1...v0.27.2
 [0.27.1]: https://github.com/illegalstudio/elephc/compare/v0.27.0...v0.27.1

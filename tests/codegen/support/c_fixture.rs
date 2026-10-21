@@ -4,6 +4,7 @@
 //!
 //! Called from:
 //! - `tests/codegen/ffi/return_normalization.rs`
+//! - `tests/codegen/ffi/struct_layout.rs`
 //! - `tests/codegen/runtime_gc/mbstring_capture_hash/*`
 //!
 //! Key details:

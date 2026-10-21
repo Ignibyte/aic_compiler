@@ -427,6 +427,10 @@ impl Checker {
 
     /// Preserves known global constant types before a declaration is specialized by a call.
     fn declaration_default_type(&self, expression: &Expr) -> PhpType {
+        if crate::types::deferred_defaults::deferred_error_message(expression).is_some() {
+            // A normalized lexical Error has no result to constrain an untyped parameter.
+            return PhpType::Mixed;
+        }
         if let ExprKind::ConstRef(name) = &expression.kind {
             if let Some(ty) = self.constants.get(name.as_str()) {
                 return ty.clone();
@@ -448,6 +452,11 @@ impl Checker {
         let Some(default_expr) = default_expr else {
             return Ok(());
         };
+        // PHP permits even a scalar-typed parameter to use an unbound object factory.
+        // An explicit argument bypasses it; omission raises the scope Error before type binding.
+        if crate::types::deferred_defaults::deferred_error_message(default_expr).is_some() {
+            return Ok(());
+        }
         let default_ty = match &default_expr.kind {
             ExprKind::ScopedConstantAccess { receiver, name } => {
                 self.infer_scoped_constant_access(receiver, name, default_expr)?

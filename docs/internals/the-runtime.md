@@ -373,6 +373,7 @@ Each routine follows the same pattern — inputs in registers, output in standar
 | `__rt_urldecode` | URL decode | `x1`/`x2` | `x1`/`x2` |
 | `__rt_htmlspecialchars` | HTML escape honouring the `ENT_*` quote and document-type flags | `x1`/`x2` + flags in `x3` | `x1`/`x2` |
 | `__rt_html_entity_decode` | Decode HTML entities | `x1`/`x2` | `x1`/`x2` |
+| `__rt_strip_tags` | Strip HTML and PHP tags, preserving allowed HTML tags while always removing comments and PHP tags | `x1`/`x2` = subject pointer/length, `x3`/`x4` = allow-list pointer/length | `x1`/`x2` = stripped string |
 | `__rt_rawurlencode` | URL encode (RFC 3986) | `x1`/`x2` | `x1`/`x2` |
 | `__rt_parse_url` | Parse URL bytes and select an array/string/int/null/false result | `x1`/`x2` + component in `x3` | `x0` (Mixed ptr) |
 | `__rt_stripslashes` | Remove escape backslashes | `x1`/`x2` | `x1`/`x2` |
@@ -786,7 +787,7 @@ Extern callback trampolines use the same descriptor invoker from a C-facing entr
 
 ## Array routines
 
-**Source:** `src/codegen_support/runtime/arrays/` (206 top-level files plus 7 nested target/debug helpers)
+**Source:** `src/codegen_support/runtime/arrays/` (208 top-level Rust files plus 9 nested target/debug/test helpers)
 
 ### Core allocation
 
@@ -803,7 +804,8 @@ Extern callback trampolines use the same descriptor invoker from a C-facing entr
 | `__rt_heap_kind` | Return the uniform heap-kind tag for a heap-backed pointer | `x0` = pointer | `x0` = kind |
 | `__rt_array_new` | Create indexed array with header | `x0` = capacity, `x1` = elem_size | `x0` = array ptr |
 | `__rt_array_clone_shallow` | Clone indexed array storage for copy-on-write splitting, retaining nested heap children as needed | `x0` = array | `x0` = new array |
-| `__rt_array_to_mixed` | Convert an indexed array's live slots to boxed Mixed cells and stamp the array metadata as mixed | `x0` = array | `x0` = same array |
+| `__rt_array_to_mixed` | Convert an indexed array's live slots to boxed Mixed cells and stamp the array metadata as mixed | `x0` = array, `x1` = current value_type tag | `x0` = unique array |
+| `__rt_array_to_mixed_shared` | Convert the payload already selected by a pending append, preserving callback-retained views of that write instead of separating again | `x0` = selected array, `x1` = current value_type tag | `x0` = same array |
 | `__rt_array_ensure_unique` | Split a shared indexed array before mutation | `x0` = array | `x0` = unique array |
 | `__rt_array_grow` | Ensure uniqueness and double array capacity, extending a unique bump-tail allocation in place when possible or falling back to allocate-copy-free growth | `x0` = array | `x0` = grown array |
 | `__rt_array_free_deep` | Free array storage and release nested heap-backed elements | `x0` = array | — |
@@ -846,6 +848,7 @@ Common copy-producing array/hash routines now also have dedicated `_refcounted` 
 | `__rt_hash_grow` | Separate shared values, then replace entry storage at twice the capacity | `x0` = hash | `x0` = possibly separated hash |
 | `__rt_hash_grow_owned` | Rehash an internal construction array while preserving its header and aliases, without copy-on-write separation | `x0` = hash | `x0` = same hash |
 | `__rt_hash_set` | Insert/update (grows at 75% load) | `x0`=hash, `x1`/`x2`=normalized key, `x3`/`x4`=value, `x5`=value_tag | `x0` = hash |
+| `__rt_hash_set_shared` | Insert into an already selected pending-write payload without another copy-on-write split | Same arguments as `__rt_hash_set` | `x0` = hash |
 | `__rt_hash_append` | Append with PHP's next automatic integer key (largest existing int key + 1, or 0), then delegate to `__rt_hash_set` | `x0`=hash, `x3`/`x4`=value, `x5`=value_tag | `x0` = hash |
 | `__rt_hash_insert_owned` | Reinsert an already-owned key/value pair during hash growth | `x0`=hash, `x1`/`x2`=normalized key, `x3`/`x4`=value, `x5`=value_tag | `x0` = hash |
 | `__rt_hash_get` | Look up value by key | `x0`=hash, `x1`/`x2`=normalized key | `x0`=found, `x1`=val_lo, `x2`=val_hi, `x3`=value_tag |
@@ -920,6 +923,11 @@ See [Memory Model](memory-model.md) for the hash table memory layout.
 
 ### Reference counting
 
+| Collector support routine | What it does |
+|---|---|
+| `__rt_gc_eval_object_children_count_all` | Count all eval-owned object edges for the x86_64 incoming-edge cache, retaining the separate candidate-count and mark modes |
+| `__rt_gc_weak_observers` | Retire weak observers after resurrection/root recounting and before sweeping; callback graph changes trigger another mark pass and callback exceptions join the pending owner |
+
 | Routine | What it does | Input | Output |
 |---|---|---|---|
 | `__rt_incref` | Increment reference count (safe with null/non-heap pointers) | `x0` = user pointer | — |
@@ -980,7 +988,7 @@ path for from a leaf helper.
 
 ## System routines
 
-**Source:** `src/codegen_support/runtime/system/` (46 top-level files plus 44 files in nested date, JSON, serialization, and parsing modules; 90 files recursively)
+**Source:** `src/codegen_support/runtime/system/` (50 top-level Rust files plus 59 files in nested JSON, serialization, date, and parsing modules; 109 Rust files recursively)
 
 ### `__rt_build_argv` — Build $argv array
 
@@ -1001,6 +1009,7 @@ At program start, the OS passes `argc` (argument count) in `x0` and `argv` (poin
 | `__rt_getenv` | Get one environment variable via libc `getenv()`, copying the value out of the environment block so the caller can own it | `x1`/`x2` = name string | Present: `x1`/`x2` = owned value string (non-null even when empty); unset: a **null pointer**, which the caller boxes as PHP `false` |
 | `__rt_getenv_all` | Walk the live `environ` and build the whole environment as a string-keyed hash. Splits each entry at its **first** `=`, since a value may contain more | — | `x0` = hash pointer |
 | `__rt_php_uname` | Read target runtime system information via libc `uname()`; supports PHP modes `a`, `s`, `n`, `r`, `v`, and `m` | `x1`/`x2` = mode string | `x1`/`x2` = selected uname string |
+| `__rt_php_binary` | Resolve the running executable path for `PHP_BINARY`, using procfs on Linux or dyld and realpath on Apple targets | None | owned PHP string |
 | `__rt_shell_exec` | Execute shell command and capture output via libc `popen()`/`pclose()` | `x1`/`x2` = command string | `x1`/`x2` = output string |
 
 ### Call-stack overflow guard
@@ -1056,7 +1065,7 @@ backend that registered its handler.
 
 ## Exception routines
 
-**Source:** `src/codegen_support/runtime/exceptions.rs` plus `src/codegen_support/runtime/exceptions/` (22 files in the directory)
+**Source:** `src/codegen_support/runtime/exceptions.rs` plus `src/codegen_support/runtime/exceptions/` (23 top-level Rust files plus 2 nested cleanup helpers)
 
 elephc lowers exceptions with a small runtime layer around `_setjmp` / `_longjmp`. Codegen publishes the current exception object into `_exc_value`, pushes a handler record into `_exc_handler_top`, and then uses these helpers to unwind, match catch clauses, and resume control flow through `catch` / `finally`.
 
@@ -1127,6 +1136,16 @@ validation enters `__rt_json_decode` for unescaping, avoiding another trim and
 legacy-decoder call for every scalar or nested container. Both architecture
 emitters preserve the same numeric overflow, error and ownership boundaries.
 
+| Structural helper | What it does |
+|---|---|
+| `__rt_json_decode_mixed_value` | Decode one recursive token while keeping the public call's error and ownership boundary outside the recursive walk |
+| `__rt_json_decode_syntax_error` | Record malformed-token failure and return through the decoder's cleanup path |
+| `__rt_json_box_owned_container` | Transfer a freshly built array, hash or object into its result Mixed cell without retaining a second construction owner |
+| `__rt_json_integer_width` | Calculate the exact decimal width of one signed integer, including its sign |
+| `__rt_json_integer_tree_probe` | Prove that an indexed-array tree contains only supported integer/array values and compute its complete encoded size |
+| `__rt_json_integer_tree_try` | Select the bounded integer-tree path, allocate its result once, or return an unsupported-shape result to ordinary dispatch |
+| `__rt_json_integer_tree_write` | Write a proved integer tree into the sized allocation without callbacks or further allocation |
+
 The `json_encode` implementation uses **type-aware dispatch** — the codegen calls a different runtime routine depending on the compile-time type of the value being encoded:
 
 | Routine | What it does | Input | Output |
@@ -1145,6 +1164,7 @@ The `json_encode` implementation uses **type-aware dispatch** — the codegen ca
 | `__rt_json_decode` | String-only compatibility helper used by string decode paths; trims outer whitespace and unescapes quoted JSON strings including surrogate-aware `\uXXXX` sequences | `x1`/`x2` = JSON string | `x1`/`x2` = decoded string |
 | `__rt_json_decode_mixed` | Checked structural recursive decoder that returns boxed `Mixed` cells for null, bool, int, float, string, indexed arrays, associative arrays, and stdClass objects depending on `_json_decode_assoc`; records syntax/depth/UTF-8/UTF-16 errors plus source offsets and returns 0 on malformed input | `x1`/`x2` = JSON string | `x0` = Mixed* or 0 |
 | `__rt_json_decode_mixed_array_real` | Recursive array parser used by `json_decode_mixed` once the outer `[` token is known | parser cursor + JSON bounds | boxed Mixed array |
+| `__rt_json_integer_token` | Probe a bounded JSON array token for a signed 64-bit integer without allocation or parser-state changes; leave the comma or closing bracket unconsumed | `x1` = token pointer, `x2` = remaining length | `x0` = success; on success, `x1` = integer and `x2` = consumed bytes |
 | `__rt_json_decode_mixed_object_real` | Recursive object parser used by `json_decode_mixed` once the outer `{` token is known; returns assoc hash or stdClass payload based on decode mode | parser cursor + JSON bounds | boxed Mixed object/hash |
 | `__rt_json_skip_ws` | Shared RFC 8259 whitespace skipper used by `json_decode_mixed` and its recursive array/object parsers; advances a caller-owned cursor to the next token or caller-supplied limit | JSON slice pointer, exclusive limit, cursor | updated cursor |
 | `__rt_json_validate` | Standalone RFC 8259 validator used by `json_validate()`; scalar validator helpers are also reused by `json_decode_mixed` for strings and numbers | `x1`/`x2` = JSON string | `x0` = 1 valid / 0 invalid |
@@ -1204,11 +1224,15 @@ The unserializer keeps the fixed runtime-emission order in `unserialize/mod.rs`.
 | Routine | What it does | Input | Output |
 |---|---|---|---|
 | `__rt_serialize_call_value` | Guard a public call and preserve shared or isolated reference state across hooks | value tag + payload | string slice |
+| `__rt_serialize_guarded_dispatch` | Dispatch serialization inside a protected boundary so reference snapshots are restored before propagating hook exceptions | saved call state | serialization result or pending exception |
+| `__rt_serialize_serializable` | Invoke a legacy `Serializable` serializer and write its opaque `C:` envelope when a modern hook does not supersede it | object and serializer metadata | serialized bytes |
 | `__rt_serialize_value` | Tag-dispatching serializer for a raw runtime value, appending its wire form to the concat buffer | value tag + payload | `x1`/`x2` = string slice |
 | `__rt_serialize_mixed` | Unbox a boxed Mixed cell (null pointer → `N;`), then serialize it | `x0` = mixed cell | `x1`/`x2` = string slice |
 | `__rt_serialize_indexed_array` / `__rt_serialize_hash` | Serialize indexed arrays and hashes as `a:<n>:{...}` | array/hash pointer | `x1`/`x2` = string slice |
 | `__rt_serialize_object` / `__rt_serialize_named_prop` / `__rt_serialize_obj_ref` | Serialize objects (`O:`/`C:`), emit one named property entry, and resolve back-references | object pointer | `x1`/`x2` = string slice |
 | `__rt_unserialize_begin` / `__rt_unserialize_mixed` / `__rt_unserialize_object` | Parse a serialized string back into boxed Mixed cells, including nested arrays/hashes and objects | `x1`/`x2` = serialized string | `x0` = Mixed* (0 on malformed input) |
+| `__rt_unserialize_inherit_policy` | Inherit the enclosing allowed-class policy for a nested legacy decode without explicit options | current parser context | inherited policy |
+| `__rt_unserialize_promote_legacy_data` | Move temporary reference owners from a shared nested decode into the enclosing context before cleanup | nested parser context | enclosing ownership list |
 | `__rt_concat_hoist_tail` | Move the bytes appended since a tail offset (at most 32, such as a `<count>:{` header) in front of the body written before them | `x0` = body start, `x1` = tail start (buffer offsets) | concat buffer rearranged, write offset unchanged |
 | `__rt_unser_refuse_class` | Refuse a class PHP never unserializes, from the preflight: ask the `allowed_classes` policy, then scan `_unser_refused_classes` | `x1`/`x2` = wire class name | returns when allowed; otherwise throws |
 
@@ -1409,7 +1433,7 @@ These helpers support the compiler-specific pointer builtins.
 
 | Routine | What it does | Input | Output |
 |---|---|---|---|
-| `__rt_ptoa` | Format a pointer value as a hexadecimal string with `0x` prefix | `x0` = pointer/address | `x1`/`x2` = formatted string |
+| `__rt_ptoa` | Format a pointer value as a lowercase hexadecimal string with `0x` prefix, reserved through `__rt_concat_reserve` (concat scratch while it fits, a transient heap block once the scratch is full) and published through `__rt_concat_publish`; shared by `echo` and every pointer-to-string conversion | `x0` = pointer/address | `x1`/`x2` = formatted string |
 | `__rt_ptr_check_nonnull` | Abort with `Fatal error: null pointer dereference` if the pointer is null | `x0` = pointer/address | `x0` unchanged on success |
 | `__rt_str_to_cstr` | Copy an elephc string to temporary null-terminated heap storage for a native call | `x1`/`x2` = string | `x0` = C string pointer |
 | `__rt_cstr_to_str` | Copy a borrowed null-terminated C string back into an owned elephc string | `x0` = C string pointer | `x1`/`x2` = elephc string |
@@ -1471,7 +1495,19 @@ These helpers support the compiler-specific `buffer<T>` hot-path data type. Publ
 
 ## Object and stdClass routines
 
-**Source:** `src/codegen_support/runtime/objects/` (17 files)
+Weak references use a non-owning heap-granule index, described in
+[the memory model](memory-model.md#the-data-section), and invalidate observers
+before reclaimed storage can be reused. WeakMap key retirement can invoke PHP,
+so collection resolves resurrection before notifying unreachable keys.
+
+| Weak-observer routine | What it does |
+|---|---|
+| `__rt_weak_reference_create` | Return the live wrapper for an object or Closure, allocating a wrapper only when one does not already exist |
+| `__rt_weak_reference_get` | Read a wrapper's nullable referent without making the stored weak edge owning |
+| `__rt_weak_reference_retire` | Clear forward and reverse weak-reference identity before object or wrapper storage reuse |
+| `__rt_weak_map_notify` | Retire native weak-reference observers and invoke the registered WeakMap key-retirement callback when needed |
+
+**Source:** `src/codegen_support/runtime/objects/` (19 files)
 
 These helpers support `stdClass`, `json_decode()` object results, boxed Mixed property/index access, object destructor dispatch, and dynamic `new $name()` instantiation. `stdClass` instances use a compact `[class_id][hash_ptr]` payload, with dynamic properties stored in a hash of boxed `Mixed` values.
 
@@ -1479,6 +1515,7 @@ These helpers support `stdClass`, `json_decode()` object results, boxed Mixed pr
 |---|---|---|---|
 | `__rt_object_to_hash` | Project an object's properties into a string-keyed hash — backs `get_object_vars()` and `(array)` object casts through serialize descriptors, with declaring-class protected/private filtering and `__PHP_Incomplete_Class` handling | object pointer + mode | hash pointer |
 | `__rt_throw_object_not_array` | Raise PHP's catchable `Cannot use object of type X as array` | object pointer | does not return |
+| `__rt_throw_object_not_array_name` | Raise the same catchable Error for a Closure without reading an object header | class name pointer/length (`x1`/`x2` on AArch64, `rax`/`rdx` on x86_64) | does not return |
 | `__rt_new_by_name` | Instantiate a class by its textual name through the `_classes_by_name` table (case-insensitive `__rt_strcasecmp` lookup), allocating and zeroing the object payload | class name string | object pointer, or 0 (null) on miss |
 | `__rt_call_object_destructor` | Look up the object's `__destruct` in the class_id-indexed `_class_destruct_ptrs` table and invoke it with `$this` borrowed before storage is released; guarded against re-entry | object pointer | — |
 | `__rt_stdclass_new` | Allocate an empty stdClass object with hash-backed dynamic property storage | stdClass class id from runtime data | object pointer |

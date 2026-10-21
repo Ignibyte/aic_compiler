@@ -8,8 +8,42 @@
 //! - Reuses direct-call reference capture, COW publication and exceptional cleanup.
 //! - Variadic adapters validate their supported arity before indexing the argument pack.
 //! - No PHP source is reparsed.
+//! - Source-sensitive wrappers branch on the caller's frame-owned profile, not creation scope.
 
 use super::*;
+
+/// Gives a registry argument strategy the same rooted EIR path as a direct builtin call.
+pub(crate) fn lower_prepared_builtin_callable(
+    module: &mut Module, label: &str, name: &str, signature: &FunctionSig, strict_php: bool,
+) -> Function {
+    let span = Span::dummy();
+    let call = Expr::new(ExprKind::FunctionCall {
+        name: Name::unqualified(name),
+        args: signature.params.iter().map(|(name, _)|
+            Expr::new(ExprKind::Variable(name.clone()), span)).collect(),
+    }, span);
+    let mut internal_signature = signature.clone();
+    internal_signature.params.push(("__elephc_invocation_scope".to_string(), PhpType::Int));
+    internal_signature.defaults.push(None);
+    internal_signature.ref_params.push(false);
+    internal_signature.declared_params.push(true);
+    internal_signature.param_type_exprs.push(Some(TypeExpr::Int));
+    internal_signature.param_attributes.push(Vec::new());
+    let mut strict_return = Stmt::new(StmtKind::Return(Some(call.clone())), span);
+    strict_return.strict_types = true;
+    let mut weak_return = Stmt::new(StmtKind::Return(Some(call)), span);
+    weak_return.strict_types = false;
+    let branch = Stmt::new(StmtKind::If {
+        condition: Expr::new(ExprKind::BinaryOp {
+            left: Box::new(Expr::new(ExprKind::Variable("__elephc_invocation_scope".to_string()), span)),
+            op: BinOp::Lt,
+            right: Box::new(Expr::new(ExprKind::IntLiteral(-1), span)),
+        }, span),
+        then_body: vec![strict_return], elseif_clauses: Vec::new(),
+        else_body: Some(vec![weak_return]),
+    }, span);
+    lower_builtin_callable_body(module, label, &internal_signature, strict_php, vec![branch])
+}
 
 /// Lowers a boxed usort wrapper through the same checked body boundary as a direct PHP call.
 pub(crate) fn lower_boxed_usort_callable(
@@ -113,6 +147,7 @@ pub(super) fn lower_builtin_callable_body(
         &module.declared_trait_methods,
         &module.declared_trait_properties,
         &module.packed_class_infos,
+        &module.extern_class_infos,
         &Default::default(),
         &Default::default(),
         &Default::default(),
