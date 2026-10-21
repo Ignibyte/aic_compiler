@@ -295,7 +295,13 @@ pub(in crate::ir_lower) fn property_access_expr_type_for_ir(
     object: &Expr,
     property: &str,
 ) -> Option<PhpType> {
-    let class_name = instance_callable_object_class(ctx, object)?;
+    // A receiver that does not resolve to one class (a `foreach` element of an untyped array, a
+    // `mixed` value) or a property the class does not declare (`__get`) reads as `mixed`: that is
+    // what `prop_get` produces. Leaving it unknown let a caller fall back to the syntactic `int`,
+    // and `['q' => $entry->q]` stored every string into an int-valued hash as 0.
+    let Some(class_name) = instance_callable_object_class(ctx, object) else {
+        return Some(PhpType::Mixed);
+    };
     let normalized = class_name.trim_start_matches('\\');
     if is_builtin_stdclass_name(normalized) {
         return Some(PhpType::Mixed);
@@ -303,12 +309,16 @@ pub(in crate::ir_lower) fn property_access_expr_type_for_ir(
     if let Some(property_ty) = runtime_property_type_override(ctx, normalized, property) {
         return Some(normalize_value_php_type(property_ty));
     }
-    let class_info = ctx.classes.get(normalized)?;
-    class_info
-        .properties
-        .iter()
-        .find(|(name, _)| name == property)
-        .map(|(_, ty)| normalize_value_php_type(ty.codegen_repr()))
+    let Some(class_info) = ctx.classes.get(normalized) else {
+        return Some(PhpType::Mixed);
+    };
+    Some(
+        class_info
+            .properties
+            .iter()
+            .find(|(name, _)| name == property)
+            .map_or(PhpType::Mixed, |(_, ty)| normalize_value_php_type(ty.codegen_repr())),
+    )
 }
 
 /// Returns the declared property result type plus `null` when a nullsafe receiver may be null.
