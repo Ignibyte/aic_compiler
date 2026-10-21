@@ -276,6 +276,12 @@ impl PhpType {
             PhpType::AssocArray { key, value } if value.codegen_repr() == PhpType::TaggedScalar => {
                 PhpType::AssocArray { key: key.clone(), value: Box::new(PhpType::Mixed) }
             }
+            // The same holds for an indexed array's elements: a `?int` element is stored boxed,
+            // so a reader that only knows the array as `mixed` sees an int or a null, not raw
+            // payload words it would take for a string.
+            PhpType::Array(value) if value.codegen_repr() == PhpType::TaggedScalar => {
+                PhpType::Array(Box::new(PhpType::Mixed))
+            }
             PhpType::False => PhpType::Bool,
             PhpType::Resource(_) => PhpType::Int,
             PhpType::Never => PhpType::Void, // never should not be materialized; fallback to void sentinel

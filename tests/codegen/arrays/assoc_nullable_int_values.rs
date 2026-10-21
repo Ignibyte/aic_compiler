@@ -72,3 +72,29 @@ var_dump(size([]));
 "#);
     assert_eq!(out, "int(12)\nNULL\n");
 }
+
+/// Verifies a `?int` narrowed to an int (and a plain `?int`) stored in an indexed array keeps its
+/// value and type when the array is later read only as `mixed`: the element used to read back as
+/// an empty string, because the array held the raw two-word nullable payload.
+#[test]
+fn test_nullable_int_in_an_indexed_array_reads_back_as_int_or_null() {
+    let out = compile_and_run(r#"<?php
+declare(strict_types=1);
+function f(?int $min, ?int $max): array
+{
+    $c = [];
+    if ($min !== null) {
+        $c["b"] = [$min, $max];
+    }
+    return $c;
+}
+foreach (f(10000, null) as $values) {
+    foreach ($values as $v) {
+        echo is_int($v) ? "int " : (is_null($v) ? "null " : "string "), var_export($v, true), "\n";
+    }
+}
+$direct = [5, null, 7];
+echo count($direct), ":", array_sum(array_filter($direct, fn ($x) => $x !== null)), "\n";
+"#);
+    assert_eq!(out, "int 10000\nnull NULL\n3:12\n");
+}
