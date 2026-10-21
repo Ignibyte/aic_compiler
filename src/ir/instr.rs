@@ -1049,6 +1049,15 @@ pub enum Op {
     /// (`"f(): Return value must be of type int, "`), to which codegen appends the runtime
     /// type word and `" returned"`. Result: `I64`.
     ReturnBoundaryMixedToInt,
+    /// Verifies a boxed `Mixed` value reaching a DECLARED `array`, `?array` or class-typed
+    /// return, the way php-src does at run time: an array, `null` or an instance of a declared
+    /// class passes, and every other runtime type throws a catchable `TypeError`. It only reads
+    /// the value; the ordinary return coercion that follows hands the cell, or for an exact
+    /// class its unboxed object, to the caller. Operand: the Mixed value. Immediate: data id of
+    /// the message prefix (`"f(): Return value must be of type array, "`), to which codegen
+    /// appends the runtime type word and `" returned"`. The declared type is the function's own
+    /// `return_php_type`. No result.
+    ReturnBoundaryMixedGuard,
     ClassConstant,
     ScopedConstantGet,
     ClassAttrNames,
@@ -1400,7 +1409,7 @@ impl Op {
             IterEnd => E::READS_HEAP | E::WRITES_HEAP | E::REFCOUNT_OP | E::MAY_DEOPT,
             StrEq | StrCmp | StrLooseEq | StrictEq | StrictNotEq | InstanceOf => E::READS_HEAP,
             EnumBackingStringToInt | EnumBackingMixedToInt | PackedFieldMixedToInt
-            | ReturnBoundaryMixedToInt => {
+            | ReturnBoundaryMixedToInt | ReturnBoundaryMixedGuard => {
                 E::READS_HEAP | E::ALLOC_HEAP | E::MAY_THROW
             }
             EvalFunctionExists | EvalClassExists | EvalConstantExists => E::READS_GLOBAL,
@@ -1713,6 +1722,7 @@ impl Op {
             EnumBackingMixedToInt => "enum_backing_mixed_to_int",
             PackedFieldMixedToInt => "packed_field_mixed_to_int",
             ReturnBoundaryMixedToInt => "return_boundary_mixed_to_int",
+            ReturnBoundaryMixedGuard => "return_boundary_mixed_guard",
             ClassConstant => "class_constant",
             ScopedConstantGet => "scoped_constant_get",
             ClassAttrNames => "class_attr_names",

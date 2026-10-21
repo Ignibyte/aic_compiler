@@ -110,7 +110,13 @@ fn all_functions(module: &Module) -> impl Iterator<Item = &Function> {
 fn summarize_function(function: &Function, context: &RefinementContext<'_>) -> Effects {
     let mut effects = Effects::PURE;
     // A literal false signature has a throwing call-boundary guard even if its body is empty.
-    if function.params.iter().any(|parameter| parameter.php_type == PhpType::False) {
+    // So has a by-value `array`, `?array` or class parameter, which checks a `mixed` argument.
+    if function.params.iter().any(|parameter| {
+        parameter.php_type == PhpType::False
+            || (!parameter.by_ref
+                && parameter.name != "this"
+                && parameter.php_type.mixed_boundary().is_some())
+    }) {
         effects |= Effects::READS_HEAP | Effects::ALLOC_HEAP | Effects::MAY_THROW | Effects::MAY_DEOPT;
     }
     for instruction in &function.instructions {

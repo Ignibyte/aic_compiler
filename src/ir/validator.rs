@@ -490,6 +490,7 @@ fn validate_instruction_immediate(
         | EnumBackingMixedToInt
         | PackedFieldMixedToInt
         | ReturnBoundaryMixedToInt
+        | ReturnBoundaryMixedGuard
         | PropInitialized
         | StaticPropInitialized
         | ReflectionStaticPropertyInitialized => {

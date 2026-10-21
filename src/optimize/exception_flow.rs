@@ -15,7 +15,7 @@
 
 use super::*;
 use crate::types::{ClassInfo, FunctionSig, InterfaceInfo, PhpType};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -73,6 +73,66 @@ pub(super) struct ExceptionFlowAnalysis {
     /// program that also contains an unrelated throwing destructor; absence is the
     /// conservative answer and reproduces the previous behavior.
     scalar_frame_callables: HashSet<String>,
+    /// By-value `array`/class parameter positions per callable, keyed like the summary maps.
+    /// The call site's guard rejects a `mixed` argument there, so a call throws `TypeError`
+    /// only through an argument in one of these positions that may hold a `mixed` value.
+    function_boundary_params: HashMap<String, Vec<bool>>,
+    static_method_boundary_params: HashMap<String, Vec<bool>>,
+    instance_method_boundary_params: HashMap<String, Vec<bool>>,
+    /// Callables with a declared `array`/class return, keyed like the summary maps: a `return`
+    /// of a value that may be `mixed` is checked against it at run time.
+    boundary_returns: HashSet<String>,
+    /// Whether the body being summarized right now returns through such a boundary.
+    returns_through_boundary: Cell<bool>,
+}
+
+/// Returns the positions of a signature's declared by-value parameters whose boundary guard
+/// checks a `mixed` argument, or `None` when it has none.
+fn boundary_param_positions(signature: &FunctionSig) -> Option<Vec<bool>> {
+    let positions: Vec<bool> = signature
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, (_, ty))| {
+            signature.declared_params.get(index).copied().unwrap_or(false)
+                && !signature.ref_params.get(index).copied().unwrap_or(false)
+                && ty.mixed_boundary().is_some()
+        })
+        .collect();
+    positions.contains(&true).then_some(positions)
+}
+
+/// Returns whether a signature's declared return checks a `mixed` value.
+fn returns_through_a_boundary(signature: &FunctionSig) -> bool {
+    signature.declared_return && signature.return_type.mixed_boundary().is_some()
+}
+
+/// Returns whether an expression may evaluate to a value the checker only knows as `mixed`.
+/// Object construction, literals, array literals and closures never do.
+fn expr_may_be_mixed(expr: &Expr) -> bool {
+    !matches!(
+        expr.kind,
+        ExprKind::NewObject { .. }
+            | ExprKind::ArrayLiteral(_)
+            | ExprKind::IntLiteral(_)
+            | ExprKind::FloatLiteral(_)
+            | ExprKind::StringLiteral(_)
+            | ExprKind::BoolLiteral(_)
+            | ExprKind::Null
+            | ExprKind::Closure { .. }
+    )
+}
+
+/// Returns whether a call with these arguments may hand a `mixed` value to a boundary position.
+/// A spread or named argument may land anywhere, so it counts whenever a boundary exists.
+fn call_may_reject_a_mixed_argument(positions: Option<&Vec<bool>>, args: &[Expr]) -> bool {
+    let Some(positions) = positions else {
+        return false;
+    };
+    args.iter().enumerate().any(|(index, arg)| match &arg.kind {
+        ExprKind::Spread(_) | ExprKind::NamedArg { .. } => true,
+        _ => positions.get(index).copied().unwrap_or(false) && expr_may_be_mixed(arg),
+    })
 }
 
 /// Returns whether argument binding can throw before entering an otherwise clean body.
@@ -296,6 +356,50 @@ impl ExceptionFlowAnalysis {
                     .collect()
             })
             .unwrap_or_default();
+        let mut function_boundary_params: HashMap<String, Vec<bool>> = HashMap::new();
+        let mut static_method_boundary_params: HashMap<String, Vec<bool>> = HashMap::new();
+        let mut instance_method_boundary_params: HashMap<String, Vec<bool>> = HashMap::new();
+        let mut boundary_returns: HashSet<String> = HashSet::new();
+        if let Some((functions, classes, interfaces)) = type_metadata {
+            for (name, signature) in functions {
+                if let Some(positions) = boundary_param_positions(signature) {
+                    function_boundary_params.insert(name.clone(), positions);
+                }
+                if returns_through_a_boundary(signature) {
+                    boundary_returns.insert(name.clone());
+                }
+            }
+            let methods = classes
+                .iter()
+                .flat_map(|(class_name, class)| {
+                    class.static_methods.iter().map(move |(m, s)| (true, class_name, m, s))
+                        .chain(class.methods.iter().map(move |(m, s)| (false, class_name, m, s)))
+                })
+                .chain(interfaces.iter().flat_map(|(interface_name, interface)| {
+                    interface.methods.iter().map(move |(m, s)| (false, interface_name, m, s))
+                }));
+            for (is_static, class_name, method, signature) in methods {
+                let key = method_effect_key(class_name, method);
+                if let Some(positions) = boundary_param_positions(signature) {
+                    if is_static {
+                        static_method_boundary_params.insert(key.clone(), positions);
+                    } else {
+                        instance_method_boundary_params.insert(key.clone(), positions);
+                    }
+                }
+                if returns_through_a_boundary(signature) {
+                    boundary_returns.insert(key);
+                }
+            }
+        } else {
+            callables::collect_boundary_checks(
+                program,
+                &mut function_boundary_params,
+                &mut static_method_boundary_params,
+                &mut instance_method_boundary_params,
+                &mut boundary_returns,
+            );
+        }
         if type_metadata.is_none() {
             callables::collect_object_reference_entry_checks(
                 program,
@@ -359,6 +463,11 @@ impl ExceptionFlowAnalysis {
             instance_method_returns,
             destructor_throws: ThrownTypes::default(),
             scalar_frame_callables: HashSet::new(),
+            function_boundary_params,
+            static_method_boundary_params,
+            instance_method_boundary_params,
+            boundary_returns,
+            returns_through_boundary: Cell::new(false),
         };
         // Purely syntactic, so it is computed once rather than per round.
         destruction::collect_scalar_frame_callables(program, &mut analysis.scalar_frame_callables);
@@ -413,11 +522,14 @@ impl ExceptionFlowAnalysis {
         bodies
             .iter()
             .map(|(name, body)| {
-                (
-                    name.clone(),
-                    self.block_throws(body.body, &HashMap::new(), body.class_context)
-                        .combined(self.scope_cleanup_throws(name)),
-                )
+                let outer = self
+                    .returns_through_boundary
+                    .replace(self.boundary_returns.contains(name));
+                let thrown = self
+                    .block_throws(body.body, &HashMap::new(), body.class_context)
+                    .combined(self.scope_cleanup_throws(name));
+                self.returns_through_boundary.set(outer);
+                (name.clone(), thrown)
             })
             .collect()
     }
@@ -516,8 +628,17 @@ impl ExceptionFlowAnalysis {
             | StmtKind::ListUnpack { value: expr, .. } => self
                 .expr_throws(expr, bindings, class_context)
                 .combined(self.overwrite_cleanup_throws()),
-            StmtKind::ConstDecl { value: expr, .. } | StmtKind::Return(Some(expr)) => {
+            StmtKind::ConstDecl { value: expr, .. } => {
                 self.expr_throws(expr, bindings, class_context)
+            }
+            // A declared `array`/class return checks a value that may be `mixed`.
+            StmtKind::Return(Some(expr)) => {
+                let thrown = self.expr_throws(expr, bindings, class_context);
+                if self.returns_through_boundary.get() && expr_may_be_mixed(expr) {
+                    thrown.combined(ThrownTypes::exact("TypeError"))
+                } else {
+                    thrown
+                }
             }
             StmtKind::Throw(expr) => self
                 .expr_throws(expr, bindings, class_context)
@@ -757,7 +878,12 @@ impl ExceptionFlowAnalysis {
                 if name.as_str().eq_ignore_ascii_case("unset") {
                     return thrown.combined(self.overwrite_cleanup_throws());
                 }
-                if self.function_object_ref_checks.contains(name.as_str()) {
+                if self.function_object_ref_checks.contains(name.as_str())
+                    || call_may_reject_a_mixed_argument(
+                        self.function_boundary_params.get(name.as_str()),
+                        args,
+                    )
+                {
                     thrown = thrown.combined(ThrownTypes::exact("TypeError"));
                 }
                 if let Some(summary) = self.function_throws.get(name.as_str()) {
@@ -768,10 +894,22 @@ impl ExceptionFlowAnalysis {
                 }
                 thrown
             }
-            ExprKind::NewObject { class_name, args } => self
-                .expr_list_throws(args, bindings, class_context)
-                .combined(self.operand_cleanup_throws(args, class_context))
-                .combined(self.constructor_throws(class_name.as_str())),
+            ExprKind::NewObject { class_name, args } => {
+                let thrown = self
+                    .expr_list_throws(args, bindings, class_context)
+                    .combined(self.operand_cleanup_throws(args, class_context))
+                    .combined(self.constructor_throws(class_name.as_str()));
+                let positions = self.resolve_method_value(
+                    class_name.as_str(),
+                    "__construct",
+                    &self.instance_method_boundary_params,
+                );
+                if call_may_reject_a_mixed_argument(positions.as_ref(), args) {
+                    thrown.combined(ThrownTypes::exact("TypeError"))
+                } else {
+                    thrown
+                }
+            }
             ExprKind::NewScopedObject { receiver, args } => {
                 let mut thrown = self
                     .expr_list_throws(args, bindings, class_context)
@@ -796,7 +934,17 @@ impl ExceptionFlowAnalysis {
                         &class_name,
                         method,
                         &self.static_method_object_ref_checks,
-                    ) == Some(true) {
+                    ) == Some(true)
+                        || call_may_reject_a_mixed_argument(
+                            self.resolve_method_value(
+                                &class_name,
+                                method,
+                                &self.static_method_boundary_params,
+                            )
+                            .as_ref(),
+                            args,
+                        )
+                    {
                         thrown = thrown.combined(ThrownTypes::exact("TypeError"));
                     }
                     if let Some(summary) = self.resolve_method_value(
@@ -833,7 +981,17 @@ impl ExceptionFlowAnalysis {
                         &class_name,
                         method,
                         &self.instance_method_object_ref_checks,
-                    ) == Some(true) {
+                    ) == Some(true)
+                        || call_may_reject_a_mixed_argument(
+                            self.resolve_method_value(
+                                &class_name,
+                                method,
+                                &self.instance_method_boundary_params,
+                            )
+                            .as_ref(),
+                            args,
+                        )
+                    {
                         thrown = thrown.combined(ThrownTypes::exact("TypeError"));
                     }
                     if let Some(summary) = self.resolve_method_value(

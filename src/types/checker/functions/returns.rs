@@ -389,6 +389,12 @@ impl Checker {
             ));
         }
 
+        // php checks a `mixed` value against a declared `array`, `?array` or class return type at
+        // run time; the return-boundary guard does the same and throws the return `TypeError`.
+        if actual == &PhpType::Mixed && expected.mixed_boundary().is_some() {
+            return Ok(());
+        }
+
         Self::require_matching_array_element_storage(expected, actual, span, context)?;
 
         self.require_compatible_arg_type(expected, actual, span, context)

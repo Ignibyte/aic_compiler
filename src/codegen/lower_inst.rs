@@ -49,6 +49,7 @@ mod comparisons;
 mod conversions;
 mod enums;
 pub(super) mod exceptions;
+mod mixed_boundary_guard;
 mod mixed_narrowing;
 mod externs;
 mod floats;
@@ -422,6 +423,9 @@ pub(super) fn lower_instruction(ctx: &mut FunctionContext<'_>, inst_id: InstId) 
         Op::PackedFieldMixedToInt => objects::lower_packed_field_mixed_to_int(ctx, &inst),
         Op::ReturnBoundaryMixedToInt => {
             mixed_narrowing::lower_return_boundary_mixed_to_int(ctx, &inst)
+        }
+        Op::ReturnBoundaryMixedGuard => {
+            mixed_boundary_guard::lower_return_boundary_mixed_guard(ctx, &inst)
         }
         Op::ExternCall => externs::lower_extern_call(ctx, &inst),
         Op::LanguageConstructCall => builtins::lower_language_construct_call(ctx, &inst),
