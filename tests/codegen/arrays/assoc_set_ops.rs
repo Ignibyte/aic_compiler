@@ -485,3 +485,24 @@ echo implode(',', array_keys($one)), ':', implode(',', $one), "\n";
     );
     assert_eq!(out, "1,2,3,4\n0\n3,2\n0,1:7,8\n");
 }
+
+/// Verifies `array_merge()` with spread arguments folds every list in order: a spread alone, an
+/// empty spread, and spreads mixed with plain operands, each operand evaluated once in order.
+#[test]
+fn test_array_merge_with_spread_arguments() {
+    let out = compile_and_run(
+        r#"<?php
+declare(strict_types=1);
+function lists(): array { echo "L"; return [[3], [4]]; }
+$clauses = ['a = ?' => [7], 'b = ?' => [8, 9]];
+echo implode(',', array_merge(...array_values($clauses))), '|';
+$words = ['a = ?' => ['x'], 'b = ?' => ['y', 'z']];
+echo implode(',', array_merge(...array_values($words))), '|';
+echo count(array_merge(...[])), '|';
+$m = array_merge([1, 2], ...lists());
+echo '|', implode(',', array_keys($m)), '=', implode(',', $m), '|';
+echo implode(',', array_merge([1], ...[[2]], ...[[3], [4]])), "\n";
+"#,
+    );
+    assert_eq!(out, "7,8,9|x,y,z|0|L|0,1,2,3=1,2,3,4|1,2,3,4\n");
+}

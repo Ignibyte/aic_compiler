@@ -646,17 +646,23 @@ fn rewrite_var_export_return_flag(
 ///
 /// PHP's `array_merge(...$arrays)` is a left fold: `array_merge($a, $b, $c)` is
 /// `array_merge(array_merge($a, $b), $c)`, operands evaluated in order. One operand renumbers its
-/// integer keys exactly as merging it into `[]` does, and no operand answers `[]`. A spread or a
-/// named argument keeps the call as written.
+/// integer keys exactly as merging it into `[]` does, and no operand answers `[]`. A spread
+/// (`array_merge(...$lists)`) folds at run time: from `[]`, each plain operand is merged in
+/// turn and each spread becomes `array_reduce($spread, 'array_merge', $merged)`, so every operand
+/// is still evaluated once and in order. DIVERGENCE: a string-keyed spread, which PHP rejects as
+/// unknown named parameters, merges by value. A named argument keeps the call as written.
 fn rewrite_array_merge_arity(name: &str, args: &[Expr]) -> Option<ExprKind> {
     let global = name.trim_start_matches('\\');
-    if global.contains('\\') || !global.eq_ignore_ascii_case("array_merge") || args.len() == 2 {
+    if global.contains('\\') || !global.eq_ignore_ascii_case("array_merge") {
         return None;
     }
-    if args
-        .iter()
-        .any(|arg| matches!(arg.kind, ExprKind::Spread(_) | ExprKind::NamedArg { .. }))
-    {
+    if args.iter().any(|arg| matches!(arg.kind, ExprKind::NamedArg { .. })) {
+        return None;
+    }
+    if args.iter().any(|arg| matches!(arg.kind, ExprKind::Spread(_))) {
+        return Some(fold_array_merge_with_spreads(args));
+    }
+    if args.len() == 2 {
         return None;
     }
     let merge = |left: Expr, right: Expr| {
@@ -678,6 +684,26 @@ fn rewrite_array_merge_arity(name: &str, args: &[Expr]) -> Option<ExprKind> {
         return Some(merge(empty, first).kind);
     };
     Some(operands.fold(merge(first, second), merge).kind)
+}
+
+/// Folds an `array_merge()` call holding a spread into two-argument merges and `array_reduce()`
+/// calls over each spread, starting from `[]`: see `rewrite_array_merge_arity`.
+fn fold_array_merge_with_spreads(args: &[Expr]) -> ExprKind {
+    let call = |name: &str, args: Vec<Expr>, span| {
+        Expr::new(ExprKind::FunctionCall { name: resolved_name(name.to_string()), args }, span)
+    };
+    let span = args.first().map_or_else(crate::span::Span::dummy, |arg| arg.span);
+    let mut merged = Expr::new(ExprKind::ArrayLiteral(Vec::new()), span);
+    for arg in args {
+        merged = match &arg.kind {
+            ExprKind::Spread(lists) => {
+                let callback = Expr::new(ExprKind::StringLiteral("array_merge".to_string()), arg.span);
+                call("array_reduce", vec![(**lists).clone(), callback, merged], arg.span)
+            }
+            _ => call("array_merge", vec![merged, arg.clone()], arg.span),
+        };
+    }
+    merged.kind
 }
 
 /// Rewrites a procedural date/time alias call into the equivalent OOP expression, or returns `None`
