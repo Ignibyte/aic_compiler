@@ -330,3 +330,92 @@ echo f([1, 2.5, true]), "|", g([3, "x"]), "|", h([-4, false]), "|", k([922337203
     );
     assert_eq!(out, "1,2.5,1|3|x|-4-|9223372036854775807+0.1\n");
 }
+
+/// Verifies `implode()` re-checks its destination room for a boxed string element longer than
+/// the 64 bytes it reserves for a formatted scalar: x86_64 copied the element straight in, past
+/// the end of a grown join buffer, and corrupted the heap's free list at these lengths.
+#[test]
+fn test_implode_of_long_boxed_strings_stays_inside_its_grown_buffer() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+declare(strict_types=1);
+
+final readonly class Region
+{
+    public function __construct(
+        private string $name,
+        private string $markup,
+    ) {
+    }
+
+    public function name(): string
+    {
+        return $this->name;
+    }
+
+    public function render(): string
+    {
+        return '<div data-region="' . $this->name . '"><!--aic:c ' . $this->name . '/0-->'
+            . $this->markup . '<!--/aic:c--></div>';
+    }
+}
+
+/**
+ * @param list<Region> $regions
+ */
+function html(array $regions, string $name): string
+{
+    return implode('', array_map(
+        static fn (Region $region): string => $region->name() === $name ? $region->render() : '',
+        $regions,
+    ));
+}
+
+/**
+ * @param list<Region> $regions
+ */
+function part1(array $regions): string
+{
+    return "<main>\n"
+        . html($regions, 'content')
+        . "\n"
+        . "</main>\n"
+        . '<aside>'
+        . "\n"
+        . html($regions, 'sidebar')
+        . '</aside></body></html>';
+}
+
+/**
+ * @param list<Region> $regions
+ */
+function part2(array $regions): string
+{
+    return '<html>Inventory' . part1($regions);
+}
+
+
+
+$lengths = array_merge(range(10830, 10836), range(13014, 13021), range(16291, 16299));
+$sizes = [];
+foreach ($lengths as $length) {
+    $regions = [
+        new Region('sidebar', '<nav><a href="/">Lotline</a>\n<ul>\n<li><a href="/app">Dashboard</a></li></ul>\n</nav>\n'),
+        new Region('content', str_repeat('x', $length)),
+    ];
+    $sizes[] = strlen(part2($regions));
+}
+echo implode(',', $sizes), "\n";
+"#,
+    );
+    assert!(out.success, "program failed: {}", out.stderr);
+    assert_eq!(
+        out.stdout,
+        "11115,11116,11117,11118,11119,11120,11121,13299,13300,13301,13302,13303,13304,13305,13306,16576,16577,16578,16579,16580,16581,16582,16583,16584\n"
+    );
+    assert!(
+        !out.stderr.contains("free-list corruption"),
+        "heap debug found free-list corruption: {}",
+        out.stderr
+    );
+}
