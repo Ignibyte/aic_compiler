@@ -432,6 +432,7 @@ echo show([1200, 34.27], 0), "|", show([1200, 34.27], 1), "|", show([1200], 5), 
 "#,
     );
     assert_eq!(out, "1,200.0|34.3|0.0|98,765|-|1,234\n");
+}
 
 /// Verifies `number_format()` rounds halves away from zero as PHP's `round()` does, including
 /// exact binary ties (`34.25`, `0.125`, `2.5`) and doubles just below a decimal tie (`1.005`).
