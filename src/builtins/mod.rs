@@ -19,6 +19,7 @@ pub mod docs;
 mod convert;
 mod requirements;
 mod array;
+pub(crate) use array::array_merge::takes_indexed_fast_path as array_merge_takes_indexed_fast_path;
 mod callables;
 mod curl;
 mod io;

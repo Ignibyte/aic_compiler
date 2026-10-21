@@ -530,3 +530,34 @@ echo implode(',', array_merge([1], ...[[2]], ...[[3], [4]])), "\n";
     );
     assert_eq!(out, "7,8,9|x,y,z|0|L|0,1,2,3=1,2,3,4|1,2,3,4\n");
 }
+
+/// Verifies `array_merge()` merges concrete associative and string arrays the indexed helper
+/// cannot copy, through the boxed path: string keys overwritten in order, integer keys
+/// renumbered, an empty left operand, and every source released.
+#[test]
+fn test_array_merge_of_concrete_associative_and_string_arrays() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+function show(array $a): string { return implode(',', array_keys($a)) . '=' . implode(',', $a); }
+for ($i = 0; $i < 3; $i++) {
+    echo show(array_merge(['a' => 1, 'k' => 2], ['k' => 9, 'j' => 3])), '|';
+    echo show(array_merge([1, 2], ['k' => 0])), '|';
+    echo show(array_merge(['k' => 0], [5])), '|';
+    echo show(array_merge([], ['k' => 0])), '|';
+    echo show(array_merge(['a', 'b'], ['c'])), '|';
+    echo show(array_merge([9 => 'x', 'k' => 'y'], [7 => 'z'])), "\n";
+}
+"#,
+    );
+    assert_eq!(
+        out.stdout,
+        "a,k,j=1,9,3|0,1,k=1,2,0|k,0=0,5|k=0|0,1,2=a,b,c|0,k,1=x,y,z\n".repeat(3),
+        "stderr: {}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("HEAP DEBUG: leak summary: clean"),
+        "expected clean heap, got: {}",
+        out.stderr
+    );
+}
