@@ -212,3 +212,34 @@ echo $c[0], $c[1], "|", $n[0], $n[1], "|", $f[0];
     );
     assert_eq!(out, "ABcd|34|2");
 }
+
+/// Verifies a property read on a receiver that does not resolve to one class keeps its value in an
+/// array literal: a `foreach` element of an untyped list, a `mixed` value, and a `__get` property.
+#[test]
+fn test_unresolved_property_read_in_an_array_literal_keeps_its_value() {
+    let out = compile_and_run(
+        r#"<?php
+final readonly class Entry { public function __construct(public string $q, public string $a) {} }
+final class Bag { public function __get(string $name): string { return "got-" . $name; } }
+final readonly class Body {
+    /** @param list<Entry> $entries */
+    public function __construct(private array $entries) {}
+    public function rows(): array {
+        $out = [];
+        foreach ($this->entries as $entry) {
+            $out[] = ['question' => $entry->q, 'answer' => $entry->a];
+        }
+        return $out;
+    }
+}
+function fromMixed(mixed $value): array { return ['q' => $value->q, 'list' => [$value->a]]; }
+function fromMagic(Bag $bag): array { return ['k' => $bag->colour]; }
+echo json_encode((new Body([new Entry('q1', 'a1'), new Entry('q2', 'a2')]))->rows()), "|";
+echo json_encode(fromMixed(new Entry('x', 'y'))), "|", json_encode(fromMagic(new Bag())), "\n";
+"#,
+    );
+    assert_eq!(
+        out,
+        "[{\"question\":\"q1\",\"answer\":\"a1\"},{\"question\":\"q2\",\"answer\":\"a2\"}]|{\"q\":\"x\",\"list\":[\"y\"]}|{\"k\":\"got-colour\"}\n"
+    );
+}
