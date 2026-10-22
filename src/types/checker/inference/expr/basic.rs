@@ -371,9 +371,33 @@ fn increment_type_error(name: &str, ty: &PhpType) -> String {
 
 /// Returns whether a `match (true)` arm may see its `instanceof` guard's then-narrowing of `key`.
 ///
-/// Only a plain local the arm never writes qualifies. A property place (the synthetic `\x01`
-/// key of `$h->p`) is left un-narrowed: an assignment such as `($h->p = new B())` inside the
-/// arm replaces the value behind it, and the local write check cannot see that store.
+/// Only a plain local qualifies, and only when the arm cannot write it before it reads it. A
+/// property place (the synthetic `\x01` key of `$h->p`) is left un-narrowed: an assignment such
+/// as `($h->p = new B())` inside the arm replaces the value behind it, and the local write check
+/// cannot see that store.
 pub(super) fn match_arm_may_narrow(result: &Expr, key: &str) -> bool {
-    !Checker::narrowed_place_key_is_property(key) && !crate::ir_lower::expr_writes_local(result, key)
+    !Checker::narrowed_place_key_is_property(key)
+        && (!crate::ir_lower::expr_writes_local(result, key)
+            || arm_is_call_reading_local(result, key))
+}
+
+/// Returns whether an arm is one call whose receiver and arguments only read the local `key`.
+///
+/// The write check counts a bare `$x` argument as a write whenever it cannot tell that the
+/// parameter is by value, as for a user function or a method. Such a write happens inside the
+/// callee, after every argument has been evaluated, and the call is the arm's last step, so
+/// `$x instanceof A => $this->a($x)` reads `$x` only while the guard still holds.
+fn arm_is_call_reading_local(result: &Expr, key: &str) -> bool {
+    let reads_only =
+        |args: &[Expr]| args.iter().all(|arg| !crate::ir_lower::expr_writes_local(arg, key));
+    match &result.kind {
+        ExprKind::FunctionCall { args, .. }
+        | ExprKind::StaticMethodCall { args, .. }
+        | ExprKind::NewObject { args, .. } => reads_only(args),
+        ExprKind::MethodCall { object, args, .. }
+        | ExprKind::NullsafeMethodCall { object, args, .. } => {
+            !crate::ir_lower::expr_writes_local(object, key) && reads_only(args)
+        }
+        _ => false,
+    }
 }
