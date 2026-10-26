@@ -75,6 +75,8 @@ pub fn scan_tokens(source: &str) -> Result<Vec<SpannedToken>, CompileError> {
 }
 ```
 
+In PHP source mode a `?>` close tag is handled by `src/lexer/inline_html.rs`: it lowers to `Semicolon`, one newline after it (`\n`, `\r\n` or `\r`) is swallowed, and the text up to the next `<?php` (case-insensitive, followed by a space, tab, line break or the end) or `<?=` becomes `Echo StringLiteral Semicolon`, spanning the HTML. `<?=` lowers to `Echo`. A `//` or `#` line comment ends at `?>`, which then closes PHP; `?>` inside a string, heredoc, nowdoc or `/* */` comment is data. Text before the first `<?php` is still refused. `.lfc` sources keep refusing both tags, and a `?>` in an `.lfc` comment stays comment text.
+
 `SpannedToken` (defined in `src/lexer/token.rs`) is `(Token, TokenMetadata)` — every token is paired with metadata that carries its `Span` and, for word-like tokens, an optionally retained source spelling (see [Token metadata](#token-metadata) below).
 
 The public lexer entry point used by the rest of the compiler is `tokenize()` in `src/lexer/mod.rs`, which wraps `scan_tokens()` and returns the final `Vec<SpannedToken>`.
@@ -224,7 +226,7 @@ instanceof
 
 | Token | Meaning |
 |---|---|
-| `OpenTag` | `<?php` — required at the start of every file |
+| `OpenTag` | `<?php` — required at the start of every file; a later `<?php` after inline HTML emits nothing |
 | `AttrOpen` | `#[` — starts a PHP 8 attribute group; bare `#` is a line comment |
 | `Eof` | End of file — signals the parser to stop |
 

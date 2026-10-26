@@ -2995,3 +2995,27 @@ echo count($c6), "|", implode(",", array_keys($_GET)), "\n";
     assert!(r1.ends_with(expected), "first response body: {:?}", r1);
     assert!(r2.ends_with(expected), "second response body: {:?}", r2);
 }
+
+/// Regression: under pool isolation, a class method that requires a template with `?>`, inline
+/// HTML and `<?=` inside `ob_start()` answers every request with the bytes PHP prints.
+#[test]
+fn web_pool_renders_required_inline_html_template() {
+    let dir = make_test_dir("web_pool_inline_html");
+    fs::write(
+        dir.join("item.tpl.php"),
+        "<?php /** @var list<string> $items */ ?>\n<ul><?php foreach ($items as $item): ?><li><?= $item ?></li><?php endforeach ?></ul>\n",
+    )
+    .unwrap();
+    let source = "<?php\nfinal class View\n{\n    /** @param list<string> $items */\n    public function render(array $items): string\n    {\n        ob_start();\n        require __DIR__ . '/item.tpl.php';\n        return (string) ob_get_clean();\n    }\n}\necho (new View())->render(['a', 'b']);\n";
+    let bin = compile_isolated_web(&dir, source, "app", "pool");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let mut server = spawn_server_with_args(&bin, &addr, "1", &["--handler-concurrency", "2"]);
+
+    for _ in 0..2 {
+        assert_eq!(raw_response_body(&http_get(&addr, "/")), "<ul><li>a</li><li>b</li></ul>\n");
+    }
+
+    let _ = server.kill();
+    let _ = server.wait();
+}

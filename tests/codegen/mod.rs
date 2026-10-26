@@ -19,6 +19,7 @@ mod generics_docblock_methods;
 mod generics_docblock_enums;
 mod preprocessor;
 mod namespaces;
+mod inline_html;
 mod null_sentinel;
 mod case_insensitive_symbols;
 mod cli;

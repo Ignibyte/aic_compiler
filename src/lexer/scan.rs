@@ -7,8 +7,11 @@
 //!
 //! Key details:
 //! - Multi-character operators and PHP opening tags must be recognized before shorter prefixes.
+//! - In PHP mode a `?>` close tag ends the statement and switches to inline HTML until the
+//!   next open tag (`inline_html`), and a `//` or `#` comment ends at `?>` as in PHP.
 
 use super::cursor::Cursor;
+use super::inline_html;
 use super::literals;
 use super::token::{spanned, SpannedToken, Token, TokenMetadata};
 use crate::errors::CompileError;
@@ -41,10 +44,11 @@ pub(super) fn scan_tokens_in_source(
     let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let mut cursor = Cursor::new_in_source(source, source_id);
     let mut tokens = Vec::new();
+    let close_tags = !matches!(mode, SourceMode::Lfc);
 
     let span = cursor.span();
     if mode.requires_open_tag() {
-        skip_whitespace_and_comments(&mut cursor);
+        skip_whitespace_and_comments(&mut cursor, close_tags);
         let span = cursor.span();
         if cursor.remaining().starts_with("<?php") {
             for _ in 0..5 {
@@ -59,7 +63,7 @@ pub(super) fn scan_tokens_in_source(
     }
 
     loop {
-        skip_whitespace_and_comments(&mut cursor);
+        skip_whitespace_and_comments(&mut cursor, close_tags);
 
         if cursor.is_eof() {
             tokens.push(spanned(Token::Eof, cursor.span()));
@@ -75,6 +79,8 @@ pub(super) fn scan_tokens_in_source(
                 span,
                 "PHP opening and closing tags are not valid in .lfc source files",
             ));
+        } else if close_tags && cursor.remaining().starts_with("?>") {
+            inline_html::scan_close_tag(&mut cursor, &mut tokens);
         } else if cursor.peek() == Some('"') {
             // Double-quoted strings may contain interpolation ($var)
             let string_tokens = literals::scan_double_string_interpolated(&mut cursor)?;
@@ -113,7 +119,10 @@ pub(super) fn scan_tokens_in_source(
 /// Skips all whitespace, `//` line comments, `#` line comments (but not `#[` attribute
 /// groups), and `/* */` block comments. Uses `continue` to re-check after each comment
 /// type so adjacent comment forms are all skipped.
-fn skip_whitespace_and_comments(cursor: &mut Cursor) {
+///
+/// With `close_tags` (PHP mode), a line comment also ends at `\r` or before a `?>`, which is
+/// left for the main loop to close PHP, as the Zend scanner does.
+fn skip_whitespace_and_comments(cursor: &mut Cursor, close_tags: bool) {
     loop {
         while let Some(ch) = cursor.peek() {
             if ch.is_ascii_whitespace() {
@@ -124,17 +133,13 @@ fn skip_whitespace_and_comments(cursor: &mut Cursor) {
         }
 
         if cursor.remaining().starts_with("//") {
-            while let Some(ch) = cursor.advance() {
-                if ch == '\n' { break; }
-            }
+            skip_line_comment(cursor, close_tags);
             continue;
         }
 
         if cursor.remaining().starts_with('#') && !cursor.remaining().starts_with("#[") {
             // PHP line comment introduced by `#` (but `#[` opens an attribute group).
-            while let Some(ch) = cursor.advance() {
-                if ch == '\n' { break; }
-            }
+            skip_line_comment(cursor, close_tags);
             continue;
         }
 
@@ -155,6 +160,22 @@ fn skip_whitespace_and_comments(cursor: &mut Cursor) {
         }
 
         break;
+    }
+}
+
+/// Skips one `//` or `#` line comment through its newline.
+///
+/// With `close_tags` (PHP mode) the comment also ends at `\r`, and it stops before a `?>`
+/// so the main loop can close PHP; `.lfc` comments run to `\n` and keep `?>` as text.
+fn skip_line_comment(cursor: &mut Cursor, close_tags: bool) {
+    while let Some(ch) = cursor.peek() {
+        if close_tags && cursor.remaining().starts_with("?>") {
+            return;
+        }
+        cursor.advance();
+        if ch == '\n' || (close_tags && ch == '\r') {
+            return;
+        }
     }
 }
 
