@@ -371,7 +371,7 @@ Each routine follows the same pattern — inputs in registers, output in standar
 | `__rt_quoted_printable_encode` | MIME quoted-printable encode | `x1`/`x2` | `x1`/`x2` |
 | `__rt_urlencode` | URL encode | `x1`/`x2` | `x1`/`x2` |
 | `__rt_urldecode` | URL decode | `x1`/`x2` | `x1`/`x2` |
-| `__rt_htmlspecialchars` | HTML escape honouring the `ENT_*` quote and document-type flags | `x1`/`x2` + flags in `x3` | `x1`/`x2` |
+| `__rt_htmlspecialchars` | HTML escape honouring the `ENT_*` quote and document-type flags; under UTF-8, invalid sequences are dropped (`ENT_IGNORE`), written as U+FFFD (`ENT_SUBSTITUTE`) or empty the result, as php-src `get_next_char()` counts them | `x1`/`x2` + flags in `x3` | `x1`/`x2` |
 | `__rt_html_entity_decode` | Decode HTML entities | `x1`/`x2` | `x1`/`x2` |
 | `__rt_strip_tags` | Strip HTML and PHP tags, preserving allowed HTML tags while always removing comments and PHP tags | `x1`/`x2` = subject pointer/length, `x3`/`x4` = allow-list pointer/length | `x1`/`x2` = stripped string |
 | `__rt_rawurlencode` | URL encode (RFC 3986) | `x1`/`x2` | `x1`/`x2` |
