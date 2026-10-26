@@ -120,7 +120,7 @@ Each `Stmt` also carries a source `span` and an `attributes` list. The list is p
 | `DoWhile { body, condition }` | `do { } while (...);` |
 | `For { init, condition, update, body }` | `for (...; ...; ...) { }` — `init`, `condition`, and `update` are all optional, so `for (;;) { }` is valid |
 | `Foreach { array, key_var, value_var, value_by_ref, body }` | `foreach ($arr as $v) { }`, `foreach ($arr as $k => $v) { }`, or `foreach ($arr as &$v) { }` |
-| `Switch { subject, cases, default }` | `switch ($x) { case 1: ...; default: ... }`. `default` is kept apart from the cases and its source position is recovered later from the span of its first statement, so an empty `default:` written before another case (`default: case 2: ...`) receives one empty `Synthetic(vec![])` carrying the label's span; an empty `default:` written last stays empty |
+| `Switch { subject, cases, default }` | `switch ($x) { case 1: ...; default: ... }`. One `;` may stand before the first case in both forms (`switch ($x): ;`), which is what `<?php switch ($x): ?>` lowers to. `default` is kept apart from the cases and its source position is recovered later from the span of its first statement, so an empty `default:` written before another case (`default: case 2: ...`) receives one empty `Synthetic(vec![])` carrying the label's span; an empty `default:` written last stays empty |
 | `ArrayAssign { array, index, value }` | `$arr[0] = 5;` |
 | `NestedArrayAssign { target, value }` | `$arr[0][1] = 5;`, `$obj->items[0] = 5;` |
 | `ArrayPush { array, value }` | `$arr[] = 5;` |
@@ -135,7 +135,7 @@ Each `Stmt` also carries a source `span` and an `attributes` list. The list is p
 | `IncludeOnceMark { label }` | Internal resolver lowering for regular `include` / `require`, marking the resolved file as loaded for later `*_once` guards |
 | `IncludeOnceGuard { label, body }` | Internal resolver lowering for `include_once` / `require_once`; codegen checks a per-file flag before emitting the guarded body |
 | `Throw(Expr)` | `throw new Exception("boom");` |
-| `Synthetic(Vec<Stmt>)` | Internal lowering only; a source construct that has already been expanded into one or more ordinary statements before final codegen |
+| `Synthetic(Vec<Stmt>)` | Internal lowering only; a source construct that has already been expanded into one or more ordinary statements before final codegen. PHP's empty statement `;` (including the one a `?>` close tag lowers to) parses to an empty `Synthetic` |
 | `Try { try_body, catches, finally_body }` | `try { ... } catch (Exception $e) { ... } finally { ... }` |
 | `ConstDecl { name, value }` | `const MAX = 100;`, `const MIN = 1, MAX = MIN + 9;` (a declarator list yields one `ConstDecl` per name, spliced into the enclosing file or namespace statement list) |
 | `IfDef { symbol, then_body, else_body }` | `ifdef DEBUG { ... } else { ... }` |

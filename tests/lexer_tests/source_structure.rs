@@ -115,3 +115,59 @@ fn test_open_tag_with_block_comment_no_code() {
     let t = tokens("<?php /* empty */");
     assert_eq!(t, vec![Token::OpenTag, Token::Eof]);
 }
+
+/// Verifies a `?>` close tag lowers to `;`, and the HTML after it to `echo "…";`.
+#[test]
+fn test_close_tag_lowers_to_semicolon_and_html_echo() {
+    let t = tokens("<?php $a = 1; ?>\n<p>x</p>");
+    assert_eq!(
+        t[5..],
+        [
+            Token::Semicolon,
+            Token::Echo,
+            Token::StringLiteral("<p>x</p>".to_string()),
+            Token::Semicolon,
+            Token::Eof,
+        ]
+    );
+}
+
+/// Verifies `<?=` lowers to `echo` and `<?phpX` stays inside the HTML text.
+#[test]
+fn test_short_echo_tag_and_glued_open_tag() {
+    let t = tokens("<?php ?>a<?phpX b<?= 1 ?>");
+    assert_eq!(
+        t,
+        vec![
+            Token::OpenTag,
+            Token::Semicolon,
+            Token::Echo,
+            Token::StringLiteral("a<?phpX b".to_string()),
+            Token::Semicolon,
+            Token::Echo,
+            Token::IntLiteral(1),
+            Token::Semicolon,
+            Token::Eof,
+        ]
+    );
+}
+
+/// Verifies `//` and `#` line comments end at `?>`, which then closes PHP.
+#[test]
+fn test_line_comments_end_at_close_tag() {
+    for source in ["<?php // c ?>tail", "<?php # c ?>tail"] {
+        let t = tokens(source);
+        assert_eq!(t[1..3], [Token::Semicolon, Token::Echo], "{source}");
+        assert_eq!(t[3], Token::StringLiteral("tail".to_string()), "{source}");
+    }
+}
+
+/// Verifies `?>` inside a string and a block comment is data, not a close tag.
+#[test]
+fn test_close_tag_inside_string_and_block_comment_is_data() {
+    let t = tokens("<?php /* ?> */ echo '?>';");
+    assert_eq!(
+        t,
+        vec![Token::OpenTag, Token::Echo, Token::StringLiteral("?>".to_string()), Token::Semicolon, Token::Eof]
+    );
+}
