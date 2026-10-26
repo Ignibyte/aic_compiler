@@ -15,6 +15,8 @@ mod strip_tags_review;
 mod strip_tags_stringable;
 #[path = "strip_tags_ownership_review.rs"]
 mod strip_tags_ownership_review;
+#[path = "htmlspecialchars_utf8.rs"]
+mod htmlspecialchars_utf8;
 
 /// Verifies `ord()` returns the ASCII code 65 for a single uppercase "A".
 #[test]

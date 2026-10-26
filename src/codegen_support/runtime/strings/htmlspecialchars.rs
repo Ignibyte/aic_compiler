@@ -29,6 +29,8 @@ use crate::codegen_support::platform::Arch;
 ///   `__rt_alloc_overflow` instead of reserving a too-small destination.
 ///
 /// # PHP compatibility
+/// A byte >= 0x80 takes the UTF-8 branch (`htmlspecialchars_utf8`): invalid sequences are dropped under
+/// `ENT_IGNORE`, written as U+FFFD under `ENT_SUBSTITUTE`, and empty the result otherwise (#158).
 /// `"` is escaped only when `ENT_COMPAT` (2) is set and `'` only when `ENT_HTML_QUOTE_SINGLE`
 /// (1) is set, so `ENT_NOQUOTES` leaves both literal. The single quote is `&#039;` under
 /// `ENT_HTML401` and `&apos;` under `ENT_XML1`, `ENT_XHTML` and `ENT_HTML5` (#645).
@@ -63,6 +65,7 @@ pub fn emit_htmlspecialchars(emitter: &mut Emitter) {
     emitter.instruction("cbz x11, __rt_htmlsc_done");                           // no bytes left -> done
     emitter.instruction("ldrb w12, [x1], #1");                                  // load source byte, advance
     emitter.instruction("sub x11, x11, #1");                                    // decrement remaining
+    emitter.instruction("tbnz w12, #7, __rt_htmlsc_high");                      // a byte >= 0x80 starts a UTF-8 sequence
 
     // -- check & (38) -> &amp; --
     emitter.instruction("cmp w12, #38");                                        // is it '&'?
@@ -190,6 +193,8 @@ pub fn emit_htmlspecialchars(emitter: &mut Emitter) {
     // -- impossible result size: report the shared allocation-overflow fatal error --
     emitter.label("__rt_htmlsc_size_overflow");
     emitter.instruction("b __rt_alloc_overflow");                               // unconditional branch keeps the fatal trampoline cross-atom safe
+
+    super::htmlspecialchars_utf8::emit_utf8_branch_aarch64(emitter);
 }
 
 /// Emits the `__rt_htmlspecialchars` runtime helper for Linux x86_64.
@@ -230,6 +235,8 @@ fn emit_htmlspecialchars_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov dl, BYTE PTR [rsi]");                              // load one source byte before deciding whether it maps to a named HTML entity
     emitter.instruction("add rsi, 1");                                          // advance the borrowed source string cursor after consuming one byte
     emitter.instruction("sub rcx, 1");                                          // decrement the remaining source length after consuming one byte
+    emitter.instruction("test dl, dl");                                         // a byte >= 0x80 starts a UTF-8 sequence
+    emitter.instruction("js __rt_htmlsc_high_linux_x86_64");                    // check it as php-src get_next_char does
     emitter.instruction("cmp dl, 38");                                          // is the current byte an ampersand that must expand to `&amp;`?
     emitter.instruction("je __rt_htmlsc_amp_linux_x86_64");                     // write the ampersand entity expansion when the current byte is '&'
     emitter.instruction("cmp dl, 34");                                          // is the current byte a double quote that must expand to `&quot;`?
@@ -343,4 +350,6 @@ fn emit_htmlspecialchars_linux_x86_64(emitter: &mut Emitter) {
     // -- impossible result size: report the shared allocation-overflow fatal error --
     emitter.label("__rt_htmlsc_size_overflow_linux_x86_64");
     emitter.instruction("jmp __rt_alloc_overflow");                             // unconditional branch keeps the fatal trampoline reachable from every caller
+
+    super::htmlspecialchars_utf8::emit_utf8_branch_linux_x86_64(emitter);
 }

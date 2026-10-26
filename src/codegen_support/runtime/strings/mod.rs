@@ -80,6 +80,7 @@ mod inet_pton;
 mod ip2long;
 mod long2ip;
 mod htmlspecialchars;
+mod htmlspecialchars_utf8;
 mod html_entity_decode;
 mod strip_tags;
 mod urlencode;
