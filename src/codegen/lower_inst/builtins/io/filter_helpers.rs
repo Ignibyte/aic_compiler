@@ -75,6 +75,7 @@ pub(super) fn lower_builtin_stream_filter_attach(
 ) -> Result<()> {
     let stream = expect_operand(inst, 0)?;
     load_stream_fd_to_result(ctx, stream, "stream_filter_append")?;
+    let no_slot = emit_fd_slot_guard(ctx);
     abi::emit_push_reg(ctx.emitter, abi::int_result_reg(ctx.emitter));
     materialize_stream_filter_mode(ctx, inst)?;
     let skip_read = ctx.next_label("sf_skip_read");
@@ -116,7 +117,37 @@ pub(super) fn lower_builtin_stream_filter_attach(
         }
     }
     emit_boxed_stream_resource(ctx);
+    emit_fd_slot_guard_false(ctx, &no_slot);
     store_if_result(ctx, inst)
+}
+
+/// Branches to the returned label when the stream descriptor in the integer result
+/// register has no slot in the per-fd filter tables.
+///
+/// Pair it with `emit_fd_slot_guard_false` after the attach code: a descriptor past
+/// `FD_TABLE_SLOTS` cannot record a filter, so `stream_filter_append` returns false.
+pub(super) fn emit_fd_slot_guard(ctx: &mut FunctionContext<'_>) -> String {
+    let no_slot = ctx.next_label("sf_no_fd_slot");
+    let fd_reg = abi::int_result_reg(ctx.emitter);
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, fd_reg, &no_slot);
+    no_slot
+}
+
+/// Closes an `emit_fd_slot_guard`: the attached path skips ahead, and the guard's
+/// label boxes PHP false in the result register.
+pub(super) fn emit_fd_slot_guard_false(ctx: &mut FunctionContext<'_>, no_slot: &str) {
+    let done = ctx.next_label("sf_fd_slot_done");
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            ctx.emitter.instruction(&format!("b {}", done));                    // keep the attached filter resource
+        }
+        Arch::X86_64 => {
+            ctx.emitter.instruction(&format!("jmp {}", done));                  // keep the attached filter resource
+        }
+    }
+    ctx.emitter.label(no_slot);
+    emit_boxed_bool(ctx, false);
+    ctx.emitter.label(&done);
 }
 
 /// Materializes the stream-filter mode operand, defaulting to STREAM_FILTER_ALL.

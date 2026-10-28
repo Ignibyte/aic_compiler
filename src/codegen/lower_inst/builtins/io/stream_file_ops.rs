@@ -58,12 +58,15 @@ pub(crate) fn lower_fclose(ctx: &mut FunctionContext<'_>, inst: &Instruction) ->
         ctx.emitter.instruction("mov rdi, rax");                                // pass the descriptor to the user-filter teardown helper
     }
     abi::emit_call_label(ctx.emitter, "__rt_user_filter_release_fd");
+    let no_slot = ctx.next_label("fclose_no_fd_slot");
     match ctx.emitter.target.arch {
         Arch::AArch64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x0", &no_slot);
             abi::emit_symbol_address(ctx.emitter, "x9", "_stream_read_filters");
             ctx.emitter.instruction("strb wzr, [x9, x0]");                      // clear any read filter before the descriptor can be reused
             abi::emit_symbol_address(ctx.emitter, "x9", "_stream_write_filters");
             ctx.emitter.instruction("strb wzr, [x9, x0]");                      // clear any write filter before the descriptor can be reused
+            ctx.emitter.label(&no_slot);
             ctx.emitter.syscall(6);
             ctx.emitter.instruction("cmp x0, #0");                              // test whether close() reported success
             ctx.emitter.instruction(&format!("b.eq {}", success_label));        // branch to the true result when the stream closed cleanly
@@ -73,10 +76,12 @@ pub(crate) fn lower_fclose(ctx: &mut FunctionContext<'_>, inst: &Instruction) ->
             ctx.emitter.instruction("mov x0, #1");                              // return true when the stream close succeeded
         }
         Arch::X86_64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "rax", &no_slot);
             abi::emit_symbol_address(ctx.emitter, "r9", "_stream_read_filters"); // read-filter table base
             ctx.emitter.instruction("mov BYTE PTR [r9 + rax], 0");              // clear any read filter before the descriptor can be reused
             abi::emit_symbol_address(ctx.emitter, "r9", "_stream_write_filters"); // write-filter table base
             ctx.emitter.instruction("mov BYTE PTR [r9 + rax], 0");              // clear any write filter before the descriptor can be reused
+            ctx.emitter.label(&no_slot);
             ctx.emitter.instruction("mov rdi, rax");                            // pass the stream fd to libc close()
             ctx.emitter.instruction("call close");                              // close the requested stream descriptor
             ctx.emitter.instruction("cmp rax, 0");                              // test whether close() reported success

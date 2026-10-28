@@ -16,6 +16,8 @@
 //!   `fclose` builtin reach libz indirectly through those function pointers.
 //! - Per-descriptor `z_stream` state lives in the `_zstream_handles` table,
 //!   indexed by file descriptor. The write-filter table entry is set to id 4.
+//!   The attach lowering refuses a descriptor past `fd_tables::FD_TABLE_SLOTS`, and
+//!   both helpers treat such a descriptor as having no stream attached.
 //! - The `z_stream` struct is LP64-sized (112 bytes); zeroing it leaves
 //!   `zalloc`/`zfree` NULL so zlib uses its own allocator. The struct itself is
 //!   intentionally not freed on close — a small, documented v1 leak.
@@ -46,6 +48,7 @@ pub(crate) fn emit_arm64(
     // Output: x0 = the input payload length (bytes "written").
     // ================================================================
     emitter.label(fwrite_label);
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", &format!("{}_no_slot", fwrite_label));
     emitter.instruction("sub sp, sp, #48");                                     // frame: [0]=fd [8]=length [16]=z_stream ptr [32]=x29 [40]=x30
     emitter.instruction("stp x29, x30, [sp, #32]");                             // save frame pointer and return address
     emitter.instruction("add x29, sp, #32");                                    // establish the helper frame pointer
@@ -91,6 +94,9 @@ pub(crate) fn emit_arm64(
     emitter.instruction("ldp x29, x30, [sp, #32]");                             // restore frame pointer and return address
     emitter.instruction("add sp, sp, #48");                                     // release the helper frame
     emitter.instruction("ret");                                                 // return the bytes-consumed count
+    emitter.label(&format!("{}_no_slot", fwrite_label));
+    emitter.instruction("mov x0, #0");                                          // a descriptor with no table slot has no filter: nothing written
+    emitter.instruction("ret");                                                 // return zero bytes consumed
 
     // ================================================================
     // zlib deflate close helper.
@@ -100,6 +106,7 @@ pub(crate) fn emit_arm64(
     emitter.instruction("sub sp, sp, #48");                                     // frame: [0]=fd [8]=z_stream [16]=ret code [32]=x29 [40]=x30
     emitter.instruction("stp x29, x30, [sp, #32]");                             // save frame pointer and return address
     emitter.instruction("add x29, sp, #32");                                    // establish the helper frame pointer
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", &format!("{}_done", close_label));
     abi::emit_symbol_address(emitter, "x9", "_zstream_handles");
     emitter.instruction("ldr x10, [x9, x0, lsl #3]");                           // x10 = z_stream pointer for this descriptor
     emitter.instruction(&format!("cbz x10, {}_done", close_label));             // nothing to flush when no filter is attached
@@ -223,6 +230,7 @@ pub(crate) fn emit_x86_64(
     // Output: rax = the input payload length (bytes "written").
     // ================================================================
     emitter.label(fwrite_label);
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", &format!("{}_no_slot", fwrite_label));
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer
     emitter.instruction("mov rbp, rsp");                                        // establish the helper frame pointer
     emitter.instruction("sub rsp, 32");                                         // frame: [-8]=fd [-16]=length [-24]=z_stream
@@ -264,6 +272,9 @@ pub(crate) fn emit_x86_64(
     emitter.instruction("add rsp, 32");                                         // release the helper frame
     emitter.instruction("pop rbp");                                             // restore the caller frame pointer
     emitter.instruction("ret");                                                 // return the bytes-consumed count
+    emitter.label(&format!("{}_no_slot", fwrite_label));
+    emitter.instruction("xor eax, eax");                                        // a descriptor with no table slot has no filter: nothing written
+    emitter.instruction("ret");                                                 // return zero bytes consumed
 
     // ================================================================
     // zlib deflate close helper.
@@ -273,6 +284,7 @@ pub(crate) fn emit_x86_64(
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer
     emitter.instruction("mov rbp, rsp");                                        // establish the helper frame pointer
     emitter.instruction("sub rsp, 32");                                         // frame: [-8]=fd [-16]=z_stream [-24]=ret code
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", &format!("{}_done", close_label));
     abi::emit_symbol_address(emitter, "r9", "_zstream_handles"); // z_stream handle table base
     emitter.instruction("mov r10, QWORD PTR [r9 + rdi*8]");                     // r10 = z_stream pointer for this descriptor
     emitter.instruction("test r10, r10");                                       // is a deflate stream attached to this descriptor?

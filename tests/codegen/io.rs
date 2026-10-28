@@ -21,6 +21,8 @@ mod output_handler_exceptions;
 mod files;
 #[path = "io/streams.rs"]
 pub(crate) mod streams;
+#[path = "io/fd_tables.rs"]
+mod fd_tables;
 mod stream_callback_owners;
 #[path = "io/filesystem.rs"]
 mod filesystem;

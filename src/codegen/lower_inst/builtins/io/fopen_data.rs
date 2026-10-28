@@ -18,6 +18,7 @@ pub(super) fn emit_php_filter_table_stamps(ctx: &mut FunctionContext<'_>, mode_b
             ctx.emitter.instruction("cmp x9, #9");                              // test whether fopen returned a resource
             ctx.emitter.instruction(&format!("b.ne {}", done_label));           // leave false results unmodified
             ctx.emitter.instruction("ldr x1, [x0, #8]");                        // load the descriptor payload from the boxed resource
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x1", &done_label);
             if mode_bits & 1 != 0 {
                 abi::emit_symbol_address(ctx.emitter, "x9", "_stream_read_filters");
                 ctx.emitter.instruction(&format!("mov w10, #{}", filter_id));   // materialize the php://filter read filter id
@@ -35,6 +36,7 @@ pub(super) fn emit_php_filter_table_stamps(ctx: &mut FunctionContext<'_>, mode_b
             ctx.emitter.instruction("cmp r9, 9");                               // test whether fopen returned a resource
             ctx.emitter.instruction(&format!("jne {}", done_label));            // leave false results unmodified
             ctx.emitter.instruction("mov rcx, QWORD PTR [rax + 8]");            // load the descriptor payload from the boxed resource
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "rcx", &done_label);
             if mode_bits & 1 != 0 {
                 abi::emit_symbol_address(ctx.emitter, "r8", "_stream_read_filters"); // read-filter table base
                 ctx.emitter.instruction(

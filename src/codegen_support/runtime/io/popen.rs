@@ -68,6 +68,7 @@ pub fn emit_popen(emitter: &mut Emitter) {
     emitter.instruction("mov w9, w0");                                          // x9 = the pipe descriptor
 
     // -- record the FILE* in the fd->FILE* table for pclose() --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x9", "__rt_popen_no_slot");
     abi::emit_symbol_address(emitter, "x10", "_popen_files");
     emitter.instruction("ldr x11, [sp, #24]");                                  // reload the FILE*
     emitter.instruction("str x11, [x10, x9, lsl #3]");                          // _popen_files[fd] = FILE*
@@ -75,6 +76,12 @@ pub fn emit_popen(emitter: &mut Emitter) {
     emitter.instruction("ldp x29, x30, [sp, #0]");                              // restore frame pointer and return address
     emitter.instruction("add sp, sp, #64");                                     // release the frame
     emitter.instruction("ret");                                                 // return the descriptor
+
+    // -- a pipe whose descriptor has no table slot cannot be pclose()d later: close it and fail --
+    emitter.label("__rt_popen_no_slot");
+    emitter.instruction("ldr x0, [sp, #24]");                                   // reload the FILE* the fd table cannot record
+    emitter.bl_c("pclose");
+    emitter.instruction("b __rt_popen_fail");                                   // report the popen as failed
 
     emitter.label("__rt_popen_fail");
     emitter.instruction("mov x0, #-1");                                         // -1 reports a popen failure
@@ -134,6 +141,7 @@ fn emit_popen_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov r9d, eax");                                        // r9 = the pipe descriptor
 
     // -- record the FILE* in the fd->FILE* table for pclose() --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "r9", "__rt_popen_no_slot_x86");
     abi::emit_symbol_address(emitter, "r10", "_popen_files");                   // base of the fd->FILE* table
     emitter.instruction("mov r11, QWORD PTR [rbp - 32]");                       // reload the FILE*
     emitter.instruction("mov QWORD PTR [r10 + r9 * 8], r11");                   // _popen_files[fd] = FILE*
@@ -141,6 +149,12 @@ fn emit_popen_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("add rsp, 48");                                         // release the frame
     emitter.instruction("pop rbp");                                             // restore the caller frame pointer
     emitter.instruction("ret");                                                 // return the descriptor
+
+    // -- a pipe whose descriptor has no table slot cannot be pclose()d later: close it and fail --
+    emitter.label("__rt_popen_no_slot_x86");
+    emitter.instruction("mov rdi, QWORD PTR [rbp - 32]");                       // reload the FILE* the fd table cannot record
+    emitter.bl_c("pclose");
+    emitter.instruction("jmp __rt_popen_fail_x86");                             // report the popen as failed
 
     emitter.label("__rt_popen_fail_x86");
     emitter.instruction("mov rax, -1");                                         // -1 reports a popen failure

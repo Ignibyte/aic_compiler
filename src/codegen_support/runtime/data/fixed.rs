@@ -34,6 +34,7 @@ use super::{
 };
 use super::super::system;
 use crate::codegen_support::data_section::comm_directive;
+use crate::codegen_support::fd_tables::fd_table_bytes;
 use crate::codegen_support::runtime::strings::{
     B64_DECODE_INVALID, B64_DECODE_SKIP, B64_DECODE_WHITESPACE,
 };
@@ -920,24 +921,26 @@ pub(crate) fn emit_runtime_data_fixed(
     out.push_str(&comm_directive("_gc_peak", 8, target));
     out.push_str(&comm_directive("_cstr_buf", 4096, target));
     out.push_str(&comm_directive("_cstr_buf2", 4096, target));
-    out.push_str(&comm_directive("_eof_flags", 256, target));
-    out.push_str(&comm_directive("_popen_files", 2048, target));
-    out.push_str(&comm_directive("_dir_handles", 2048, target));
-    // Per-fd glob:// state pointers (256 fds × 8B). Each slot is a pointer to
+    // Per-descriptor tables are sized by `fd_tables::FD_TABLE_SLOTS`; every lookup
+    // into them is bounds-checked against it (`emit_branch_if_fd_out_of_table`).
+    out.push_str(&comm_directive("_eof_flags", fd_table_bytes(1), target));
+    out.push_str(&comm_directive("_popen_files", fd_table_bytes(8), target));
+    out.push_str(&comm_directive("_dir_handles", fd_table_bytes(8), target));
+    // Per-fd glob:// state pointers (FD_TABLE_SLOTS fds × 8B). Each slot is a pointer to
     // a heap-allocated glob_state struct (pathv ptr + pathc + index + the
     // libc glob_t whose lifetime globfree() needs at closedir time). The
     // readdir/closedir/rewinddir helpers probe this table first; a non-zero
     // entry routes them through the glob iterator instead of the libc DIR*.
-    out.push_str(&comm_directive("_glob_handles", 2048, target));
-    out.push_str(&comm_directive("_stream_read_filters", 256, target));
-    out.push_str(&comm_directive("_stream_write_filters", 256, target));
+    out.push_str(&comm_directive("_glob_handles", fd_table_bytes(8), target));
+    out.push_str(&comm_directive("_stream_read_filters", fd_table_bytes(1), target));
+    out.push_str(&comm_directive("_stream_write_filters", fd_table_bytes(1), target));
     out.push_str(&comm_directive("_stream_filter_buf", 65536, target));
     // 64KB scratch used by length-growing stream filters (convert.base64-encode,
     // convert.quoted-printable-encode). The filter encodes into the scratch and
     // then memcpy()s back into the caller's buffer, capping input at 49152 bytes
     // so the 4/3 base64 expansion still fits the scratch.
     out.push_str(&comm_directive("_stream_grow_scratch", 65536, target));
-    out.push_str(&comm_directive("_zstream_handles", 2048, target));
+    out.push_str(&comm_directive("_zstream_handles", fd_table_bytes(8), target));
     out.push_str(&comm_directive("_zlib_fwrite_fn", 8, target));
     out.push_str(&comm_directive("_zlib_close_fn", 8, target));
     out.push_str(&comm_directive("_phar_zlib_inflate_init2_fn", 8, target));
@@ -947,21 +950,21 @@ pub(crate) fn emit_runtime_data_fixed(
     // bzip2.compress write-filter state: per-fd bz_stream pointer table
     // (_bzstream_handles, indexed by fd) plus the indirect fn-pointer slots the
     // shared runtime calls through so non-bzip2 programs never link -lbz2.
-    out.push_str(&comm_directive("_bzstream_handles", 2048, target));
+    out.push_str(&comm_directive("_bzstream_handles", fd_table_bytes(8), target));
     out.push_str(&comm_directive("_bz2_fwrite_fn", 8, target));
     out.push_str(&comm_directive("_bz2_close_fn", 8, target));
     out.push_str(&comm_directive("_phar_bz2_decompress_fn", 8, target));
     // convert.iconv.* WRITE-filter state: per-fd iconv_t descriptor table
     // (_iconv_handles) plus the indirect fn-pointer slots the shared runtime
     // calls through so it never names libc iconv (which needs -liconv on macOS).
-    out.push_str(&comm_directive("_iconv_handles", 2048, target));
+    out.push_str(&comm_directive("_iconv_handles", fd_table_bytes(8), target));
     out.push_str(&comm_directive("_iconv_fwrite_fn", 8, target));
     out.push_str(&comm_directive("_iconv_close_fn", 8, target));
     // Apple iconv shares //TRANSLIT and //IGNORE per charset pair, so Apple targets record
-    // each write filter's own option bits per fd (256 fds x 1B) for the fwrite helper to
+    // each write filter's own option bits per fd (FD_TABLE_SLOTS fds x 1B) for the fwrite helper to
     // restore before converting; glibc keeps them per descriptor and needs no table.
     if target.platform == Platform::MacOS {
-        out.push_str(&comm_directive("_iconv_write_options", 256, target));
+        out.push_str(&comm_directive("_iconv_write_options", fd_table_bytes(1), target));
     }
     out.push_str(&comm_directive("_ftp_resp_buf", 4096, target));
     out.push_str(&comm_directive("_ftp_data_addr", 64, target));
@@ -1160,21 +1163,21 @@ pub(crate) fn emit_runtime_data_fixed(
     out.push_str(".p2align 3\n.globl _phar_list_len\n_phar_list_len:\n    .quad 0\n");
     // _tls_sessions: per-fd TLS handle (i64 returned by
     // elephc_tls_attach_fd or 0 when the fd is plain TCP). Indexed by raw
-    // fd up to 256; the runtime fread/fwrite/fclose paths consult this
+    // fd below FD_TABLE_SLOTS; the runtime fread/fwrite/fclose paths consult this
     // table and route through the elephc-tls helpers when an entry is
     // non-zero, falling back to read/write/close syscalls otherwise.
-    out.push_str(&comm_directive("_tls_sessions", 2048, target));
+    out.push_str(&comm_directive("_tls_sessions", fd_table_bytes(8), target));
     // _stream_chunk_size: per-fd read/write chunk size set by
-    // stream_set_chunk_size, indexed by raw fd up to 256 (8 bytes each). A zero
+    // stream_set_chunk_size, indexed by raw fd below FD_TABLE_SLOTS (8 bytes each). A zero
     // entry means "unset" and reports PHP's default of 8192. stream_set_chunk_size
     // returns the previous value (the PHP-observable contract); the size does not
     // currently change read granularity (reads return identical data).
-    out.push_str(&comm_directive("_stream_chunk_size", 2048, target));
+    out.push_str(&comm_directive("_stream_chunk_size", fd_table_bytes(8), target));
     // _stream_connect_host: per-fd transport host string (ptr, len) captured by
     // stream_socket_client so stream_socket_enable_crypto can default the TLS
     // SNI / peer-name to the connection host when no ssl.peer_name context
-    // option is set. 256 fds * 16 bytes (ptr + len). A zero len means "unset".
-    out.push_str(&comm_directive("_stream_connect_host", 4096, target));
+    // option is set. FD_TABLE_SLOTS fds * 16 bytes (ptr + len). A zero len means "unset".
+    out.push_str(&comm_directive("_stream_connect_host", fd_table_bytes(16), target));
     // _stream_notification_callback: the callable descriptor pointer for the
     // stream context's `notification` option, captured at codegen time by
     // stream_context_create / stream_context_set_params. __rt_http_open fires
@@ -1431,8 +1434,8 @@ pub(crate) fn emit_runtime_data_fixed(
     // _user_filter_instances: one wrapper-class instance per attached
     // filter, keyed by (fd, direction). Slot = _user_filter_instances[fd*2
     // + dir] where dir=0 is read, dir=1 is write. Slot is null when no
-    // user filter is attached. 256 fds × 2 dirs × 8 B = 4096 bytes.
-    out.push_str(&comm_directive("_user_filter_instances", 4096, target));
+    // user filter is attached. FD_TABLE_SLOTS fds × 2 dirs × 8 B.
+    out.push_str(&comm_directive("_user_filter_instances", fd_table_bytes(16), target));
     // _stream_context_options: pointer to the current stream-context
     // options hash (nested array of `wrapper => option => value`).
     // stream_context_create() stores its options arg here; consumers

@@ -80,6 +80,7 @@ pub fn emit_fread(emitter: &mut Emitter) {
     // -- TLS dispatch: route through elephc_tls_read when fd has an
     //    attached session (Phase 11 B3). --
     emitter.instruction("ldr x0, [sp, #0]");                                    // reload fd for the TLS check
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_fread_do_syscall");
     crate::codegen_support::abi::emit_symbol_address(emitter, "x13", "_tls_sessions");
     emitter.instruction("ldr x14, [x13, x0, lsl #3]");                          // _tls_sessions[fd] handle (0 = plain TCP)
     emitter.instruction("cbz x14, __rt_fread_do_syscall");                      // no TLS attached → fall through to read syscall
@@ -125,6 +126,7 @@ pub fn emit_fread(emitter: &mut Emitter) {
     emitter.instruction("cbnz x0, __rt_fread_done");                            // if bytes > 0, skip eof flag
     emitter.label("__rt_fread_mark_eof");
     emitter.instruction("ldr x0, [sp, #0]");                                    // reload fd
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_fread_would_block");
     crate::codegen_support::abi::emit_symbol_address(emitter, "x9", "_eof_flags");
     emitter.instruction("mov w10, #1");                                         // eof marker value
     emitter.instruction("strb w10, [x9, x0]");                                  // set _eof_flags[fd] = 1
@@ -139,6 +141,7 @@ pub fn emit_fread(emitter: &mut Emitter) {
 
     // -- apply an attached read filter to the bytes just read --
     emitter.instruction("ldr x0, [sp, #0]");                                    // reload the file descriptor
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_fread_ret");
     crate::codegen_support::abi::emit_symbol_address(emitter, "x9", "_stream_read_filters");
     emitter.instruction("ldrb w3, [x9, x0]");                                   // read filter id for this descriptor
     emitter.instruction("cbz w3, __rt_fread_ret");                              // skip when no read filter is attached
@@ -197,6 +200,7 @@ fn emit_fread_linux_x86_64(emitter: &mut Emitter) {
     // -- TLS dispatch: route through elephc_tls_read when fd has an
     //    attached session (Phase 11 B3). --
     emitter.instruction("mov r10, QWORD PTR [rbp - 8]");                        // reload fd for the TLS table lookup
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "r10", "__rt_fread_do_syscall_x86");
     abi::emit_symbol_address(emitter, "r11", "_tls_sessions");                  // load runtime data address
     emitter.instruction("mov r12, QWORD PTR [r11 + r10 * 8]");                  // _tls_sessions[fd] handle (0 = plain TCP)
     emitter.instruction("test r12, r12");                                       // check whether the runtime value is zero
@@ -224,6 +228,7 @@ fn emit_fread_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov rax, QWORD PTR [rbp - 24]");                       // return the reserved start pointer in the x86_64 elephc string-pointer result register
     emitter.instruction("call __rt_concat_publish");                            // advance the concat scratch offset only for scratch-backed reads
     emitter.instruction("mov r10, QWORD PTR [rbp - 8]");                        // reload the file descriptor for the read-filter lookup
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "r10", "__rt_fread_ret_x86");
     abi::emit_symbol_address(emitter, "r11", "_stream_read_filters");           // materialize the read-filter table base
     emitter.instruction("movzx ecx, BYTE PTR [r11 + r10]");                     // read filter id for this descriptor
     emitter.instruction("test rcx, rcx");                                       // is a read filter attached to this stream?
@@ -259,8 +264,10 @@ fn emit_fread_linux_x86_64(emitter: &mut Emitter) {
 
     emitter.label("__rt_fread_eof_x86");
     emitter.instruction("mov r10, QWORD PTR [rbp - 8]");                        // reload the file descriptor so the eof-flag table can mark this stream as exhausted
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "r10", "__rt_fread_eof_marked_x86");
     abi::emit_symbol_address(emitter, "r11", "_eof_flags");                     // materialize the eof-flag table base address for the current stream descriptor
     emitter.instruction("mov BYTE PTR [r11 + r10], 1");                         // mark the current file descriptor as EOF-reached after the zero-byte or failed read
+    emitter.label("__rt_fread_eof_marked_x86");
     emitter.instruction("xor eax, eax");                                        // return an empty string pointer when libc read() reports EOF or failure
     emitter.instruction("xor edx, edx");                                        // return an empty string length when libc read() reports EOF or failure
     emitter.instruction("add rsp, 32");                                         // release the fread() spill slots before returning the empty-string result
