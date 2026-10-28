@@ -28,6 +28,8 @@ pub fn emit_closedir(emitter: &mut Emitter) {
     emitter.instruction("stp x29, x30, [sp, #0]");                              // save frame pointer and return address
     emitter.instruction("mov x29, sp");                                         // establish the helper frame pointer
 
+    // -- a descriptor with no table slot has neither a glob nor a DIR* handle --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_closedir_done");
     // -- glob:// path takes precedence: probe _glob_handles[fd] first --
     abi::emit_symbol_address(emitter, "x9", "_glob_handles");
     emitter.instruction("ldr x10, [x9, x0, lsl #3]");                           // glob_state* = _glob_handles[fd]
@@ -65,6 +67,8 @@ fn emit_closedir_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov rbp, rsp");                                        // establish the helper frame pointer
     emitter.instruction("sub rsp, 16");                                         // scratch slot for the glob fd
 
+    // -- a descriptor with no table slot has neither a glob nor a DIR* handle --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_closedir_done_x86");
     // -- glob:// path takes precedence: probe _glob_handles[fd] first --
     abi::emit_symbol_address(emitter, "r9", "_glob_handles");                   // base of the fd → glob_state pointer table
     emitter.instruction("mov r10, QWORD PTR [r9 + rdi * 8]");                   // glob_state* = _glob_handles[fd]

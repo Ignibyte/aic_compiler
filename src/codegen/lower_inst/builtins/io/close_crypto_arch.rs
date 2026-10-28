@@ -14,6 +14,7 @@ pub(super) fn emit_tls_session_teardown_for_current_fd(ctx: &mut FunctionContext
     let skip = ctx.next_label("tls_teardown_skip");
     match ctx.emitter.target.arch {
         Arch::AArch64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x0", &skip);
             abi::emit_symbol_address(ctx.emitter, "x9", "_tls_sessions");
             ctx.emitter.instruction("ldr x10, [x9, x0, lsl #3]");               // load the TLS session handle for this descriptor
             ctx.emitter.instruction(&format!("cbz x10, {}", skip));             // skip close_notify when no TLS session is attached
@@ -28,6 +29,7 @@ pub(super) fn emit_tls_session_teardown_for_current_fd(ctx: &mut FunctionContext
             ctx.emitter.label(&skip);
         }
         Arch::X86_64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "rax", &skip);
             abi::emit_symbol_address(ctx.emitter, "r9", "_tls_sessions");       // TLS session table base
             ctx.emitter.instruction("mov r10, QWORD PTR [r9 + rax*8]");         // load the TLS session handle for this descriptor
             ctx.emitter.instruction("test r10, r10");                           // test whether a TLS session is attached
@@ -49,6 +51,7 @@ pub(super) fn emit_zlib_flush_on_close_for_current_fd(ctx: &mut FunctionContext<
     let skip = ctx.next_label("fclose_zlib_skip");
     match ctx.emitter.target.arch {
         Arch::AArch64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x0", &skip);
             abi::emit_symbol_address(ctx.emitter, "x9", "_zstream_handles");
             ctx.emitter.instruction("ldr x10, [x9, x0, lsl #3]");               // load this descriptor's zlib stream handle
             ctx.emitter.instruction(&format!("cbz x10, {}", skip));             // skip flush when no zlib filter is attached
@@ -60,6 +63,7 @@ pub(super) fn emit_zlib_flush_on_close_for_current_fd(ctx: &mut FunctionContext<
             ctx.emitter.label(&skip);
         }
         Arch::X86_64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "rax", &skip);
             abi::emit_symbol_address(ctx.emitter, "r9", "_zstream_handles");    // zlib stream handle table base
             ctx.emitter.instruction("mov r10, QWORD PTR [r9 + rax*8]");         // load this descriptor's zlib stream handle
             ctx.emitter.instruction("test r10, r10");                           // test whether a zlib filter is attached
@@ -79,6 +83,7 @@ pub(super) fn emit_bz2_flush_on_close_for_current_fd(ctx: &mut FunctionContext<'
     let skip = ctx.next_label("fclose_bz2_skip");
     match ctx.emitter.target.arch {
         Arch::AArch64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x0", &skip);
             abi::emit_symbol_address(ctx.emitter, "x9", "_bzstream_handles");
             ctx.emitter.instruction("ldr x10, [x9, x0, lsl #3]");               // load this descriptor's bzip2 stream handle
             ctx.emitter.instruction(&format!("cbz x10, {}", skip));             // skip flush when no bzip2 filter is attached
@@ -90,6 +95,7 @@ pub(super) fn emit_bz2_flush_on_close_for_current_fd(ctx: &mut FunctionContext<'
             ctx.emitter.label(&skip);
         }
         Arch::X86_64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "rax", &skip);
             abi::emit_symbol_address(ctx.emitter, "r9", "_bzstream_handles");   // bzip2 stream handle table base
             ctx.emitter.instruction("mov r10, QWORD PTR [r9 + rax*8]");         // load this descriptor's bzip2 stream handle
             ctx.emitter.instruction("test r10, r10");                           // test whether a bzip2 filter is attached
@@ -109,6 +115,7 @@ pub(super) fn emit_iconv_flush_on_close_for_current_fd(ctx: &mut FunctionContext
     let skip = ctx.next_label("fclose_iconv_skip");
     match ctx.emitter.target.arch {
         Arch::AArch64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x0", &skip);
             abi::emit_symbol_address(ctx.emitter, "x9", "_iconv_handles");
             ctx.emitter.instruction("ldr x10, [x9, x0, lsl #3]");               // load this descriptor's iconv transcoder handle
             ctx.emitter.instruction(&format!("cbz x10, {}", skip));             // skip close when no iconv write filter is attached
@@ -120,6 +127,7 @@ pub(super) fn emit_iconv_flush_on_close_for_current_fd(ctx: &mut FunctionContext
             ctx.emitter.label(&skip);
         }
         Arch::X86_64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "rax", &skip);
             abi::emit_symbol_address(ctx.emitter, "r9", "_iconv_handles");      // iconv transcoder handle table base
             ctx.emitter.instruction("mov r10, QWORD PTR [r9 + rax*8]");         // load this descriptor's iconv transcoder handle
             ctx.emitter.instruction("test r10, r10");                           // test whether an iconv write filter is attached
@@ -145,6 +153,9 @@ pub(super) fn lower_stream_socket_enable_crypto_attach_aarch64(
     let host_default = ctx.next_label("ssec_host_default");
     let plain_attach = ctx.next_label("ssec_plain_attach");
     let do_attach = ctx.next_label("ssec_do_attach");
+    let no_slot = ctx.next_label("ssec_no_fd_slot");
+    ctx.emitter.instruction("ldr x10, [sp]");                                   // load the pushed fd to check its TLS session slot
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x10", &no_slot);
     ctx.emitter.instruction("sub sp, sp, #64");                                 // reserve peer-name and client-cert/key spill storage
     ctx.emitter.instruction("add x0, sp, #0");                                  // pass peer-name out_ptr address
     ctx.emitter.instruction("add x1, sp, #8");                                  // pass peer-name out_len address
@@ -211,6 +222,8 @@ pub(super) fn lower_stream_socket_enable_crypto_attach_aarch64(
     ctx.emitter.instruction("str x0, [x11, x10, lsl #3]");                      // store the TLS session handle for this fd
     ctx.emitter.instruction("mov x0, #1");                                      // return true after successful TLS attach
     ctx.emitter.instruction(&format!("b {}", done_label));                      // skip the failure result
+    ctx.emitter.label(&no_slot);
+    abi::emit_release_temporary_stack(ctx.emitter, 16);
     ctx.emitter.label(&fail_label);
     ctx.emitter.instruction("mov x0, #0");                                      // return false after TLS attach failure
 }
@@ -226,6 +239,9 @@ pub(super) fn lower_stream_socket_enable_crypto_attach_x86_64(
     let host_default = ctx.next_label("ssec_host_default");
     let plain_attach = ctx.next_label("ssec_plain_attach_x");
     let after_attach = ctx.next_label("ssec_after_attach_x");
+    let no_slot = ctx.next_label("ssec_no_fd_slot_x");
+    ctx.emitter.instruction("mov r10, QWORD PTR [rsp]");                        // load the pushed fd to check its TLS session slot
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "r10", &no_slot);
     ctx.emitter.instruction("sub rsp, 64");                                     // reserve peer-name and client-cert/key spill storage
     ctx.emitter.instruction("lea rdi, [rsp + 0]");                              // pass peer-name out_ptr address
     ctx.emitter.instruction("lea rsi, [rsp + 8]");                              // pass peer-name out_len address
@@ -302,6 +318,8 @@ pub(super) fn lower_stream_socket_enable_crypto_attach_x86_64(
     ctx.emitter.instruction("mov QWORD PTR [r11 + r10 * 8], rax");              // store the TLS session handle for this fd
     ctx.emitter.instruction("mov eax, 1");                                      // return true after successful TLS attach
     ctx.emitter.instruction(&format!("jmp {}", done_label));                    // skip the failure result
+    ctx.emitter.label(&no_slot);
+    abi::emit_release_temporary_stack(ctx.emitter, 16);
     ctx.emitter.label(&fail_label);
     ctx.emitter.instruction("xor eax, eax");                                    // return false after TLS attach failure
 }

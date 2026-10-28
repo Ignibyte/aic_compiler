@@ -34,8 +34,12 @@ pub fn emit_feof(emitter: &mut Emitter) {
     emitter.label("__rt_feof_local_fd");
 
     // -- load eof flag for this fd from _eof_flags array --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_feof_no_slot");
     crate::codegen_support::abi::emit_symbol_address(emitter, "x9", "_eof_flags");
     emitter.instruction("ldrb w0, [x9, x0]");                                   // load _eof_flags[fd] into return register
+    emitter.instruction("ret");                                                 // return to caller
+    emitter.label("__rt_feof_no_slot");
+    emitter.instruction("mov x0, #0");                                          // a descriptor with no eof-flag slot never recorded EOF
     emitter.instruction("ret");                                                 // return to caller
 }
 
@@ -53,7 +57,11 @@ fn emit_feof_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("cmp rdi, r9");                                         // is this a synthetic user-wrapper fd?
     emitter.instruction("jge __rt_user_wrapper_feof");                          // dispatch into the wrapper's stream_eof instead of reading the eof-flag table
 
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_feof_no_slot_x86");
     abi::emit_symbol_address(emitter, "r10", "_eof_flags");                     // materialize the eof-flag table base address for the queried file descriptor
     emitter.instruction("movzx eax, BYTE PTR [r10 + rdi]");                     // load the tracked eof flag byte for the requested file descriptor into the integer result register
     emitter.instruction("ret");                                                 // return the eof flag to the caller using the standard x86_64 integer result register
+    emitter.label("__rt_feof_no_slot_x86");
+    emitter.instruction("xor eax, eax");                                        // a descriptor with no eof-flag slot never recorded EOF
+    emitter.instruction("ret");                                                 // return the eof flag to the caller
 }

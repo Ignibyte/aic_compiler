@@ -88,8 +88,7 @@ pub fn emit_opendir_glob(emitter: &mut Emitter) {
     emitter.bl_c("dup");                                                        // x0 = new fd (-1 on failure)
     emitter.instruction("cmp x0, #0");                                          // did dup fail?
     emitter.instruction("b.lt __rt_opendir_glob_fail");                         // dup failed → bail
-    emitter.instruction("cmp x0, #255");                                        // out-of-range for the 256-slot table?
-    emitter.instruction("b.gt __rt_opendir_glob_fail");                         // can't register this fd
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_opendir_glob_no_slot");
 
     // -- register the struct in _glob_handles[fd] --
     abi::emit_symbol_address(emitter, "x9", "_glob_handles");
@@ -98,6 +97,11 @@ pub fn emit_opendir_glob(emitter: &mut Emitter) {
     emitter.instruction("ldp x29, x30, [sp, #0]");                              // restore frame pointer and return address
     emitter.instruction("add sp, sp, #80");                                     // release the frame
     emitter.instruction("ret");                                                 // return the freshly-minted fd
+
+    // -- a dup'd fd with no table slot cannot be registered: close it and fail --
+    emitter.label("__rt_opendir_glob_no_slot");
+    emitter.bl_c("close");                                                      // release the unregistrable dup'd fd (still in x0)
+    emitter.instruction("b __rt_opendir_glob_fail");                            // report the glob:// open as failed
 
     emitter.label("__rt_opendir_glob_fail");
     emitter.instruction("mov x0, #-1");                                         // -1 signals a failed glob:// open
@@ -155,8 +159,7 @@ fn emit_opendir_glob_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("call dup");                                            // rax = new fd (-1 on failure)
     emitter.instruction("test rax, rax");                                       // did dup fail?
     emitter.instruction("js __rt_opendir_glob_fail_x86");                       // negative → bail
-    emitter.instruction("cmp rax, 255");                                        // out-of-range for the 256-slot table?
-    emitter.instruction("jg __rt_opendir_glob_fail_x86");                       // can't register this fd
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rax", "__rt_opendir_glob_no_slot_x86");
 
     // -- register the struct in _glob_handles[fd] --
     abi::emit_symbol_address(emitter, "r9", "_glob_handles");                   // base of the fd → struct pointer table
@@ -165,6 +168,12 @@ fn emit_opendir_glob_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("add rsp, 48");                                         // release the frame
     emitter.instruction("pop rbp");                                             // restore the caller frame pointer
     emitter.instruction("ret");                                                 // return the freshly-minted fd
+
+    // -- a dup'd fd with no table slot cannot be registered: close it and fail --
+    emitter.label("__rt_opendir_glob_no_slot_x86");
+    emitter.instruction("mov rdi, rax");                                        // pass the unregistrable dup'd fd to close()
+    emitter.bl_c("close");                                                      // release the fd before failing
+    emitter.instruction("jmp __rt_opendir_glob_fail_x86");                      // report the glob:// open as failed
 
     emitter.label("__rt_opendir_glob_fail_x86");
     emitter.instruction("mov rax, -1");                                         // -1 signals a failed glob:// open

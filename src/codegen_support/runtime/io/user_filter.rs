@@ -241,6 +241,8 @@ pub fn emit_stream_filter_attach_user(emitter: &mut Emitter) {
     emitter.instruction("str x0, [sp, #0]");                                    // save fd
     emitter.instruction("str x3, [sp, #8]");                                    // save mode
     emitter.instruction("str x4, [sp, #16]");                                   // save boxed filter params
+    // -- a descriptor with no per-fd table slot cannot hold a filter instance --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_sfau_fail_release_params");
 
     // -- resolve filter name → id --
     emitter.instruction("mov x0, x1");                                          // move name_ptr into the resolver's first arg
@@ -354,6 +356,8 @@ fn emit_stream_filter_attach_user_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov QWORD PTR [rbp - 8], rdi");                        // save fd
     emitter.instruction("mov QWORD PTR [rbp - 16], rcx");                       // save mode
     emitter.instruction("mov QWORD PTR [rbp - 24], r8");                        // save boxed filter params
+    // -- a descriptor with no per-fd table slot cannot hold a filter instance --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_sfau_fail_release_params_x86");
 
     // -- resolve filter name → id --
     emitter.instruction("mov rdi, rsi");                                        // move name_ptr into the resolver's first arg
@@ -482,6 +486,7 @@ pub fn emit_apply_user_stream_filter(emitter: &mut Emitter) {
     emitter.instruction("mov x29, sp");                                         // establish the helper frame pointer
 
     // -- look up the cached instance: _user_filter_instances[fd*2 + dir] --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_aufs_passthrough");
     emitter.instruction("add x4, x0, x0");                                      // fd*2
     emitter.instruction("add x4, x4, x3");                                      // fd*2 + dir
     abi::emit_symbol_address(emitter, "x5", "_user_filter_instances");
@@ -542,6 +547,7 @@ fn emit_apply_user_stream_filter_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov rbp, rsp");                                        // establish the helper frame pointer
 
     // -- look up the cached instance: _user_filter_instances[fd*2 + dir] --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_aufs_passthrough_x86");
     emitter.instruction("mov r9, rdi");                                         // fd
     emitter.instruction("add r9, r9");                                          // fd*2
     emitter.instruction("add r9, rcx");                                         // fd*2 + dir
@@ -668,6 +674,8 @@ pub fn emit_user_filter_release_fd(emitter: &mut Emitter) {
     emitter.instruction("stp x29, x30, [sp, #16]");                             // save frame pointer and return address
     emitter.instruction("mov x29, sp");                                         // establish runtime frame pointer
     emitter.instruction("str x0, [sp, #0]");                                    // save fd across the onClose calls
+    // -- a descriptor with no per-fd table slot has no filter instances to release --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_ufrf_dir1_skip");
 
     for dir in 0..2usize {
         let skip = format!("__rt_ufrf_dir{}_skip", dir);
@@ -716,6 +724,8 @@ fn emit_user_filter_release_fd_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov rbp, rsp");                                        // establish runtime frame pointer
     emitter.instruction("sub rsp, 16");                                         // allocate runtime stack frame
     emitter.instruction("mov QWORD PTR [rbp - 8], rdi");                        // save fd
+    // -- a descriptor with no per-fd table slot has no filter instances to release --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_ufrf_dir1_skip_x86");
 
     for dir in 0..2usize {
         let skip = format!("__rt_ufrf_dir{}_skip_x86", dir);

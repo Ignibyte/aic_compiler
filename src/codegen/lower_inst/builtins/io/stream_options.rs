@@ -101,10 +101,8 @@ pub(crate) fn lower_stream_set_chunk_size(
         Arch::AArch64 => {
             ctx.emitter.instruction("mov x1, x0");                              // keep the new chunk size while restoring the stream fd
             abi::emit_pop_reg(ctx.emitter, "x2");
-            ctx.emitter.instruction("cmp x2, #0");                              // negative descriptors cannot index the chunk-size table
-            ctx.emitter.instruction(&format!("b.lt {}", default_label));        // out-of-range descriptors report the default
-            ctx.emitter.instruction("cmp x2, #256");                            // descriptors above the fixed table are ignored
-            ctx.emitter.instruction(&format!("b.ge {}", default_label));        // out-of-range descriptors report the default
+            // -- descriptors with no chunk-size slot (negative or past the table) report the default --
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x2", &default_label);
             abi::emit_symbol_address(ctx.emitter, "x9", "_stream_chunk_size");
             ctx.emitter.instruction("ldr x10, [x9, x2, lsl #3]");               // load the previous per-fd chunk size
             ctx.emitter.instruction(&format!("cbnz x10, {}", have_old_label));  // keep a previously stored size when present
@@ -120,10 +118,8 @@ pub(crate) fn lower_stream_set_chunk_size(
         Arch::X86_64 => {
             ctx.emitter.instruction("mov rsi, rax");                            // keep the new chunk size while restoring the stream fd
             abi::emit_pop_reg(ctx.emitter, "rdi");
-            ctx.emitter.instruction("cmp rdi, 0");                              // negative descriptors cannot index the chunk-size table
-            ctx.emitter.instruction(&format!("jl {}", default_label));          // out-of-range descriptors report the default
-            ctx.emitter.instruction("cmp rdi, 256");                            // descriptors above the fixed table are ignored
-            ctx.emitter.instruction(&format!("jge {}", default_label));         // out-of-range descriptors report the default
+            // -- descriptors with no chunk-size slot (negative or past the table) report the default --
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "rdi", &default_label);
             abi::emit_symbol_address(ctx.emitter, "r9", "_stream_chunk_size");
             ctx.emitter.instruction("mov rax, QWORD PTR [r9 + rdi * 8]");       // load the previous per-fd chunk size
             ctx.emitter.instruction("test rax, rax");                           // check whether a previous size exists

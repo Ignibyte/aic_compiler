@@ -86,12 +86,19 @@ pub fn emit_opendir(emitter: &mut Emitter) {
     emitter.bl_c("dirfd");
 
     // -- record the DIR* in the fd->DIR* table for readdir/closedir --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_opendir_no_slot");
     abi::emit_symbol_address(emitter, "x9", "_dir_handles");
     emitter.instruction("ldr x10, [sp, #16]");                                  // reload the DIR* handle
     emitter.instruction("str x10, [x9, x0, lsl #3]");                           // _dir_handles[fd] = DIR*
     emitter.instruction("ldp x29, x30, [sp, #0]");                              // restore frame pointer and return address
     emitter.instruction("add sp, sp, #32");                                     // release the frame
     emitter.instruction("ret");                                                 // return the directory descriptor
+
+    // -- a directory whose descriptor has no table slot cannot be read later: close it and fail --
+    emitter.label("__rt_opendir_no_slot");
+    emitter.instruction("ldr x0, [sp, #16]");                                   // reload the DIR* the fd table cannot record
+    emitter.bl_c("closedir");
+    emitter.instruction("b __rt_opendir_fail");                                 // report the opendir as failed
 
     emitter.label("__rt_opendir_fail");
     emitter.instruction("mov x0, #-1");                                         // -1 reports an opendir failure
@@ -170,12 +177,19 @@ fn emit_opendir_linux_x86_64(emitter: &mut Emitter) {
     emitter.bl_c("dirfd");
 
     // -- record the DIR* in the fd->DIR* table for readdir/closedir --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rax", "__rt_opendir_no_slot_x86");
     abi::emit_symbol_address(emitter, "r10", "_dir_handles");                   // base of the fd->DIR* table
     emitter.instruction("mov r9, QWORD PTR [rbp - 8]");                         // reload the DIR* handle
     emitter.instruction("mov QWORD PTR [r10 + rax * 8], r9");                   // _dir_handles[fd] = DIR*
     emitter.instruction("add rsp, 16");                                         // release the frame
     emitter.instruction("pop rbp");                                             // restore the caller frame pointer
     emitter.instruction("ret");                                                 // return the directory descriptor
+
+    // -- a directory whose descriptor has no table slot cannot be read later: close it and fail --
+    emitter.label("__rt_opendir_no_slot_x86");
+    emitter.instruction("mov rdi, QWORD PTR [rbp - 8]");                        // reload the DIR* the fd table cannot record
+    emitter.bl_c("closedir");
+    emitter.instruction("jmp __rt_opendir_fail_x86");                           // report the opendir as failed
 
     emitter.label("__rt_opendir_fail_x86");
     emitter.instruction("mov rax, -1");                                         // -1 reports an opendir failure

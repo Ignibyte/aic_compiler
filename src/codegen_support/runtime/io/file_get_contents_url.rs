@@ -517,6 +517,7 @@ pub fn emit_file_get_contents_url(emitter: &mut Emitter) {
     emitter.instruction("bl __rt_stream_get_contents");                         // slurp the FTP data fd into concat buffer
     emitter.instruction("stp x1, x2, [sp, #64]");                               // preserve response ptr/len across close
     emitter.instruction("ldr x0, [sp, #56]");                                   // reload FTP data fd
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_fgc_url_ftp_close_plain");
     abi::emit_symbol_address(emitter, "x9", "_tls_sessions");
     emitter.instruction("ldr x10, [x9, x0, lsl #3]");                           // TLS session attached to this data fd?
     emitter.instruction("cbz x10, __rt_fgc_url_ftp_close_plain");               // plain FTP data fd: close directly
@@ -995,6 +996,7 @@ fn emit_file_get_contents_url_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov QWORD PTR [rbp - 72], rax");                       // save response ptr across close
     emitter.instruction("mov QWORD PTR [rbp - 80], rdx");                       // save response length across close
     emitter.instruction("mov rdi, QWORD PTR [rbp - 64]");                       // reload FTP data fd
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_fgc_url_ftp_close_plain_x86");
     abi::emit_symbol_address(emitter, "r9", "_tls_sessions");                   // TLS session handle table
     emitter.instruction("mov r10, QWORD PTR [r9 + rdi * 8]");                   // TLS session attached to this data fd?
     emitter.instruction("test r10, r10");                                       // is the data fd plain?

@@ -45,6 +45,7 @@ pub fn emit_ftp(emitter: &mut Emitter) {
     emitter.instruction("str x0, [sp, #0]");                                    // save the control descriptor
 
     // -- write phase: TLS-aware dispatch --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_ftp_sr_plain_write");
     abi::emit_symbol_address(emitter, "x13", "_tls_sessions");
     emitter.instruction("ldr x14, [x13, x0, lsl #3]");                          // _tls_sessions[fd] handle (0 = plain TCP)
     emitter.instruction("cbz x14, __rt_ftp_sr_plain_write");                    // no TLS → plain write syscall
@@ -59,6 +60,7 @@ pub fn emit_ftp(emitter: &mut Emitter) {
     // -- read phase: TLS-aware dispatch into _ftp_resp_buf --
     emitter.label("__rt_ftp_sr_read_phase");
     emitter.instruction("ldr x0, [sp, #0]");                                    // reload control fd
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_ftp_sr_plain_read");
     abi::emit_symbol_address(emitter, "x13", "_tls_sessions");
     emitter.instruction("ldr x14, [x13, x0, lsl #3]");                          // load runtime value
     emitter.instruction("cbz x14, __rt_ftp_sr_plain_read");                     // no TLS → plain read syscall
@@ -233,6 +235,7 @@ pub fn emit_ftp(emitter: &mut Emitter) {
     // returned handle in _tls_sessions[fd] so __rt_ftp_send_recv routes
     // subsequent USER/PASS/PBSZ/PROT/PASV through elephc-tls.
     emitter.instruction("ldr x0, [sp, #0]");                                    // fd → first arg
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_ftp_open_fail");
     abi::emit_symbol_address(emitter, "x9", "_elephc_tls_attach_fd_fn");
     emitter.instruction("ldr x9, [x9]");                                        // load runtime value
     emitter.instruction("cbz x9, __rt_ftp_open_fail");                          // missing elephc-tls runtime means FTPS open fails closed
@@ -293,6 +296,7 @@ pub fn emit_ftp(emitter: &mut Emitter) {
     emitter.instruction("ldr x10, [x9]");                                       // load runtime value
     emitter.instruction("cbz x10, __rt_ftp_open_skip_data_tls");                // plain ftp:// → no data-channel TLS
     emitter.instruction("ldr x0, [sp, #24]");                                   // data fd → first arg
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_ftp_open_fail");
     abi::emit_symbol_address(emitter, "x9", "_elephc_tls_attach_fd_fn");
     emitter.instruction("ldr x9, [x9]");                                        // load runtime value
     emitter.instruction("cbz x9, __rt_ftp_open_fail");                          // missing elephc-tls runtime means FTPS open fails closed
@@ -379,6 +383,7 @@ fn emit_ftp_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov QWORD PTR [rbp - 24], rdx");                       // save command length (call write may clobber rdx)
 
     // -- write phase: TLS-aware dispatch --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_ftp_sr_plain_write_x");
     abi::emit_symbol_address(emitter, "r10", "_tls_sessions");                  // load runtime data address
     emitter.instruction("mov r11, QWORD PTR [r10 + rdi * 8]");                  // _tls_sessions[fd] handle (0 = plain TCP)
     emitter.instruction("test r11, r11");                                       // check whether the runtime value is zero
@@ -393,6 +398,7 @@ fn emit_ftp_linux_x86_64(emitter: &mut Emitter) {
     // -- read phase: TLS-aware dispatch into _ftp_resp_buf --
     emitter.label("__rt_ftp_sr_read_phase_x");
     emitter.instruction("mov rdi, QWORD PTR [rbp - 8]");                        // reload control fd
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_ftp_sr_plain_read_x");
     abi::emit_symbol_address(emitter, "r10", "_tls_sessions");                  // load runtime data address
     emitter.instruction("mov r11, QWORD PTR [r10 + rdi * 8]");                  // _tls_sessions[fd] handle
     emitter.instruction("test r11, r11");                                       // check whether the runtime value is zero
@@ -558,6 +564,7 @@ fn emit_ftp_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov rdx, 4096");                                       // prepare SysV call argument
     emitter.instruction("call read");                                           // expect 234
     emitter.instruction("mov rdi, QWORD PTR [rbp - 8]");                        // fd → first arg
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_ftp_open_fail_x86");
     abi::emit_load_symbol_to_reg(emitter, "r9", "_elephc_tls_attach_fd_fn", 0); // prepare SysV call argument
     emitter.instruction("test r9, r9");                                         // missing elephc-tls runtime means FTPS open fails closed
     emitter.instruction("jz __rt_ftp_open_fail_x86");                           // return a failed stream when no TLS entry is available
@@ -618,6 +625,7 @@ fn emit_ftp_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("test rax, rax");                                       // check whether the runtime value is zero
     emitter.instruction("jz __rt_ftp_open_skip_data_tls_x");                    // branch when the checked value is zero or equal
     emitter.instruction("mov rdi, QWORD PTR [rbp - 32]");                       // data fd → first arg
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_ftp_open_fail_x86");
     abi::emit_load_symbol_to_reg(emitter, "r9", "_elephc_tls_attach_fd_fn", 0); // prepare SysV call argument
     emitter.instruction("test r9, r9");                                         // missing elephc-tls runtime means FTPS open fails closed
     emitter.instruction("jz __rt_ftp_open_fail_x86");                           // return a failed stream when no TLS entry is available
