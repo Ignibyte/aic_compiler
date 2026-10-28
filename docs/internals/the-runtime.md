@@ -1749,7 +1749,7 @@ _heap_max:
 .comm _gc_peak, 8            ; high-water mark counter
 .comm _cstr_buf, 4096        ; 4KB C-string conversion buffer
 .comm _cstr_buf2, 4096       ; 4KB second C-string buffer
-.comm _eof_flags, 65536      ; EOF flag per file descriptor (FD_TABLE_SLOTS)
+.comm _eof_flags, 1048576    ; EOF flag per file descriptor (EOF_FLAG_SLOTS)
 .comm _principal_lookup_buf, 4096 ; passwd/group lookup line buffer
 .comm _elephc_crypto_cipher_iv_length_fn, 8 ; published crypto bridge IV-length callback
 .comm _elephc_crypto_cipher_methods_fn, 8 ; published crypto bridge cipher-list callback

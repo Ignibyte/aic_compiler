@@ -34,7 +34,7 @@ use super::{
 };
 use super::super::system;
 use crate::codegen_support::data_section::comm_directive;
-use crate::codegen_support::fd_tables::fd_table_bytes;
+use crate::codegen_support::fd_tables::{fd_table_bytes, EOF_FLAG_SLOTS};
 use crate::codegen_support::runtime::strings::{
     B64_DECODE_INVALID, B64_DECODE_SKIP, B64_DECODE_WHITESPACE,
 };
@@ -923,7 +923,9 @@ pub(crate) fn emit_runtime_data_fixed(
     out.push_str(&comm_directive("_cstr_buf2", 4096, target));
     // Per-descriptor tables are sized by `fd_tables::FD_TABLE_SLOTS`; every lookup
     // into them is bounds-checked against it (`emit_branch_if_fd_out_of_table`).
-    out.push_str(&comm_directive("_eof_flags", fd_table_bytes(1), target));
+    // `_eof_flags` alone has `EOF_FLAG_SLOTS` one-byte slots, one for every
+    // descriptor a default system can open (`emit_branch_if_fd_out_of_eof_flags`).
+    out.push_str(&comm_directive("_eof_flags", EOF_FLAG_SLOTS, target));
     out.push_str(&comm_directive("_popen_files", fd_table_bytes(8), target));
     out.push_str(&comm_directive("_dir_handles", fd_table_bytes(8), target));
     // Per-fd glob:// state pointers (FD_TABLE_SLOTS fds × 8B). Each slot is a pointer to

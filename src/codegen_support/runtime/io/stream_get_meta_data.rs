@@ -98,7 +98,7 @@ pub fn emit_stream_get_meta_data(emitter: &mut Emitter) {
     // -- end-of-file flag from the _eof_flags table --
     emitter.instruction("ldr x0, [sp, #0]");                                    // reload the stream descriptor
     emitter.instruction("mov x10, #0");                                         // a descriptor with no eof-flag slot reports eof = false
-    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_sgmd_eof_done");
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_eof_flags(emitter, "x0", "__rt_sgmd_eof_done");
     abi::emit_symbol_address(emitter, "x9", "_eof_flags");                      // load page of the EOF flag table
     emitter.instruction("ldrb w10, [x9, x0]");                                  // load _eof_flags[fd]
     emitter.instruction("cmp w10, #0");                                         // has end-of-file been observed?
@@ -251,7 +251,7 @@ fn emit_stream_get_meta_data_linux_x86_64(emitter: &mut Emitter) {
     // -- end-of-file flag from the _eof_flags table --
     emitter.instruction("mov rdi, QWORD PTR [rbp - 8]");                        // reload the stream descriptor
     emitter.instruction("xor r11d, r11d");                                      // a descriptor with no eof-flag slot reports eof = false
-    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_sgmd_eof_done_x86");
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_eof_flags(emitter, "rdi", "__rt_sgmd_eof_done_x86");
     abi::emit_symbol_address(emitter, "r10", "_eof_flags");                     // address of the EOF flag table
     emitter.instruction("movzx r11, BYTE PTR [r10 + rdi]");                     // load _eof_flags[fd]
     emitter.instruction("test r11, r11");                                       // has end-of-file been observed?
