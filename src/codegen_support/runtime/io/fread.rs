@@ -126,7 +126,7 @@ pub fn emit_fread(emitter: &mut Emitter) {
     emitter.instruction("cbnz x0, __rt_fread_done");                            // if bytes > 0, skip eof flag
     emitter.label("__rt_fread_mark_eof");
     emitter.instruction("ldr x0, [sp, #0]");                                    // reload fd
-    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_fread_would_block");
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_eof_flags(emitter, "x0", "__rt_fread_would_block");
     crate::codegen_support::abi::emit_symbol_address(emitter, "x9", "_eof_flags");
     emitter.instruction("mov w10, #1");                                         // eof marker value
     emitter.instruction("strb w10, [x9, x0]");                                  // set _eof_flags[fd] = 1
@@ -264,7 +264,7 @@ fn emit_fread_linux_x86_64(emitter: &mut Emitter) {
 
     emitter.label("__rt_fread_eof_x86");
     emitter.instruction("mov r10, QWORD PTR [rbp - 8]");                        // reload the file descriptor so the eof-flag table can mark this stream as exhausted
-    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "r10", "__rt_fread_eof_marked_x86");
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_eof_flags(emitter, "r10", "__rt_fread_eof_marked_x86");
     abi::emit_symbol_address(emitter, "r11", "_eof_flags");                     // materialize the eof-flag table base address for the current stream descriptor
     emitter.instruction("mov BYTE PTR [r11 + r10], 1");                         // mark the current file descriptor as EOF-reached after the zero-byte or failed read
     emitter.label("__rt_fread_eof_marked_x86");

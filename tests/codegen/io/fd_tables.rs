@@ -13,6 +13,9 @@
 //! - Expected output is PHP's own. The test process raises its soft
 //!   `RLIMIT_NOFILE` (inherited by the compiled program) and skips when the hard
 //!   limit is too low to open the handles.
+//! - `_eof_flags` has more slots (`EOF_FLAG_SLOTS`, 1 << 20) than the other tables
+//!   (`FD_TABLE_SLOTS`, 65536); one fixture reads a stream past 65536 to its end,
+//!   and a runtime-assembly check pins the table size and the feof bound.
 
 use crate::support::*;
 
@@ -151,4 +154,81 @@ echo trim(fread($p, 100)), "|", pclose($p), "\n";"#,
         out,
         "SHOUT quiet|high descriptor deflate payload|fd_tables_g_a.txt,fd_tables_g_b.txt|piped|0\n"
     );
+}
+
+/// Verifies `_eof_flags` is sized for 1 << 20 descriptors (Linux's default
+/// `fs.nr_open`) and that the host runtime's `__rt_feof` bounds the lookup by that
+/// count rather than by the 65536 slots of the other per-fd tables.
+#[test]
+fn test_fd_tables_eof_flags_cover_every_default_openable_descriptor() {
+    let dir = std::env::temp_dir().join(format!(
+        "elephc_fd_tables_eof_asm_{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (_, runtime_asm, _) = compile_source_to_asm_with_options(
+        "<?php\n$f = fopen(\"php://memory\", \"r\");\necho feof($f) ? \"eof\" : \"open\";\n",
+        &dir,
+        8_388_608,
+        false,
+        false,
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        runtime_asm.contains(".comm _eof_flags, 1048576,"),
+        "_eof_flags is not sized for 1 << 20 descriptors"
+    );
+    let start = runtime_asm.find("rt_feof:").expect("__rt_feof in the runtime");
+    let feof = &runtime_asm[start..];
+    let feof = &feof[..feof.find("rt_feof_no_slot").expect("feof no-slot path")];
+    let bound = if cfg!(target_arch = "x86_64") {
+        "cmp rdi, 1048576"
+    } else {
+        "cmp x0, #256, lsl #12"
+    };
+    assert!(feof.contains(bound), "__rt_feof does not compare against 1 << 20:\n{feof}");
+}
+
+/// Verifies `feof()` turns true on a stream whose descriptor is past 65536, the
+/// slot count of the other per-fd tables, once the stream is read to its end.
+///
+/// The test process places a file at descriptor 65540 with `dup2` (no
+/// `FD_CLOEXEC`, so the compiled program inherits it) and the fixture opens it as
+/// `php://fd/65540`. Skips when the hard `RLIMIT_NOFILE` does not allow 70000.
+#[test]
+fn test_fd_tables_feof_past_the_fd_table_slots() {
+    const HIGH_FD: libc::c_int = 65540;
+    if !raise_open_file_limit(70_000) {
+        eprintln!("skipping: RLIMIT_NOFILE hard limit is below 70000");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!(
+        "elephc_fd_tables_high_fd_{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("high.txt");
+    std::fs::write(&path, "high").unwrap();
+    let file = std::fs::File::open(&path).unwrap();
+    // SAFETY: dup2 duplicates a descriptor this test owns onto an unused number.
+    let placed = unsafe {
+        libc::dup2(std::os::unix::io::AsRawFd::as_raw_fd(&file), HIGH_FD)
+    };
+    assert_eq!(placed, HIGH_FD, "dup2 onto fd {HIGH_FD} failed");
+    let out = compile_and_run(
+        r#"<?php
+$f = fopen("php://fd/65540", "r");
+echo feof($f) ? "eof" : "open", "|";
+$read = fread($f, 10);
+$read .= fread($f, 10);
+echo $read, "|", feof($f) ? "eof" : "open", "\n";
+fclose($f);
+"#,
+    );
+    // SAFETY: closes only the descriptor this test placed.
+    unsafe {
+        libc::close(HIGH_FD);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out, "open|high|eof\n");
 }

@@ -38,7 +38,7 @@ pub(super) fn lower_fseek_aarch64(
     ctx.emitter.label(success_label);
     abi::emit_pop_reg(ctx.emitter, "x9");
     let eof_cleared = ctx.next_label("seek_eof_cleared");
-    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x9", &eof_cleared);
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_eof_flags(ctx.emitter, "x9", &eof_cleared);
     abi::emit_symbol_address(ctx.emitter, "x10", "_eof_flags");
     ctx.emitter.instruction("strb wzr, [x10, x9]");                             // clear EOF state for the successfully repositioned stream
     ctx.emitter.label(&eof_cleared);
@@ -74,7 +74,7 @@ pub(super) fn lower_fseek_x86_64(
     ctx.emitter.label(success_label);
     abi::emit_pop_reg(ctx.emitter, "r10");
     let eof_cleared = ctx.next_label("seek_eof_cleared");
-    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "r10", &eof_cleared);
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_eof_flags(ctx.emitter, "r10", &eof_cleared);
     ctx.emitter.instruction("lea r11, [rip + _eof_flags]");                     // materialize the EOF-flag table base
     ctx.emitter.instruction("mov BYTE PTR [r11 + r10], 0");                     // clear EOF state for the successfully repositioned stream
     ctx.emitter.label(&eof_cleared);
@@ -114,7 +114,7 @@ pub(super) fn lower_rewind_aarch64(
     ctx.emitter.label(success_label);
     abi::emit_pop_reg(ctx.emitter, "x9");
     let eof_cleared = ctx.next_label("seek_eof_cleared");
-    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x9", &eof_cleared);
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_eof_flags(ctx.emitter, "x9", &eof_cleared);
     abi::emit_symbol_address(ctx.emitter, "x10", "_eof_flags");
     ctx.emitter.instruction("strb wzr, [x10, x9]");                             // clear EOF state after rewinding the stream
     ctx.emitter.label(&eof_cleared);
@@ -154,7 +154,7 @@ pub(super) fn lower_rewind_x86_64(
     ctx.emitter.label(success_label);
     abi::emit_pop_reg(ctx.emitter, "r10");
     let eof_cleared = ctx.next_label("seek_eof_cleared");
-    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "r10", &eof_cleared);
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_eof_flags(ctx.emitter, "r10", &eof_cleared);
     ctx.emitter.instruction("lea r11, [rip + _eof_flags]");                     // materialize the EOF-flag table base
     ctx.emitter.instruction("mov BYTE PTR [r11 + r10], 0");                     // clear EOF state after rewinding the stream
     ctx.emitter.label(&eof_cleared);
