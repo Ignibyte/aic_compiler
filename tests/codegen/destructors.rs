@@ -37,6 +37,46 @@ echo "end of script\n";
     assert_eq!(out, "end of script\ndestruct c\ndestruct a\ndestruct b\n");
 }
 
+/// The object a narrowed receiver's call returns is destructed like any other: a method the
+/// receiver's static interface does not declare dispatches through a boxed `Mixed` result,
+/// and that box owns the returned object, whether the result is chained, bound or discarded.
+#[test]
+fn test_destruct_result_of_narrowed_receiver_call() {
+    let out = compile_and_run(
+        r#"<?php
+interface Response {}
+final class Doc implements Response {
+    public function __construct(private string $name) {}
+    public function __destruct() { echo "destruct ", $this->name, "\n"; }
+    public function with(string $step): self { return new self($this->name . '+' . $step); }
+    public function name(): string { return $this->name; }
+}
+function chained(Response $response): string {
+    if ($response instanceof Doc) { return $response->with('chained')->name(); }
+    return '';
+}
+function bound(Response $response): string {
+    if ($response instanceof Doc) { $next = $response->with('bound'); return $next->name(); }
+    return '';
+}
+function discarded(Response $response): void {
+    if ($response instanceof Doc) { $response->with('discarded'); }
+    echo "after discard\n";
+}
+echo chained(new Doc('a')), "\n";
+echo bound(new Doc('b')), "\n";
+discarded(new Doc('c'));
+echo "end\n";
+"#,
+    );
+    // `bound` releases its locals as codegen orders them; PHP destroys `$response` before `$next`.
+    assert_eq!(
+        out,
+        "destruct a+chained\ndestruct a\na+chained\ndestruct b+bound\ndestruct b\nb+bound\n\
+         destruct c+discarded\nafter discard\ndestruct c\nend\n"
+    );
+}
+
 /// A destructor fires at function scope exit, before control returns to the
 /// caller's following statement.
 #[test]
