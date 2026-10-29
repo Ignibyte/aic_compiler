@@ -1225,3 +1225,44 @@ var_dump(g([1], false, 0));
     );
     assert!(err.contains("return type expects int|string"), "{err}");
 }
+
+/// A guard on a `readonly` property survives a call: `$this->plugin->name()` inside
+/// `if ($this->plugin instanceof Sold)` cannot reassign `$this->plugin`, so a later
+/// `$this->plugin->count()` still reads it as `Sold`. Every call used to drop all property
+/// narrowings, and the second read failed with "Undefined method: Plugin::count".
+#[test]
+fn test_readonly_property_narrowing_survives_a_call() {
+    let out = compile_and_run(
+        r#"<?php
+interface Plugin { public function name(): string; }
+final readonly class Sold implements Plugin
+{
+    public function name(): string { return "sold"; }
+    public function count(): int { return 7; }
+}
+final readonly class Other implements Plugin { public function name(): string { return "other"; } }
+final readonly class Report
+{
+    public function __construct(private Plugin $plugin) {}
+    public function line(): string
+    {
+        if ($this->plugin instanceof Sold) {
+            return $this->plugin->name() . " " . $this->plugin->count();
+        }
+        return $this->plugin->name();
+    }
+}
+final class Box { public function __construct(public readonly Plugin $plugin) {} }
+function boxed(Box $box): string {
+    if ($box->plugin instanceof Sold) {
+        return $box->plugin->name() . " " . $box->plugin->count();
+    }
+    return $box->plugin->name();
+}
+echo (new Report(new Sold()))->line(), "\n";
+echo (new Report(new Other()))->line(), "\n";
+echo boxed(new Box(new Sold())), " ", boxed(new Box(new Other())), "\n";
+"#,
+    );
+    assert_eq!(out, "sold 7\nother\nsold 7 other\n");
+}

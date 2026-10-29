@@ -397,6 +397,49 @@ impl Checker {
         env.retain(|key, _| !key.starts_with('\u{1}'));
     }
 
+    /// Drops the property narrowings a call may invalidate. A call can reassign any reachable
+    /// property, except a `readonly` one: once initialized it never changes, so a guard on
+    /// `$this->plugin` or `$report->plugin` declared `readonly` still holds after the call
+    /// (`$this->plugin->name() . $this->plugin->count()` inside `instanceof Sold`).
+    pub(crate) fn purge_property_narrowings_after_call(&self, env: &mut TypeEnv) {
+        let kept: Vec<String> = env
+            .keys()
+            .filter(|key| self.narrowed_property_is_readonly(key, env))
+            .cloned()
+            .collect();
+        env.retain(|key, _| !key.starts_with('\u{1}') || kept.contains(key));
+    }
+
+    /// Returns whether an instance-property narrowing key names a `readonly` property of its
+    /// receiver's class: `$this` in the class being checked, or a local typed as one class.
+    fn narrowed_property_is_readonly(&self, key: &str, env: &TypeEnv) -> bool {
+        let Some(place) = key.strip_prefix("\u{1}prop\u{1}") else {
+            return false;
+        };
+        let Some((root, property)) = place.split_once("->") else {
+            return false;
+        };
+        let class_name = if root == "$this" {
+            self.current_class.clone()
+        } else {
+            match env.get(root) {
+                Some(PhpType::Object(class_name)) if !class_name.is_empty() => Some(class_name.clone()),
+                _ => None,
+            }
+        };
+        let Some(class_name) = class_name else {
+            return false;
+        };
+        let class_name = class_name.trim_start_matches('\\');
+        // `__construct` and `__clone` of the declaring class may still (re)initialize it.
+        let in_initializer = matches!(self.current_method.as_deref(), Some("__construct" | "__clone"))
+            && self.current_class.as_deref().is_some_and(|current| current.eq_ignore_ascii_case(class_name));
+        !in_initializer
+            && self.classes.get(class_name).is_some_and(|info| {
+                info.is_readonly_class || info.readonly_properties.contains(property)
+            })
+    }
+
     /// Drops synthetic property narrowings rooted at one local variable after that local is
     /// rebound. Other receivers remain valid and keep their precision.
     pub(crate) fn purge_property_narrowings_for_root(env: &mut TypeEnv, root: &str) {
