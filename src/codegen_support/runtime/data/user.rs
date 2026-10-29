@@ -490,12 +490,12 @@ pub(crate) fn emit_runtime_data_user(
         }
     }
 
-    out.push_str(".globl _class_reflection_parameter_cast_public_flags\n_class_reflection_parameter_cast_public_flags:\n");
+    out.push_str(".globl _class_reflection_public_cast_flags\n_class_reflection_public_cast_flags:\n");
     if let Some(max_class_id) = max_class_id {
         for class_id in 0..=max_class_id {
             let flag = class_name_by_id
                 .get(&class_id)
-                .is_some_and(|class_name| class_name.as_str() == "ReflectionParameter");
+                .is_some_and(|class_name| REFLECTION_CLASS_NAMES.contains(&class_name.as_str()));
             out.push_str(&format!("    .quad {}\n", u8::from(flag)));
         }
     }
@@ -554,6 +554,9 @@ pub(crate) fn emit_runtime_data_user(
         let destruct_key = php_symbol_key("__destruct");
         for class_id in 0..=max_class_id {
             let entry = match class_info_by_id.get(&class_id) {
+                Some(_) if all_class_id_by_name.get("Fiber") == Some(&class_id)
+                    || all_class_id_by_name.get("Generator") == Some(&class_id) =>
+                    "__rt_coroutine_force_close".to_string(),
                 Some(class_info) => source_instance_method_entry(
                     class_info,
                     &destruct_key,
@@ -589,9 +592,44 @@ pub(crate) fn emit_runtime_data_user(
         }
     }
 
+    // Dense class-id-indexed `__debugInfo()` table consulted by the var_dump / print_r object
+    // walkers. An entry is filled only for user classes whose `__debugInfo()` the static fold above
+    // could not reduce to descriptor rows (see `runtime_debug_info_entry`); `0` keeps the walkers
+    // on the descriptor rows, so classes without the method pay one table probe and nothing else.
+    out.push_str(".globl _class_debuginfo_ptrs\n_class_debuginfo_ptrs:\n");
+    let mut any_runtime_debug_info = false;
+    let mut void_debug_info = Vec::new();
+    if let Some(max_class_id) = max_class_id {
+        for class_id in 0..=max_class_id {
+            let (entry, returns_nothing) = match class_info_by_id.get(&class_id) {
+                Some(class_info) => runtime_debug_info_entry(class_info, classes)?,
+                None => ("0".to_string(), false),
+            };
+            any_runtime_debug_info |= entry != "0";
+            void_debug_info.push(u8::from(returns_nothing));
+            out.push_str(&format!("    .quad {}\n", entry));
+        }
+    }
+    // Parallel byte table: 1 when that `__debugInfo()` returns nothing (an untyped body that only
+    // throws, or falls off its end). Its result register then holds no value, and the fetch reads
+    // it as PHP's null instead.
+    out.push_str(".globl _class_debuginfo_void\n_class_debuginfo_void:\n");
+    for flag in &void_debug_info {
+        out.push_str(&format!("    .byte {}\n", flag));
+    }
+    out.push_str("    .p2align 3\n");
+    // Program-wide fact for `print_r`: when any class computes `__debugInfo()` at run time, an echo
+    // `print_r` renders into the capture buffer first (a fatal inside the walk then discards the
+    // partial text, like PHP's smart_str). Programs without such a class keep streaming.
+    out.push_str(&format!(
+        ".globl _debuginfo_any\n_debuginfo_any:\n    .quad {}\n",
+        u8::from(any_runtime_debug_info)
+    ));
+
     // Dense class-id-indexed interface-method tables for the runtime helpers that meet an object
     // only as a boxed `Mixed` and so cannot know its class during EIR lowering: `count($m)` reaches
-    // `__rt_mixed_count` and `$m[$k]` reaches `__rt_mixed_array_get`. Both answered for a short
+    // `__rt_mixed_count` and `$m[$k]` reaches `__rt_mixed_array_get` (`unset()` of such an offset
+    // reaches `__rt_mixed_object_offset_unset`). Both answered for a short
     // hard-coded ladder of RUNTIME-NATIVE SPL classes and returned 0 / null for everything else, so
     // a `Countable`/`ArrayAccess` written in PHP — the synthetic builtins like `ArrayObject`
     // included — was skipped in silence.
@@ -614,6 +652,7 @@ pub(crate) fn emit_runtime_data_user(
         ("_class_count_ptrs", "Countable", "count", PhpType::Int),
         ("_class_offsetget_ptrs", "ArrayAccess", "offsetGet", PhpType::Mixed),
         ("_class_offsetset_ptrs", "ArrayAccess", "offsetSet", PhpType::Void),
+        ("_class_offsetunset_ptrs", "ArrayAccess", "offsetUnset", PhpType::Void),
     ] {
         out.push_str(&format!(".globl {table}\n{table}:\n"));
         if let Some(max_class_id) = max_class_id {
@@ -906,9 +945,9 @@ pub(crate) fn emit_runtime_data_user(
     out.push_str("    .quad 0\n");
     out.push_str("    .p2align 3\n");
     out.push_str(".globl _user_wrapper_vtable_missing\n_user_wrapper_vtable_missing:\n");
-    // The method pointers plus the trailing boxed-result mask, so a class with no
+    // The method pointers plus the boxed-result mask and cast-result tag, so a class with no
     // wrapper method shares a table the helpers can read to the same extent.
-    for _ in 0..USER_WRAPPER_VTABLE_SLOTS + 1 {
+    for _ in 0..USER_WRAPPER_VTABLE_SLOTS + 2 {
         out.push_str("    .quad 0\n");
     }
     out.push_str("    .p2align 3\n");
@@ -1204,6 +1243,9 @@ pub(crate) fn emit_runtime_data_user(
                 0
             } else if prop_ty.codegen_repr() == PhpType::TaggedScalar {
                 TAGGED_SCALAR_PROPERTY_TAG
+            } else if crate::types::is_nullable_pointer_type(prop_ty) {
+                // A `?ptr<T>` slot holds the bare pointer word (null is 0), like a `ptr` slot.
+                0
             } else {
                 match prop_ty {
                     PhpType::Int => 0,
@@ -1223,6 +1265,7 @@ pub(crate) fn emit_runtime_data_user(
                     | PhpType::Buffer(_)
                     | PhpType::Packed(_)
                     | PhpType::Never
+                    | PhpType::Narrow(_)
                     | PhpType::Void => 0,
                 }
             };
@@ -1252,6 +1295,10 @@ pub(crate) fn emit_runtime_data_user(
                     // An inline `{payload, tag}` slot owns no heap reference: reading it as
                     // Mixed (7) handed the integer payload to decref/mark as a cell pointer.
                     0
+                } else if crate::types::is_nullable_pointer_type(prop_ty) {
+                    // A `?ptr<T>` slot is a bare pointer word that owns nothing; as Mixed (7)
+                    // the object's teardown decref'd whatever the address points into.
+                    0
                 } else {
                     match prop_ty {
                         PhpType::Int => 0,
@@ -1273,6 +1320,7 @@ pub(crate) fn emit_runtime_data_user(
                         | PhpType::Buffer(_)
                         | PhpType::Packed(_)
                         | PhpType::Never
+                        | PhpType::Narrow(_)
                         | PhpType::Void => 0,
                     }
                 };
@@ -1281,10 +1329,9 @@ pub(crate) fn emit_runtime_data_user(
             out.push('\n');
         }
 
-        // Serialize property-info table: one row per declared property in
-        // declaration order with the PHP-mangled serialize key bytes, the
-        // property's byte offset within the object, and its runtime value tag.
-        // __rt_serialize_object / __rt_unserialize_object walk this by class id.
+        // Serialize property-info table: one row per declared property in declaration order,
+        // including PHP-mangled private keys. The cast walker separately hides Reflection's
+        // compiler-owned private rows by checking each row's declaring class.
         for (prop_index, (prop_name, _)) in class_info.properties.iter().enumerate() {
             let (metadata, owner_name) = physical_property_slot_metadata(
                 classes, class_info, class_name, prop_index, prop_name,
@@ -2916,16 +2963,36 @@ fn class_uses_dynamic_property_tail(class_name: &str, class_info: &ClassInfo) ->
 /// still emitted (zero when the class does not declare the method); the runtime
 /// only reaches a slot when the corresponding builtin routes to it.
 /// Each slot is either a method-symbol pointer (when the class declares the
-/// method publicly) or zero. The stat methods must be declared WITHOUT a
-/// return type (or `: mixed`) so their associative stat array round-trips as a
-/// boxed Mixed cell — a `: array` return is integer-keyed and rejects the
-/// string keys (`size`, `mode`, ...) PHP stat arrays use.
+/// method publicly) or zero. Stat helpers normalize declared arrays and boxed
+/// Mixed results. Two metadata words follow the method slots: the existing
+/// boxed-result mask and stream_cast's declared result representation.
 pub(crate) const USER_WRAPPER_VTABLE_SLOTS: usize = 23;
 
 /// Byte offset of the boxed-result mask that follows the method pointers in every
 /// `_user_wrapper_vtable_<class_id>`. Single authority for the layout: the emitter
 /// writes the quad at this position and the runtime helpers read it from here.
 pub(crate) const USER_WRAPPER_VTABLE_BOXED_MASK_OFFSET: usize = USER_WRAPPER_VTABLE_SLOTS * 8;
+
+/// Byte offset of stream_cast's erased result representation after the existing mask.
+pub(crate) const USER_WRAPPER_VTABLE_CAST_RESULT_OFFSET: usize = (USER_WRAPPER_VTABLE_SLOTS + 1) * 8;
+
+/// Describes stream_cast's native return registers without confusing integer and resource values.
+fn user_wrapper_cast_result_tag(class_info: &ClassInfo) -> u64 {
+    let Some(sig) = class_info.methods.get("stream_cast") else { return 8; };
+    match sig.return_type.codegen_repr() {
+        PhpType::Str => 1,
+        PhpType::Float => 2,
+        PhpType::Bool | PhpType::False => 3,
+        PhpType::Array(_) => 4,
+        PhpType::AssocArray { .. } => 5,
+        PhpType::Object(_) => 6,
+        PhpType::Mixed | PhpType::Union(_) | PhpType::Iterable => 7,
+        PhpType::Void | PhpType::Never => 8,
+        PhpType::Resource(_) => 9,
+        PhpType::Callable => 10,
+        _ => 0,
+    }
+}
 
 /// The number of fixed-slot stream-filter methods recorded per class in
 /// `_user_filter_vtable_<class_id>` (Phase 10 tier 3). Slot order:
@@ -2934,10 +3001,11 @@ pub(crate) const USER_WRAPPER_VTABLE_BOXED_MASK_OFFSET: usize = USER_WRAPPER_VTA
 /// `filter($in, $out, &$consumed, $closing): int` with bucket brigades.
 /// Slot 4 is a non-method byte offset for `php_user_filter::$params`, or zero
 /// when the class has no statically declared params property.
+/// Slot 5 is a bitmask of boxed Mixed parameter representations for brigade calls.
 /// The flag is read by the runtime dispatcher to choose which code path
 /// to invoke. Adding the flag inline in the vtable lets the dispatcher
 /// branch with a single load + cmp.
-pub(crate) const USER_FILTER_VTABLE_SLOTS: usize = 5;
+pub(crate) const USER_FILTER_VTABLE_SLOTS: usize = 6;
 
 /// Returns true when a method key belongs to the fixed-ABI stream-wrapper
 /// vtable surface dispatched by the runtime with raw arguments.
@@ -3113,6 +3181,16 @@ fn emit_user_filter_vtable(
         .copied()
         .unwrap_or(0);
     out.push_str(&format!("    .quad {}\n", params_offset));
+    // Slot 5 describes referent representations; consumed remains an address in both ABIs.
+    let boxed_params = class_info.methods.get("filter")
+        .map(source_method_adapters::source_visible_signature).transpose()?
+        .map(|sig| sig.params.iter().take(4).enumerate().fold(0u32, |mask, (index, (_, ty))| {
+            if matches!(ty.codegen_repr(), PhpType::Mixed | PhpType::Union(_)) {
+                mask | (1 << index)
+            } else { mask }
+        })).unwrap_or(0);
+    out.push_str(&format!("    .quad {boxed_params}\n"));
+
     Ok(())
 }
 
@@ -3144,11 +3222,12 @@ fn emit_user_wrapper_vtable(
             out.push_str("    .quad 0\n");
         }
     }
-    // One trailing quad after the method pointers: the boxed-result mask.
+    // Preserve the mask offset and append the cast-result ABI tag after it.
     out.push_str(&format!(
         "    .quad {}\n",
         user_wrapper_boxed_result_mask(class_info)
     ));
+    out.push_str(&format!("    .quad {}\n", user_wrapper_cast_result_tag(class_info)));
     Ok(())
 }
 
@@ -3394,6 +3473,76 @@ fn source_instance_method_entry(
         physical,
         MethodKind::Instance,
     )
+}
+
+/// Returns whether `class_info` wraps a hosted extension object: every such wrapper, and
+/// every subclass of one, implements the prelude's marker interface.
+fn is_hosted_extension_class(class_info: &ClassInfo) -> bool {
+    class_info.interfaces.iter().any(|interface| {
+        interface.trim_start_matches('\\').eq_ignore_ascii_case(crate::php_ext::prelude::OBJECT_INTERFACE)
+    })
+}
+
+/// Returns the `_class_debuginfo_ptrs` entry for a class: the `__debugInfo()` symbol the
+/// var_dump / print_r walkers call at run time, or `"0"` when they should keep walking the
+/// descriptor rows.
+///
+/// WHY A RUN-TIME CALL. PHP dumps whatever array `__debugInfo()` returns, so a body that
+/// COMPUTES its entries (`'n' => count($this->items)`) cannot be reduced to descriptor rows by
+/// `var_dump_debug_info_projection`. Those classes get a real call instead; a body the fold
+/// already handles keeps its static rows and costs nothing at run time.
+///
+/// An entry is emitted only when ALL hold, otherwise `"0"`:
+/// - neither the class nor the class implementing the method is compiler-internal: the SPL
+///   containers' synthetic `__debugInfo()` bodies build NUL-mangled keys the walkers do not
+///   decode, and they must keep their descriptor presentation. A hosted extension's wrapper
+///   is internal too (a prelude declares it) but is let through: its protected
+///   `DEBUG_INFO_METHOD` returns the engine object's debug table, which is what PHP dumps for
+///   that object;
+/// - the static fold does not apply (the fold wins where it can: no call, no allocation);
+/// - the method's return REPRESENTATION is an indexed array, a hash or a boxed `Mixed`, the
+///   shapes `__rt_obj_debuginfo_fetch` classifies. A statically scalar/string return keeps the
+///   declared-property fallback instead of reading a payload it cannot interpret (PHP would
+///   raise `__debuginfo() must return an array` there).
+fn runtime_debug_info_entry(
+    class_info: &ClassInfo,
+    classes: &HashMap<String, ClassInfo>,
+) -> Result<(String, bool), String> {
+    let none = Ok(("0".to_string(), false));
+    let hosted = is_hosted_extension_class(class_info);
+    // A hosted wrapper dumps through its protected engine-table method, not a user-callable
+    // `__debugInfo()` (PHP's internal classes have none), unless a program subclass declares its
+    // own `__debugInfo()`, which PHP then calls.
+    let own_debug_info = class_info
+        .method_impl_classes
+        .get(&php_symbol_key("__debugInfo"))
+        .is_some_and(|owner| classes.get(owner).is_some_and(|info| !info.is_internal));
+    let key = php_symbol_key(if hosted && !own_debug_info {
+        crate::php_ext::prelude::DEBUG_INFO_METHOD
+    } else {
+        "__debugInfo"
+    });
+    if (class_info.is_internal && !hosted) || var_dump_debug_info_projection(class_info).is_some() {
+        return none;
+    }
+    let Some(impl_class) = class_info.method_impl_classes.get(&key) else {
+        return none;
+    };
+    if classes.get(impl_class).map_or(true, |owner| owner.is_internal && !is_hosted_extension_class(owner)) {
+        return none;
+    }
+    let Some(return_type) = class_info.methods.get(&key).map(|sig| sig.return_type.codegen_repr()) else {
+        return none;
+    };
+    // An array result is walked; a method inferred `void`/`never` (an untyped body that only
+    // throws) still runs, so its exception reaches PHP's `Warning: Uncaught` report.
+    let returns_nothing = matches!(return_type, PhpType::Void | PhpType::Never);
+    if !returns_nothing
+        && !matches!(return_type, PhpType::Array(_) | PhpType::AssocArray { .. } | PhpType::Mixed)
+    {
+        return none;
+    }
+    Ok((source_instance_method_entry(class_info, &key, classes)?, returns_nothing))
 }
 
 /// Selects the source vtable entry without adapting a physical source-variadic slot.
@@ -3660,9 +3809,9 @@ fn var_dump_descriptor_rows(
 /// `__`-prefixed slot is compiler storage that backs an accessor (`getName()` reads
 /// `__name`). Every object renderer that walks the full declared-property list must
 /// therefore omit them. This is the renderer-side counterpart of the cast-path filter
-/// `_class_reflection_parameter_cast_public_flags` in `runtime/objects/object_vars.rs`,
-/// which today covers only `ReflectionParameter`; `var_dump`, `print_r` and `var_export`
-/// all read the rows filtered here, so the three renderers stay in agreement.
+/// `_class_reflection_public_cast_flags` in `runtime/objects/object_vars.rs`, which applies
+/// the same public-only policy to every builtin Reflection owner. `var_dump`, `print_r` and
+/// `var_export` all read the rows filtered here, so the object views stay in agreement.
 ///
 /// WHY THE DECLARING CLASS. A user class may legitimately declare its own private
 /// `__`-prefixed property, and PHP's `var_dump` shows it. The skip is therefore gated on
@@ -3670,7 +3819,13 @@ fn var_dump_descriptor_rows(
 /// `:private` annotation — rather than the instance class, so an instance of a user
 /// subclass of a Reflection class still hides the slots it inherits. `class_name` is only
 /// the fallback when the declaring class is unknown.
+///
+/// A hosted extension object's wrapper keeps the engine handle in a protected property
+/// too; PHP's object has no such property, so no renderer shows it.
 fn is_reflection_backing_slot(class_info: &ClassInfo, class_name: &str, prop_name: &str) -> bool {
+    if prop_name == crate::php_ext::prelude::HANDLE_PROPERTY && is_hosted_extension_class(class_info) {
+        return true;
+    }
     if !prop_name.starts_with("__")
         || !matches!(
             class_info.property_visibilities.get(prop_name),
@@ -3742,8 +3897,10 @@ fn physical_property_slot_metadata<'a>(
 /// span several statements cannot be reduced to a property slot. Before this
 /// function existed elephc ignored `__debugInfo()` for every class, so falling back
 /// to the declared-property list preserves that behaviour exactly and turns no
-/// currently-compiling program into an error. It is a KNOWN DIVERGENCE from PHP,
-/// not parity — `tests/var_dump_object_tests.rs` pins it as such.
+/// currently-compiling program into an error. For USER classes that fallback is no
+/// longer the end of the road: `runtime_debug_info_entry` registers those methods in
+/// `_class_debuginfo_ptrs` and the walkers call them at run time. The fold remains the
+/// fast path for projections, and the only path for compiler-internal classes.
 fn var_dump_debug_info_projection(class_info: &ClassInfo) -> Option<Vec<(String, String)>> {
     use crate::parser::ast::{ExprKind, StmtKind};
 
@@ -4057,6 +4214,10 @@ fn prop_value_tag(class_info: &ClassInfo, prop_name: &str, prop_ty: &PhpType) ->
     }
     if prop_ty.codegen_repr() == PhpType::TaggedScalar {
         return TAGGED_SCALAR_PROPERTY_TAG;
+    }
+    // A `?ptr<T>` slot holds the bare pointer word, serialized like a `ptr` slot.
+    if crate::types::is_nullable_pointer_type(prop_ty) {
+        return 0;
     }
     match prop_ty {
         PhpType::Int => 0,
@@ -4474,6 +4635,7 @@ mod tests {
             abstract_static_methods: HashSet::new(),
             static_vtable_methods: Vec::new(),
             static_vtable_slots: HashMap::new(),
+            declared_interfaces: Vec::new(),
             interfaces: Vec::new(),
             constructor_param_to_prop: Vec::new(),
         }

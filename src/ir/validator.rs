@@ -183,12 +183,48 @@ fn validate_value_table(function: &Function) -> Result<(), ValidationError> {
                 }
             }
         }
+        // A buffer element's storage width (`buffer<i32>`) is never a value type: element reads
+        // and writes carry the `int` or `float` the width reads as.
+        if matches!(value.php_type, PhpType::Narrow(_)) {
+            return Err(ValidationError::PhpTypeMismatch(value_id));
+        }
         if !php_type_compatible(value.ir_type, &value.php_type) {
             return Err(ValidationError::PhpTypeMismatch(value_id));
         }
         if !ownership_compatible(value.ir_type, &value.php_type, value.ownership) {
             return Err(ValidationError::OwnershipTypeMismatch(value_id));
         }
+    }
+    Ok(())
+}
+
+/// Verifies a resolved buffer access takes its descriptor straight from a `BufferResolve`
+/// result: codegen reads the element's storage width (`buffer<i32>`, `buffer<f32>`) from that
+/// instruction's handle operand, so a descriptor that reaches the access through a block
+/// parameter or another instruction would lose the width.
+fn check_descriptor_from_buffer_resolve(
+    function: &Function,
+    inst_id: InstId,
+    inst: &Instruction,
+) -> Result<(), ValidationError> {
+    let descriptor = inst.operands[0];
+    let value = function
+        .value(descriptor)
+        .ok_or(ValidationError::UnknownValue(descriptor))?;
+    let mismatch = || ValidationError::OperandTypeMismatch {
+        inst: inst_id,
+        operand: descriptor,
+        expected: "buffer_resolve descriptor",
+        actual: value.ir_type,
+    };
+    let ValueDef::Instruction { inst: def, .. } = value.def else {
+        return Err(mismatch());
+    };
+    let def_inst = function
+        .instruction(def)
+        .ok_or(ValidationError::UnknownInstruction(def))?;
+    if def_inst.op != Op::BufferResolve {
+        return Err(mismatch());
     }
     Ok(())
 }
@@ -523,6 +559,8 @@ fn validate_instruction_immediate(
         | EnumBackingStringToInt
         | EnumBackingMixedToInt
         | PackedFieldMixedToInt
+        | PackedFieldMixedToFloat
+        | PackedFieldMixedToBool
         | ReturnBoundaryMixedToInt
         | ReturnBoundaryMixedGuard
         | PropInitialized
@@ -618,6 +656,13 @@ fn validate_instruction_immediate(
                 Err(ValidationError::UnexpectedImmediate(inst_id))
             }
         }
+        BufferGetResolved | BufferSetResolved => {
+            if matches!(inst.immediate, None | Some(Imm::Bool(true))) {
+                Ok(())
+            } else {
+                Err(ValidationError::UnexpectedImmediate(inst_id))
+            }
+        }
         Nop => {
             if matches!(inst.immediate, None | Some(Imm::Data(_))) {
                 Ok(())
@@ -689,9 +734,11 @@ fn validate_opcode_rules(
         | CatchCurrent | CatchBind | FinallyEnter | FinallyExit | IncludeOnceMark
         | IncludeOnceGuard | FunctionVariantMark | FunctionVariantDispatch | EvalFunctionExists
         | EvalClassExists | EvalConstantExists | EvalConstantFetch | ConcatReset | GcCollect
-        | GcControl | Nop => {
+        | Nop => {
             check_count(inst_id, inst, 0, "0")
         }
+        // Memory-usage selectors carry the optional `$real_usage` flag as their one operand.
+        GcControl => check_count_at_most(inst_id, inst, 1, "0 or 1"),
         CoreBuiltin => {
             let Some(Immediate::I64(selector)) = inst.immediate.as_ref() else {
                 return Ok(());
@@ -720,6 +767,13 @@ fn validate_opcode_rules(
         }
         EvalScopeSet => check_count(inst_id, inst, 2, "2"),
         ClosureNew => Ok(()),
+        ClosureBind => {
+            match inst.immediate {
+                None | Some(Immediate::ClosureBindScope(_)) => check_count(inst_id, inst, 2, "2"),
+                Some(Immediate::ClosureBindObjectScope(_)) => check_count(inst_id, inst, 3, "3"),
+                _ => Err(ValidationError::UnexpectedImmediate(inst_id)),
+            }
+        }
         FirstClassCallableNew => check_count_at_most(inst_id, inst, 1, "0 or 1"),
         ObjectNew => Ok(()),
         EvalStaticMethodCall => Ok(()),
@@ -822,6 +876,7 @@ fn validate_opcode_rules(
         HashArrayUnion => check_hash_array_union(function, inst_id, inst),
         HashSpread => check_binary(function, inst_id, inst, IrType::Heap(IrHeapKind::Hash), "Heap(Hash)"),
         ArrayLen | ArrayGet | ArrayGetSilent | ArrayIsset | ArrayElemAddr | ArraySet | ArrayPush | ArrayEnsureUnique
+        | ArrayToPointerWords
         | ArrayCloneShallow | ArrayToHash | ArraySetMixedKey | ArrayGetMixedKey
         | ArrayGetMixedKeySilent => {
             check_first_heap(function, inst_id, inst, IrHeapKind::Array, "Heap(Array)")
@@ -923,11 +978,13 @@ fn validate_opcode_rules(
         BufferGetResolved => {
             check_count(inst_id, inst, 2, "2")?;
             check_operand_type(function, inst_id, inst, 0, IrType::I64, "I64 buffer descriptor")?;
+            check_descriptor_from_buffer_resolve(function, inst_id, inst)?;
             check_operand_type(function, inst_id, inst, 1, IrType::I64, "I64 buffer index")
         }
         BufferSetResolved => {
             check_count(inst_id, inst, 3, "3")?;
             check_operand_type(function, inst_id, inst, 0, IrType::I64, "I64 buffer descriptor")?;
+            check_descriptor_from_buffer_resolve(function, inst_id, inst)?;
             check_operand_type(function, inst_id, inst, 1, IrType::I64, "I64 buffer index")
         }
         DynamicObjectNewWithoutConstructorMixed
@@ -956,6 +1013,7 @@ fn validate_opcode_rules(
         | NormalizeCallable
         | PdoAdapterAddr
         | DynamicClassHasConstructor
+        | DynamicClassIsAbstract
         | DynamicPdoStatementClassStatus
         | DynamicPdoCalledClassStatus => check_count(inst_id, inst, 1, "1"),
         DynamicPdoStatementConstructorCall => check_count(inst_id, inst, 3, "3"),

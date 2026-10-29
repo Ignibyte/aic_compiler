@@ -101,6 +101,7 @@ pub(super) fn resolve_physical_property_slot(
         offset: 8 + index * 16,
         is_declared: info.property_slot_is_declared(index, property),
         is_packed: false,
+        width: None,
         is_reference: info.property_slot_is_reference(index, property),
         abstract_setter_type_error_prefix: None,
     })
@@ -816,7 +817,7 @@ pub(super) fn resolve_property_name_in_current_scope(
         &ctx.module.class_infos,
         class_name,
         property,
-        ctx.function.lexical_class.as_deref(),
+        ctx.lexical_class(),
     )
 }
 
@@ -1035,6 +1036,7 @@ fn resolve_scope_private_property_slot(
         offset: 8 + index * 16,
         is_declared: class_info.property_slot_is_declared(index, slot_property),
         is_packed: false,
+        width: None,
         is_reference: class_info.property_slot_is_reference(index, slot_property),
         abstract_setter_type_error_prefix: None,
     })
@@ -1056,7 +1058,7 @@ pub(super) fn property_name_is_scope_dynamic(
         &ctx.module.class_infos,
         class_name,
         property,
-        ctx.function.lexical_class.as_deref(),
+        ctx.lexical_class(),
     )
 }
 
@@ -1153,6 +1155,7 @@ pub(super) fn resolve_property_slot_for_class(
         offset,
         is_declared: class_info.property_slot_is_declared(index, property),
         is_packed: false,
+        width: None,
         is_reference,
         abstract_setter_type_error_prefix: None,
     })
@@ -1396,6 +1399,7 @@ pub(super) fn resolve_packed_field_slot(
         offset: field.offset,
         is_declared: false,
         is_packed: true,
+        width: field.width,
         is_reference: false,
         abstract_setter_type_error_prefix: None,
     })

@@ -190,6 +190,7 @@ pub(crate) fn lower_is_callable(ctx: &mut FunctionContext<'_>, inst: &Instructio
         | PhpType::Float
         | PhpType::Void
         | PhpType::Never
+        | PhpType::Narrow(_)
         | PhpType::Pointer(_)
         | PhpType::Buffer(_)
         | PhpType::Packed(_)

@@ -596,6 +596,9 @@ fn mixed_value_is_statically_destructor_free(
     let Some(inst) = instruction_for_value(ctx, value)? else {
         return Ok(false);
     };
+    if super::super::stack_numeric::numeric_value(ctx.function, &ctx.numeric_values, value) {
+        return Ok(true);
+    }
     if matches!(inst.op, Op::ICheckedAdd | Op::ICheckedSub | Op::ICheckedMul | Op::ICheckedPow) {
         return Ok(true);
     }
@@ -729,7 +732,8 @@ fn store_value_to_raw_ref_cell_as(
     target_ty: &PhpType,
     previous: RefCellStorePrevious,
 ) -> Result<()> {
-    let source_ty = ctx.load_value_to_result(value)?;
+    ctx.load_value_to_result(value)?;
+    let source_ty = ctx.mixed_box_type(value)?;
     let target_ty = target_ty.codegen_repr();
     reject_multiword_ref_param_local(&target_ty, "store")?;
     if target_ty == PhpType::Mixed
@@ -866,10 +870,12 @@ pub(super) fn coerce_ref_cell_store_value(
     source_ty: &PhpType,
     target_ty: &PhpType,
 ) -> Result<()> {
+    let declared_source_ty = source_ty;
     let source_ty = source_ty.codegen_repr();
     let target_ty = target_ty.codegen_repr();
     if target_ty == PhpType::Mixed && source_ty != PhpType::Mixed {
-        emit_box_current_value_as_mixed(ctx.emitter, &source_ty);
+        // The declared type, so a `?ptr<T>` boxes address 0 as PHP null.
+        emit_box_current_value_as_mixed(ctx.emitter, declared_source_ty);
         return Ok(());
     }
     if target_ty == PhpType::TaggedScalar {

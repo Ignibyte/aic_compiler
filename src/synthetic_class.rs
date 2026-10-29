@@ -2204,7 +2204,7 @@ fn audit_expr(expr: &Expr, out: &mut Vec<String>) {
 /// here as several `extern_fn` calls sharing a library.
 pub struct ExternFnBuilder {
     name: String,
-    library: String,
+    library: Option<String>,
     params: Vec<ExternParam>,
     return_type: CType,
 }
@@ -2213,7 +2213,19 @@ pub struct ExternFnBuilder {
 pub fn extern_fn(name: &str, library: &str) -> ExternFnBuilder {
     ExternFnBuilder {
         name: name.to_string(),
-        library: library.to_string(),
+        library: Some(library.to_string()),
+        params: Vec::new(),
+        return_type: CType::Void,
+    }
+}
+
+/// Starts an extern function bound to no library: its symbol comes from an
+/// archive the link plan already carries (a hosted PHP extension's, for one),
+/// so naming a library would add a spurious `-l` flag.
+pub fn extern_fn_unbound(name: &str) -> ExternFnBuilder {
+    ExternFnBuilder {
+        name: name.to_string(),
+        library: None,
         params: Vec::new(),
         return_type: CType::Void,
     }
@@ -2242,7 +2254,7 @@ impl ExternFnBuilder {
                 name: self.name,
                 params: self.params,
                 return_type: self.return_type,
-                library: Some(self.library),
+                library: self.library,
             },
             Span::dummy(),
         )
@@ -2280,17 +2292,15 @@ pub fn class(name: &str) -> ClassBuilder {
 }
 
 impl ClassBuilder {
-    /// Makes the class `final`.
-    pub fn final_(mut self) -> Self {
-        self.is_final = true;
+    /// Makes the class `abstract`.
+    pub fn abstract_(mut self) -> Self {
+        self.is_abstract = true;
         self
     }
 
-    /// Makes the class `abstract`: it can be extended but not instantiated. Its methods are
-    /// still ordinary built methods; an abstract METHOD is an interface-style signature and
-    /// is not modelled here.
-    pub fn abstract_(mut self) -> Self {
-        self.is_abstract = true;
+    /// Makes the class `final`.
+    pub fn final_(mut self) -> Self {
+        self.is_final = true;
         self
     }
 
@@ -2478,6 +2488,12 @@ impl ClassBuilder {
     /// Adds a method.
     pub fn method(mut self, builder: MethodBuilder) -> Self {
         self.methods.push(builder.build());
+        self
+    }
+
+    /// Adds several methods, in order.
+    pub fn methods(mut self, builders: impl IntoIterator<Item = MethodBuilder>) -> Self {
+        self.methods.extend(builders.into_iter().map(MethodBuilder::build));
         self
     }
 

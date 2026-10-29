@@ -18,6 +18,7 @@ mod class_spec;
 mod constant_spec;
 mod catalog_classes;
 mod catalog_constants;
+mod catalog_constants_tokenizer;
 mod catalog_constants_curl;
 mod catalog_data;
 mod catalog_mbstring;
@@ -42,6 +43,9 @@ mod type_spec;
 pub mod mbstring_abi;
 pub mod output_abi;
 pub mod string_literal;
+pub mod reflection_format;
+pub mod reflection_methods;
+pub mod reflection_inheritance;
 mod support;
 mod symbol_registry;
 
@@ -64,7 +68,7 @@ pub use registry::{contracts, lookup, lookup_id};
 pub use symbol_registry::{canonical_constant_name, classes, constants, lookup_class, lookup_constant};
 pub use runtime_id::{runtime_builtin_id, RuntimeBuiltinId, RuntimeBuiltinStatus};
 pub use spec::{
-    Area, BuiltinContract, BuiltinKind, BuiltinRequirement, BuiltinSignature, DefaultSpec,
+    Area, BuiltinContract, BuiltinDeprecation, BuiltinKind, BuiltinRequirement, BuiltinSignature, DefaultSpec,
     ParamSpec, PassingMode, TypeSpec,
 };
 pub use support::{

@@ -106,6 +106,14 @@ Things that have a value:
 
 ### Statements (`Stmt`)
 
+The parser also emits synthetic statement groups. Their structure can carry
+checker specializations, such as nested appends into an empty array, and
+source-map boundaries. File and namespace statement lists expose groups that
+contain declarations before function discovery. Name resolution reuses the same
+rule for transformed programs. Both stages preserve ordinary lowered groups. Flattening
+every synthetic group can change types, autovivification and source maps.
+
+
 Things that do something:
 
 Each `Stmt` also carries a source `span` and an `attributes` list. The list is populated only for declaration statements that can legally be decorated with PHP attributes; attributes before non-declaration statements are rejected during parsing.
@@ -180,7 +188,7 @@ At statement level, parsing is split between `parser/mod.rs` and the `stmt/` sub
 | `Interface` | Interface declaration |
 | `Trait` | Trait declaration |
 | `Function` | Function declaration |
-| `Namespace` | Namespace declaration |
+| `Namespace` | Namespace declaration, or an expression statement when `\` follows (a relative name such as `namespace\helper();`) |
 | `Use` | Namespace import declaration |
 | `Declare` | `declare(...)` directive; lowers to `Synthetic` (see above) |
 | `Return` | Return statement |
@@ -235,6 +243,10 @@ Ptr(Option<Name>)  Buffer(Box<TypeExpr>)  Named(Name)
 GenericClass { name, args }  CallableSig { params, ret }
 Nullable(Box<TypeExpr>)  Union(Vec<TypeExpr>)  Intersection(Vec<TypeExpr>)
 ```
+
+A nested pointer target is encoded in the `Ptr` name, for example
+`ptr<ptr<u8>>` becomes `Ptr(Some(Name::unqualified("ptr<u8>")))`. Class-name consumers
+unwrap nested target strings with `names::pointer_target_leaf` or `pointer_target_leaf_name`.
 
 `Iterable` represents PHP's `iterable` pseudo-type in parameter, return,
 property, and typed-local annotations. `False` is PHP's literal `false` type,
@@ -419,6 +431,7 @@ Before looking for infix operators, the parser handles **prefix** constructs —
 | `Identifier` / `\Identifier` / qualified name + `(` | Parse as function call with arguments |
 | `Identifier` / `\Identifier` / qualified name + `(...)` | Parse as first-class callable → `FirstClassCallable(CallableTarget::Function)` |
 | `Identifier` / `\Identifier` / qualified name (no `(`) | Parse as constant reference → `ConstRef` |
+| `namespace` + `\` + name | A relative name, parsed like the three rows above. The name parser resolves it on the spot to the fully qualified name in the namespace being parsed (`namespace\helper()` in `App` is `\App\helper()`). `parser::relative_names` tracks that namespace structurally: `namespace X;` sets it, a braced `namespace X { ... }` sets it for its body and restores the previous one at its `}`, and every parsed file starts in the global namespace |
 | `function` + `(` | Parse anonymous function (closure) → `Closure` |
 | `fn` + `(` | Parse arrow function → `Closure` (with `is_arrow = true`) |
 | `static` + `function` / `fn` + `(` | Parse static closure → `Closure` (with `is_static = true`); the type checker rejects `$this` inside the body |
@@ -499,7 +512,7 @@ Statement parsing is simpler — after `parse()` has peeled off top-level `exter
 | `Continue` | Continue statement with optional positive integer level |
 | `Include` / `Require` / `IncludeOnce` / `RequireOnce` | Include statement (path is parsed as an expression and later folded by the resolver when it is a compile-time string) |
 | `Const` | Constant declaration (`const NAME = value;`) |
-| `Namespace` | Namespace declaration (`namespace App\Core;` or `namespace App\Core { ... }`) |
+| `Namespace` | Namespace declaration (`namespace App\Core;` or `namespace App\Core { ... }`); `namespace` followed by `\` is a relative name instead (`namespace\helper();`) and parses as an expression statement |
 | `Use` | Namespace import declaration (`use Foo\Bar;`, `use function Foo\bar as baz;`) |
 | `Declare` | `declare(...)` directive statement or block; lowers to `Synthetic` |
 | `Global` | Global variable declaration (`global $x, $y;`) |

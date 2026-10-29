@@ -2,7 +2,7 @@
 title: "imagesetpixel()"
 description: "Sets one pixel to a color."
 sidebar:
-  order: 530
+  order: 538
 ---
 
 ## imagesetpixel()

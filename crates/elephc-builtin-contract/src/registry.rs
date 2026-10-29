@@ -159,10 +159,27 @@ mod tests {
         // +11 over main: the `__elephc_opcache_rt_*` runtime script-cache helpers this
         // branch adds (see `support.rs` for the roll-call).
         // +4: the `ptr_read_f32`/`ptr_write_f32`/`ptr_read_f64`/`ptr_write_f64` pointer builtins.
+        // +1: `buffer_ptr`, the payload address of a buffer.
+        // +5: native heap usage, peak reset, and allocation/free counters.
+        // +4: the internal `__elephc_ptr_get` and `__elephc_zval_{pack,free,unpack}` aliases
+        // the extension-hosting prelude calls.
+        // +2: PHP 8.5 array value-edge functions.
         // Fork: +1 `flush`, +2 the `--web` prelude's `is_uploaded_file` and `move_uploaded_file`.
-        assert_eq!(contracts().len(), 1168 + curl_surface);
+        assert_eq!(contracts().len(), 1199 + curl_surface);
         assert_eq!(lookup("STRLEN").map(|contract| contract.name), Some("strlen"));
         assert_eq!(lookup("\\parse_url").map(|contract| contract.name), Some("parse_url"));
+    }
+
+    /// Array value-edge functions became available in PHP 8.5, after the find/any/all family.
+    #[test]
+    fn array_edge_value_contracts_match_php_85() {
+        for name in ["array_first", "array_last"] {
+            let contract = lookup(name).expect("array value-edge contract");
+            assert_eq!(contract.since, Some(crate::PhpVersion::Php85), "{name}");
+            assert_eq!(contract.signature().required_param_count(), 1, "{name}");
+            assert!(!contract.params[0].by_ref, "{name}");
+            assert_eq!(contract.returns, crate::TypeSpec::Mixed, "{name}");
+        }
     }
 
     /// Verifies the PHP 8.5 clone function keeps its object and override-array contract.

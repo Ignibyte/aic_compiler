@@ -41,6 +41,17 @@ macro_rules! constant {
 }
 
 pub(crate) static CONSTANTS: &[ConstantContract] = &[
+    constant!("FILEINFO_APPLE", Fileinfo, ConstValue::Int(2048)),
+    constant!("FILEINFO_CONTINUE", Fileinfo, ConstValue::Int(32)),
+    constant!("FILEINFO_DEVICES", Fileinfo, ConstValue::Int(8)),
+    constant!("FILEINFO_EXTENSION", Fileinfo, ConstValue::Int(16777216)),
+    constant!("FILEINFO_MIME", Fileinfo, ConstValue::Int(1040)),
+    constant!("FILEINFO_MIME_ENCODING", Fileinfo, ConstValue::Int(1024)),
+    constant!("FILEINFO_MIME_TYPE", Fileinfo, ConstValue::Int(16)),
+    constant!("FILEINFO_NONE", Fileinfo, ConstValue::Int(0)),
+    constant!("FILEINFO_PRESERVE_ATIME", Fileinfo, ConstValue::Int(128)),
+    constant!("FILEINFO_RAW", Fileinfo, ConstValue::Int(256)),
+    constant!("FILEINFO_SYMLINK", Fileinfo, ConstValue::Int(2)),
     constant!("ARRAY_FILTER_USE_BOTH", Standard, ConstValue::Int(1)),
     constant!("ARRAY_FILTER_USE_KEY", Standard, ConstValue::Int(2)),
     constant!("ARRAY_FILTER_USE_VALUE", Standard, ConstValue::Int(0), extension: true),
@@ -254,6 +265,8 @@ pub(crate) static CONSTANTS: &[ConstantContract] = &[
     constant!("MB_CASE_UPPER", Mbstring, ConstValue::Int(0)),
     constant!("MB_CASE_UPPER_SIMPLE", Mbstring, ConstValue::Int(4)),
     constant!("MB_ONIGURUMA_VERSION", Mbstring, ConstValue::Str(crate::mbstring_abi::regex::ONIGURUMA_VERSION)),
+    constant!("MT_RAND_MT19937", Random, ConstValue::Int(0)),
+    constant!("MT_RAND_PHP", Random, ConstValue::Int(1)),
     constant!("MYSQLI_ASSOC", Mysqli, ConstValue::Int(1), route: Prelude),
     constant!("MYSQLI_BOTH", Mysqli, ConstValue::Int(3), route: Prelude),
     constant!("MYSQLI_CLIENT_COMPRESS", Mysqli, ConstValue::Int(32), route: Prelude),

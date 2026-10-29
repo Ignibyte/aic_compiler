@@ -2,7 +2,7 @@
 title: "spl_autoload_functions()"
 description: "Return all registered __autoload() functions."
 sidebar:
-  order: 776
+  order: 796
 ---
 
 ## spl_autoload_functions()

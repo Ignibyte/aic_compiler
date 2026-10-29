@@ -172,7 +172,7 @@ fn retain_embedded_packed_classes(reach: &mut Reachability, check_result: &Check
         let crate::types::PhpType::Pointer(Some(inner)) = ty else {
             continue;
         };
-        let inner_key = php_symbol_key(inner);
+        let inner_key = php_symbol_key(crate::names::pointer_target_leaf(inner));
         if packed.contains_key(&inner_key) && reach.classes.insert(inner_key.clone()) {
             pending.push(inner_key);
         }
@@ -187,7 +187,7 @@ fn retain_embedded_packed_classes(reach: &mut Reachability, check_result: &Check
             else {
                 continue;
             };
-            let inner_key = php_symbol_key(inner);
+            let inner_key = php_symbol_key(crate::names::pointer_target_leaf(inner));
             if packed.contains_key(&inner_key) && reach.classes.insert(inner_key.clone()) {
                 pending.push(inner_key);
             }
@@ -1004,6 +1004,8 @@ fn is_magic_method(method: &str) -> bool {
             | "__sleep"
             | "__wakeup"
             | "__debuginfo"
+            // A hosted extension wrapper's dump method, reached only through `_class_debuginfo_ptrs`.
+            | "__elephcdebuginfo"
             | "__set_state"
             | "__call"
             | "__callstatic"

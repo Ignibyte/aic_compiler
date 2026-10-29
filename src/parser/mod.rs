@@ -18,9 +18,17 @@ mod control;
 pub mod expr;
 /// Maps tokens that may legally appear as bareword names (identifiers and semi-reserved keywords).
 mod keyword_name;
+mod declare_context;
+pub(crate) mod declaration_groups;
+/// Resolves relative `namespace\name` references against the namespace being parsed.
+mod relative_names;
 pub(crate) mod stmt;
 
 pub(crate) use attributes::{consume_attribute_lists, parse_attribute_lists};
+pub(crate) use relative_names::{
+    at_top_level_statement, current_namespace_parts, enter_namespace, enter_statement,
+    relative_name_starts_at, restore_namespace,
+};
 
 /// Re-exports the root AST node for a parsed PHP file, containing all top-level statements.
 pub use ast::Program;
@@ -81,6 +89,17 @@ pub(crate) fn next_anonymous_class_name() -> String {
         id
     });
     format!("class@anonymous#{}", id)
+}
+
+/// Returns the next anonymous-class number, for [`restore_anonymous_class_counter`].
+pub(crate) fn anonymous_class_counter() -> usize {
+    ANONYMOUS_CLASS_COUNTER.with(|counter| counter.get())
+}
+
+/// Rewinds the anonymous-class numbering after a parse whose result is discarded (the autoload
+/// prelude probe), so the real parse names its anonymous classes exactly as without it.
+pub(crate) fn restore_anonymous_class_counter(next: usize) {
+    ANONYMOUS_CLASS_COUNTER.with(|counter| counter.set(next));
 }
 
 /// Returns whether `name` is a synthetic anonymous-class name from `next_anonymous_class_name`.
@@ -163,7 +182,9 @@ pub fn parse_with_recovery_in_mode(
 /// Implements recovery parsing after the source-mode scope has been installed.
 fn parse_with_recovery_inner(tokens: &[SpannedToken]) -> Result<Program, Vec<CompileError>> {
     reject_excessive_nesting(tokens)?;
-    crate::compiler_stack::with_compiler_stack(|| parse_checked_tokens(tokens))
+    relative_names::with_global_namespace_scope(|| {
+        crate::compiler_stack::with_compiler_stack(|| parse_checked_tokens(tokens))
+    })
 }
 
 /// Parses tokens whose nesting depth is already known to be within the compiler's limit.
@@ -171,6 +192,7 @@ fn parse_checked_tokens(tokens: &[SpannedToken]) -> Result<Program, Vec<CompileE
     let mut pos = 0;
     let mut stmts = Vec::new();
     let mut errors = Vec::new();
+    let mut leading_declares = true;
 
     // Discard any anonymous classes left over from a previous parse that errored before draining.
     let _ = take_anonymous_classes();
@@ -191,24 +213,18 @@ fn parse_checked_tokens(tokens: &[SpannedToken]) -> Result<Program, Vec<CompileE
         if tokens[pos].0 == Token::Eof {
             break;
         }
-        // Extern blocks can produce multiple stmts. Attributes on declarations
-        // flow through parse_stmt below — extern is an elephc-specific block
-        // that does not interact with PHP attributes.
-        if tokens[pos].0 == Token::Extern {
-            match stmt::parse_extern_stmts(tokens, &mut pos) {
-                Ok(mut extern_stmts) => stmts.append(&mut extern_stmts),
-                Err(error) => {
-                    errors.extend(error.flatten());
-                    stmt::recover_to_statement_boundary(tokens, &mut pos);
-                }
-            }
-        } else {
-            match stmt::parse_stmt(tokens, &mut pos) {
-                Ok(stmt) => stmt::push_parsed_stmt(&mut stmts, stmt),
-                Err(error) => {
-                    errors.extend(error.flatten());
-                    stmt::recover_to_statement_boundary(tokens, &mut pos);
-                }
+        let allows_strict_types = leading_declares && tokens[pos].0 == Token::Declare;
+        leading_declares = allows_strict_types;
+        match stmt::parse_file_or_namespace_scope_item(
+            tokens,
+            &mut pos,
+            &mut stmts,
+            allows_strict_types,
+        ) {
+            Ok(()) => {}
+            Err(error) => {
+                errors.extend(error.flatten());
+                stmt::recover_to_statement_boundary(tokens, &mut pos);
             }
         }
     }
@@ -218,6 +234,9 @@ fn parse_checked_tokens(tokens: &[SpannedToken]) -> Result<Program, Vec<CompileE
     stmts.append(&mut take_anonymous_classes());
 
     if errors.is_empty() {
+        if crate::source::current_strict_types() {
+            declare_context::mark_main_strict_types(&mut stmts);
+        }
         Ok(stmts)
     } else {
         Err(errors)

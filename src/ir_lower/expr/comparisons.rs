@@ -19,7 +19,16 @@ pub(super) fn lower_compare(
 ) -> LoweredValue {
     let lhs = lower_expr(ctx, left);
     let (lhs, left_pins) = object_operators::capture_left_operand(ctx, lhs, left.span);
-    let rhs = lower_expr(ctx, right);
+    let mut pending = [lhs];
+    let (rhs, pending_pins) = if left_pins.is_empty() {
+        lower_with_pending_owners(ctx, &mut pending, expr.span, |ctx| {
+            lower_expr(ctx, right)
+        })
+    } else {
+        (lower_expr(ctx, right), Vec::new())
+    };
+    let lhs = pending[0];
+    unpin_in_flight_owners(ctx, pending_pins, left.span);
     unpin_in_flight_owners(ctx, left_pins, left.span);
     if let Some(result) = object_operators::lower_object_binary_values(ctx, lhs, op, rhs, expr) {
         return result;
@@ -54,11 +63,18 @@ fn lower_compare_values(
         lhs = lhs_key;
         rhs = rhs_key;
     }
+    // Two strings ORDER through the runtime rule, not through `StrCmp`. `__rt_strcmp` is
+    // byte-lexicographic — which is right for `strcmp()` and wrong for `<`, because PHP
+    // compares two NUMERIC strings numerically: `"10" > "9"` is true, where byte order says
+    // otherwise. `__rt_php_compare`'s two-string leg already implements exactly that rule,
+    // and `emit_runtime_ordering_compare` boxes plain operands for it (issue #507).
+    let string_ordering = lhs.ir_type == IrType::Str && rhs.ir_type == IrType::Str;
     let uses_runtime_relational_compare = matches!(
         op,
         BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq
     )
-        && (needs_runtime_ordering_dispatch(ctx, lhs.value)
+        && (string_ordering
+            || needs_runtime_ordering_dispatch(ctx, lhs.value)
             || needs_runtime_ordering_dispatch(ctx, rhs.value));
     let opcode = match op {
         BinOp::StrictEq => Op::StrictEq,

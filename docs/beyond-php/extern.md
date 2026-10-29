@@ -38,8 +38,10 @@ extern "SDL2" {
 | `f32` | `float` | floating-point argument register |
 | `bool` | `bool` (`_Bool`, one byte) | integer argument register |
 | `string` | `char*` (auto null-terminated) | integer argument register |
+| `?string` | `char*` that may be `NULL` (parameters and returns only) | integer argument register |
 | `ptr` | `void*` | integer argument register |
 | `ptr<T>` | `T*` | integer argument register |
+| `ptr<ptr<T>>` | `T**` | integer argument register |
 | `void` | void (return only) | — |
 | `callable` | function pointer | integer argument register |
 
@@ -116,7 +118,12 @@ var_dump(sqrtf(2.0));   // float(1.4142135381698608): the single-precision root,
 Like the integer widths, `f32` is accepted on `extern function` parameters and
 returns and on `extern class` fields, so a C struct that holds `float` fields
 (`SDL_FRect`, `SDL_Vertex`) is declared with `f32` fields and read and written
-by name; see [Extern classes](#extern-classes-c-structs). Raw memory without a
+by name; see [Extern classes](#extern-classes-c-structs). Packed classes and
+`buffer<T>` elements take the same width names for data elephc owns: a
+`buffer<Vertex>` of `f32` fields hands its elements to C as `ptr<Vertex>`, and
+`buffer_ptr()` hands a `buffer<u16>` index list or a `buffer<f32>` stream to C
+at its width; see [Packed classes](packed-classes.md#field-widths) and
+[Buffers](buffers.md#payload-pointer). Raw memory without a
 declared struct uses `ptr_read_f32()` and `ptr_write_f32()`; see
 [Pointers](pointers.md).
 
@@ -136,11 +143,16 @@ defaults, and by-reference callback parameters are rejected because ownership
 and temporary lifetime across a C callback boundary are not modeled safely yet.
 For C APIs without a userdata/context parameter, each generated trampoline owns
 one mutable descriptor slot for that callsite; registering a new descriptor at
-the same callsite replaces the previous slot owner.
+the same callsite replaces the previous slot owner. Two C registrations made
+through one callsite (a helper or a loop calling `signal()` for two signals)
+therefore share the function pointer and both run the last descriptor bound
+there; give each long-lived registration its own callsite.
 
 ## String conversion
 - **Calling C**: elephc creates temporary null-terminated copy, frees after call
 - **C returns string**: elephc scans for `\0`, copies to owned storage
+- **`NULL`**: a `string` never passes `NULL` and reads a returned `NULL` as `""`; declare
+  `?string` where the C side allows `NULL` (see [Nullable strings](#nullable-strings))
 
 Extern calls support the declared parameter names:
 
@@ -160,6 +172,46 @@ Declared extern functions can also be selected by dynamic PHP string callbacks
 such as `call_user_func($cb, ...)` and `call_user_func_array($cb, $args)`.
 The runtime descriptor uses an extern invocation shape and a generated PHP-ABI
 wrapper; the wrapper performs the C ABI call after PHP argument normalization.
+
+## Nullable strings
+
+Many C APIs take a `const char*` that may be `NULL` (`SDL_CreateRenderer()`
+lets SDL pick the driver when the name is `NULL`) or return `NULL` instead of a
+string (`getenv()` for an unset variable). Declare those parameters and returns
+as `?string`:
+
+```php
+<?php
+extern "SDL3" {
+    function SDL_CreateRenderer(ptr $window, ?string $name): ptr;
+    function SDL_GetError(): ?string;
+}
+extern function getenv(string $name): ?string;
+
+$renderer = SDL_CreateRenderer($window, null);       // NULL: SDL picks the driver
+$software = SDL_CreateRenderer($window, "software"); // a temporary "software\0" copy
+var_dump(getenv("SURELY_UNSET_VARIABLE"));           // NULL
+```
+
+On the PHP side the type is `?string` (`string|null`):
+
+- **Arguments**: PHP `null` passes a `NULL` pointer. A string passes the same
+  temporary null-terminated copy a `string` parameter gets, freed after the
+  call. A `?string` value, such as a `?string` variable or
+  `$flag ? "a" : null`, is checked at runtime and passes whichever it holds.
+  A `mixed` value holding an int, float or bool passes its PHP string form;
+  one holding an array or an object is a fatal error, so convert it first
+  (`(string) $value`), because elephc does not run `__toString()` or an error
+  handler in the middle of building the C arguments.
+- **Returns**: a `NULL` return reads as PHP `null`; any other pointer is copied
+  up to its terminator into an owned string, exactly like a `string` return.
+
+A plain `string` keeps its conversions: it never passes `NULL`, and a `NULL`
+`char*` returned through it reads as `""`. Use `?string` whenever the C header
+says the pointer may be `NULL`. `?` applies to `string` only, since `ptr`
+already accepts `null` as the address 0, and `?string` is accepted on
+`extern function` parameters and returns but not on `extern class` fields or
+`extern global` declarations.
 
 ## Callbacks
 ```php
@@ -258,7 +310,7 @@ Fields take the same types as extern function parameters:
 | `ptr`, `ptr<T>` | `void*`, `T*` | 8 |
 | `string` | `char*` | 8 |
 
-`void` and `callable` fields are rejected.
+`void`, `callable` and `?string` fields are rejected.
 
 **Layout.** Fields are laid out like a C compiler does on every supported
 target: each field starts at the next multiple of its own size, and the struct
@@ -275,11 +327,16 @@ the plain 8-byte-per-field layout.
 widens exactly), and a `bool` reads any nonzero byte as `true`. A write stores
 only the field's width, so an out-of-range integer keeps its low bits like a C
 conversion (`300` in a `u8` is `44`), a float written to an `f32` field rounds
-to single precision, and an `int` written to a float field converts. Integer
-arithmetic results (`$r->w * 2`, `$r->x += 1`) are accepted into integer
-fields; a runtime value that turns out not to be an int raises a `TypeError`
-instead of reaching C memory. Statically wrong types (a string into an `f32`
-field, an int into a `bool` field) are compile errors.
+to single precision, and an `int` written to a float field converts. A value
+whose type is only known at run time (integer arithmetic such as `$r->w * 2`
+or `$r->x += 1`, float arithmetic over a loop counter such as
+`$f->w = 1.5 * ($i + 1)`, a `mixed` parameter) is accepted into an integer,
+float or `bool` field and checked as it is stored, with the rules
+[packed class fields](packed-classes.md#values-known-only-at-run-time) have:
+an integer field takes an int, a float field a float or an int, a `bool` field
+a bool, and any other value raises a `TypeError` instead of reaching C memory.
+Statically wrong types (a string into an `f32` field, an int into a `bool`
+field) are compile errors.
 
 **Pointer fields** chain: a `ptr<Node>` field reads as a typed pointer, so
 `$node->next->value` follows it. Inside a namespace, the class a `ptr<T>`

@@ -138,14 +138,21 @@ pub(crate) fn lower_class_alias(ctx: &mut FunctionContext<'_>, inst: &Instructio
 /// caller's slot, which still reads `array<T>`. The associative form has no such problem
 /// and lowers directly (issue #677), so the message names the difference rather than
 /// leaving "array/hash elements" looking like a blanket promise.
+///
+/// Property array elements lower directly for a declared `array` property, an associative
+/// property and a declared `array` static property (issue #750). The two property shapes that
+/// are refused on purpose, a packed-list property and an untyped static array, are reported by
+/// EIR lowering with a source span before this fallback is reached.
 pub(super) fn lower_unset_builtin(
     _ctx: &mut FunctionContext<'_>,
     inst: &Instruction,
 ) -> Result<()> {
     Err(CodegenIrError::unsupported(format!(
         "unset target shape with {} lowered operands (supported: variables, \
-         array/hash elements, ArrayAccess offsets, __unset()-backed properties, \
-         declared fixed object properties, and dynamic object properties). \
+         array/hash elements, elements of declared `array` or associative object \
+         properties and of declared `array` static properties, ArrayAccess offsets, \
+         __unset()-backed properties, declared fixed object properties, and dynamic \
+         object properties). \
          Packed fields, by-reference property slots, and runtime-dependent magic \
          property shapes are not supported. An element of a by-reference INDEXED array \
          (`function f(array &$a) {{ unset($a[1]); }}`) would leave a key hole, so the \
@@ -589,7 +596,7 @@ pub(crate) fn emit_mangled_object_vars(
 
 /// Resolves the EIR function's lexical class id, using `-1` for global scopes.
 fn lexical_object_vars_scope_class_id(ctx: &FunctionContext<'_>) -> i64 {
-    let Some(class_name) = ctx.function.lexical_class.as_deref() else {
+    let Some(class_name) = ctx.lexical_class() else {
         return -1;
     };
     ctx.module
@@ -1625,6 +1632,9 @@ fn optional_const_string_operand(
     Ok(Some(values
         .get(data.as_raw() as usize)
         .cloned()
+        .map(|value| if inst_ref.op == Op::ConstStr {
+            crate::names::literal_symbol_name(&value).unwrap_or(value)
+        } else { value })
         .ok_or_else(|| CodegenIrError::missing_entry("data string", data.as_raw()))?))
 }
 

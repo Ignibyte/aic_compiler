@@ -14,6 +14,11 @@ use super::*;
 pub(super) fn capture_left_operand(
     ctx: &mut LoweringContext<'_, '_>, value: LoweredValue, span: Span,
 ) -> (LoweredValue, Vec<super::call_operand_owners::PinnedInFlightOwner>) {
+    if ctx.builder.value_defining_op(value.value) == Some(Op::StrCharAt) {
+        let captured = crate::ir_lower::ownership::persist_string_byte_view(ctx, value, Some(span));
+        let pins = pin_in_flight_owners(ctx, &[captured.value], span);
+        return (captured, pins);
+    }
     if ctx.classes.keys().any(|name| elephc_builtin_contract::lookup_class(name).is_some_and(|class| class.operators.is_some())) {
         let ty = ctx.builder.value_php_type(value.value);
         let captured = if matches!(ty.codegen_repr(), PhpType::Mixed | PhpType::Union(_)) {

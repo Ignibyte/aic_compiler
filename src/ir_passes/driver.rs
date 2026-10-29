@@ -8,6 +8,8 @@
 //!   lowering and before codegen, for the EIR backend.
 //!
 //! Key details:
+//! - Preparation first removes proven redundant receiver leases while their original
+//!   lowering shape is intact, before any cross-function inlining.
 //! - `optimize_module` runs the whole EIR pipeline to a module-level fixed point:
 //!   each round runs the cross-function small-function inliner (`super::inline`)
 //!   and then the per-function passes (each driven to its own fixed point), and
@@ -28,7 +30,8 @@
 use crate::ir::{DataPool, Function, Module};
 
 use super::branch_simplify::BranchSimplify;
-use super::bounded_mixed_counter::BoundedMixedCounter;
+use super::borrowed_receiver_roots::BorrowedReceiverRoots;
+use super::bounded_mixed_counter::{BoundedMixedCounter, LoopCounterVersioning};
 use super::checked_int_sink::CheckedIntSink;
 use super::checked_numeric_chain::CheckedNumericChain;
 use super::concat_reset::ConcatResetElim;
@@ -78,6 +81,11 @@ pub trait IrPass {
         false
     }
 
+    /// Selects canonicalization of lowering-time owners before the first inlining round.
+    fn run_before_inlining(&self) -> bool {
+        false
+    }
+
     /// Runs the pass over one function, returning true if it changed the IR.
     /// `data` is the module's shared literal pool, used by passes that materialize
     /// new constants (e.g. peephole string-literal concat folding interns the
@@ -86,10 +94,12 @@ pub trait IrPass {
 }
 
 /// Builds the ordered set of transformation passes run on every function:
+/// proven receiver-root preparation before inlining,
 /// identity arithmetic folding, peephole rewrites, scalar local promotion,
 /// immutable-local discovery, checked-arithmetic int-sink specialization,
-/// proven bounded Mixed counters, canonical loop optimization, integer range specialization, boxed numeric-chain
-/// fusion, constant folding, common-subexpression elimination, loop-invariant
+/// proven bounded Mixed counters, guarded loop-counter versioning, canonical loop
+/// optimization, integer range specialization, boxed numeric-chain fusion, constant
+/// folding, common-subexpression elimination, loop-invariant
 /// code motion, dead instruction elimination,
 /// dead store elimination, branch simplification, and concat scratch-state
 /// optimization.
@@ -117,12 +127,14 @@ pub trait IrPass {
 /// checked-integer sink discovery after removing assignment clone barriers.
 fn default_passes(module: &Module) -> Vec<Box<dyn IrPass>> {
     vec![
+        Box::new(BorrowedReceiverRoots::new(module)),
         Box::new(IdentityArith),
         Box::new(Peephole),
         Box::new(Mem2Reg),
         Box::new(ImmutableLocalLoads),
         Box::new(CheckedIntSink),
         Box::new(BoundedMixedCounter::new(module)),
+        Box::new(LoopCounterVersioning::new(module)),
         Box::new(LoopOptimize),
         Box::new(IntegerRange),
         Box::new(CheckedNumericChain),
@@ -164,8 +176,11 @@ fn default_passes(module: &Module) -> Vec<Box<dyn IrPass>> {
 /// converges (inlining is bounded over the acyclic candidate graph; the function
 /// passes only simplify), with `MAX_MODULE_ITERATIONS` as a backstop.
 pub fn optimize_module(module: &mut Module) {
-    let (finalizers, passes): (Vec<_>, Vec<_>) = default_passes(module).into_iter()
+    let (preparers, remaining): (Vec<_>, Vec<_>) = default_passes(module).into_iter()
+        .partition(|pass| pass.run_before_inlining());
+    let (finalizers, passes): (Vec<_>, Vec<_>) = remaining.into_iter()
         .partition(|pass| pass.run_after_fixed_point());
+    run_module_function_passes(module, &preparers);
     optimize_module_to_fixed_point(module, &passes);
     // Tail recursion changes the CFG and parameter mutability after the ordinary
     // fixed point, so rerun scalar passes before finalizing ownership.
@@ -194,13 +209,21 @@ fn optimize_module_to_fixed_point(module: &mut Module, passes: &[Box<dyn IrPass>
         let mut changed = false;
 
         // Module-level cross-function inliner.
+        let specialized = super::numeric_closure_calls::specialize(module);
+        #[cfg(debug_assertions)]
+        if specialized {
+            if let Err(error) = crate::ir::validate_module(module) {
+                panic!("numeric_closure_calls produced invalid module: {:?}", error);
+            }
+        }
         let inlined = super::inline::inline_small_functions(module);
+        changed |= specialized;
         changed |= inlined;
         #[cfg(debug_assertions)]
         if let Err(e) = crate::ir::validate_module(module) {
             panic!("inline_small_functions produced invalid module: {:?}", e);
         }
-        if round > 0 && !inlined {
+        if round > 0 && !inlined && !specialized {
             return; // module-level fixed point reached
         }
 

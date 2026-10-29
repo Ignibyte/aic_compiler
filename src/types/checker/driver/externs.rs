@@ -14,8 +14,9 @@ use crate::errors::CompileError;
 use crate::names::php_symbol_key;
 use crate::parser::ast::{Program, StmtKind, TypeExpr};
 use crate::types::{
-    align_up, ctype_field_layout, ctype_to_abi_type, ctype_to_php_type, packed_type_size, ExternClassInfo, ExternFieldInfo,
-    ExternFunctionSig, FunctionSig, PackedClassInfo, PackedFieldInfo,
+    align_up, ctype_field_layout, ctype_to_abi_type, ctype_to_php_type, packed_type_layout,
+    width_type_from_type_expr, ExternClassInfo, ExternFieldInfo, ExternFunctionSig, FunctionSig,
+    PackedClassInfo, PackedFieldInfo, PhpType,
 };
 
 use super::super::Checker;
@@ -33,6 +34,14 @@ impl Checker {
         program: &Program,
         errors: &mut Vec<CompileError>,
     ) {
+        self.declared_native_records = program
+            .iter()
+            .filter_map(|stmt| match &stmt.kind {
+                StmtKind::PackedClassDecl { name, .. }
+                | StmtKind::ExternClassDecl { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
         let packed_decl_names: HashSet<&str> = program
             .iter()
             .filter_map(|stmt| match &stmt.kind {
@@ -279,7 +288,12 @@ impl Checker {
 
     /// Validates and registers a packed class declaration if no prior declaration exists.
     /// Resolves PHP types from field type expressions, validates POD constraints, computes
-    /// sequential offsets, checks for duplicate fields, and stores a `PackedClassInfo`.
+    /// naturally aligned offsets, checks for duplicate fields, and stores a `PackedClassInfo`.
+    ///
+    /// A field typed with a C width name (`i8`..`u32`, `f32`) keeps that storage width and
+    /// reads as `int` or `float`; `i64`, `u64` and `f64` are the plain word types. Fields are
+    /// laid out like a C struct: each at the next multiple of its own alignment, the record
+    /// padded to the widest one, so a class of 8-byte fields keeps its former sequential layout.
     fn prescan_packed_class(
         &mut self,
         name: &str,
@@ -300,6 +314,7 @@ impl Checker {
         }
         let mut packed_fields = Vec::new();
         let mut offset = 0usize;
+        let mut class_align = 1usize;
         let mut seen_fields = std::collections::HashSet::new();
         let mut class_has_errors = false;
         for field in fields {
@@ -311,15 +326,21 @@ impl Checker {
                 class_has_errors = true;
                 continue;
             }
-            let php_type = match self.resolve_type_expr(&field.type_expr, field.span) {
-                Ok(php_type) => php_type,
-                Err(error) => {
-                    errors.extend(error.flatten());
-                    class_has_errors = true;
-                    continue;
-                }
+            let storage_type = match width_type_from_type_expr(&field.type_expr) {
+                Some(width_type) => width_type,
+                None => match self.resolve_type_expr(&field.type_expr, field.span) {
+                    Ok(php_type) => php_type,
+                    Err(error) => {
+                        let error =
+                            self.width_position_type_error(&field.type_expr, field.span, error);
+                        errors.extend(error.flatten());
+                        class_has_errors = true;
+                        continue;
+                    }
+                },
             };
-            let Some(size) = packed_type_size(&php_type, &self.packed_classes) else {
+            let Some((size, align)) = packed_type_layout(&storage_type, &self.packed_classes)
+            else {
                 errors.push(CompileError::new(
                     field.span,
                     "Packed class fields must use POD scalars, pointers, or packed classes",
@@ -327,10 +348,17 @@ impl Checker {
                 class_has_errors = true;
                 continue;
             };
+            let width = match &storage_type {
+                PhpType::Narrow(width) => Some(*width),
+                _ => None,
+            };
+            offset = align_up(offset, align);
+            class_align = class_align.max(align);
             packed_fields.push(PackedFieldInfo {
                 name: field.name.clone(),
-                php_type,
+                php_type: storage_type.storage_value_type(),
                 offset,
+                width,
             });
             offset += size;
         }
@@ -341,19 +369,24 @@ impl Checker {
             name.to_string(),
             PackedClassInfo {
                 fields: packed_fields,
-                total_size: offset,
+                total_size: align_up(offset, class_align),
+                align: class_align,
             },
         );
     }
 }
 
 /// Yields the class names a packed declaration embeds by value (fields typed as a bare class
-/// name). Pointer fields only store an address and do not need the target's layout.
+/// name). Pointer fields only store an address and do not need the target's layout, and an
+/// unqualified C width name (`u8`, `f32`) is a storage format that `prescan_packed_class`
+/// resolves before any class lookup, so it never waits for a class of that name.
 fn embedded_packed_names(
     fields: &[crate::parser::ast::PackedField],
 ) -> impl Iterator<Item = &str> {
     fields.iter().filter_map(|field| match &field.type_expr {
-        TypeExpr::Named(name) => Some(name.as_str()),
+        TypeExpr::Named(name) if width_type_from_type_expr(&field.type_expr).is_none() => {
+            Some(name.as_str())
+        }
         _ => None,
     })
 }

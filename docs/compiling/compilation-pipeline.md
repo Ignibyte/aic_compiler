@@ -23,6 +23,7 @@ Physical source (.php or .lfc)
   -> (conditional)     apply compiler ifdef branches from --define
   -> autoload-build    discover autoload rules
   -> resolve           resolve include/require and declarations
+  -> autoload-prelude-probe detect preludes needed by autoloaded files
   -> pdo-prelude        inject the PDO prelude when used
   -> mysqli-prelude     inject the mysqli prelude when used (shares the elephc_pdo bridge)
   -> tz-prelude         inject the timezone-introspection prelude when used
@@ -47,7 +48,7 @@ Physical source (.php or .lfc)
   -> opcache-manifest-bake complete and bake the post-autoload OPcache script manifest
   -> opt-fold           seed CLI superglobals + AST constant folding
   -> typecheck          Type checking, generic specialization, and warnings
-  -> exports-scan       collect #[Export] functions (cdylib)
+  -> exports-scan       collect #[Export] functions (cdylib, staticlib, or phpext)
   -> opt-prop           AST constant propagation
   -> opt-post           prune constant control flow
   -> opt-norm           control-flow normalization
@@ -59,6 +60,8 @@ Physical source (.php or .lfc)
   -> codegen            EIR -> target assembly
   -> write-asm          write the generated assembly
   -> source-map         write the .map sidecar (with --source-map)
+  -> php-extension-link discover the SDK, compile the adapter, and link a PHP module
+                        (with --emit phpext; then stop)
   -> runtime-cache      build/reuse the prebuilt runtime object
   -> assemble           assembler: assembly -> object file
   -> link               linker: object files -> binary
@@ -91,11 +94,26 @@ Physical source (.php or .lfc)
   prelude is injected
   with `--web`, and namespace/`use` rules rewrite references to fully-qualified
   names. After autoload insertion, DOM usage is checked again so newly loaded
-  classes receive the same declarations before type checking.
+  classes receive the same declarations before type checking. Every included
+  and autoloaded file is lexed with its own source identity, so statements at
+  the same line and column of two files never share a checker result, and a
+  diagnostic raised inside such a file names it.
 - **func-args** — rewrites `func_num_args()`, `func_get_args()`, and
   `func_get_arg()` into a hidden variadic parameter plus ordinary PHP operations.
   This happens after autoloading but before manifest baking, optimization, and
   checking, so those later passes see the desugared callable shape.
+- **autoload-prelude-probe**: the autoload pass runs after name resolution, so
+  a prelude needed only by an autoloaded file would be missed. When autoload
+  rules exist, a probe (`src/autoload/prelude_probe.rs`) first runs name
+  resolution and the autoload pass on a copy of the program, checks the PDO,
+  mysqli, timezone, image, hash, curl, XML, and `var_export` detectors against
+  the result, and restores the thread-local source IDs
+  and anonymous-class counter. Process-global synthetic spans and include
+  temporaries stay monotonic, so discarding a probe cannot recycle identities
+  allocated by another compilation thread. The real pass injects the detected
+  preludes with fresh global identities. Every included and
+  autoloaded file gets its own source identity, which is how diagnostics name
+  the file they come from.
 - **opcache-manifest-bake** — after autoload insertion and argument-introspection
   desugaring, replaces the placeholder OPcache manifest with the complete
   entry/include/autoload file set before constant folding and emits any preload
@@ -152,6 +170,10 @@ behind a flag.
   See [The Code Generator](../internals/the-codegen.md).
 - **write-asm / source-map** — the generated assembly and optional source-map
   sidecar are materialized before runtime-object preparation.
+- **php-extension-link**: for [`--emit phpext`](../beyond-php/phpext.md),
+  discovers and probes the selected PHP 8.5 SDK, compiles the Zend adapter, and
+  links the loadable module. This producer path stops here instead of using the
+  standalone runtime-cache, assemble, and link phases below.
 - **runtime-cache** — the hand-written runtime is assembled once and cached in
   `~/.cache/elephc/`, then reused across compiles. See
   [The Runtime](../internals/the-runtime.md).
@@ -174,8 +196,8 @@ You do not have to run the whole pipeline. Several flags stop early or dump an
 intermediate artifact:
 
 - [`--check`](output-and-diagnostics.md#--check) normally runs the front end
-  only; when `#[Export]` is present it also lowers EIR and runs cdylib
-  call-graph safety without emitting code.
+  only; when `#[Export]` is present it also lowers EIR and runs library and PHP
+  extension call-graph safety without emitting code.
 - [`--emit-ir`](output-and-diagnostics.md#--emit-ir) prints EIR (after `ir-opt`) and stops.
 - [`--emit-asm`](output-and-diagnostics.md#--emit-asm) writes assembly and stops before
   runtime-object preparation, native assembly, or linking.
