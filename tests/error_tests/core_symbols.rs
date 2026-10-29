@@ -27,6 +27,10 @@ fn test_core_symbols_enum_interface_misuse() {
 #[test]
 fn test_core_symbols_attribute_target_errors() {
     expect_error("<?php #[SensitiveParameter] class Bad {}", "cannot target class");
+    expect_error(
+        "<?php class Bad { public function __construct(#[AllowDynamicProperties] public int $x) {} }",
+        "cannot target",
+    );
     expect_error("<?php #[AllowDynamicProperties] function bad(): void {}", "cannot target function");
     expect_error("<?php #[NoDiscard] class Bad {}", "cannot target class");
     expect_error("<?php #[NoDiscard] #[NoDiscard] function bad(): int { return 1; }", "must not be repeated");

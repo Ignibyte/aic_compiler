@@ -525,3 +525,24 @@ eval($source);
     assert_eq!(out.stdout, "same:closure:1:1:0:dead:eval:0:dead");
     assert!(out.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", out.stderr);
 }
+
+/// `#[SensitiveParameter]` on a promoted constructor parameter compiles, as in php: a promoted
+/// parameter's attributes apply to its property too, and either target admits them on each.
+/// The property copy was validated against the property target alone and refused.
+#[test]
+fn test_sensitive_parameter_on_a_promoted_parameter() {
+    let out = compile_and_run(
+        r#"<?php
+final readonly class Secret {
+    public function __construct(
+        #[SensitiveParameter] public string $secret,
+        #[SensitiveParameter] private string $pin = "0000",
+    ) {}
+    public function pin(): string { return $this->pin; }
+}
+$c = new Secret("x");
+echo strlen($c->secret), $c->pin(), "\n";
+"#,
+    );
+    assert_eq!(out, "10000\n");
+}
