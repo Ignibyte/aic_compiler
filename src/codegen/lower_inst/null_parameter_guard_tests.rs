@@ -21,7 +21,7 @@ fn literal_null_parameter_guard_emits_null_contract_all_targets() {
         let target = Target::parse(name).unwrap();
         let module = Module::new(target);
         let function = crate::codegen::shared_helper::helper_function("null_guard", PhpType::Void);
-        let layout = crate::codegen::frame::layout_for_function(&function, target, false, false, false);
+        let layout = crate::codegen::frame::layout_for_function(&function, target, false, false, false, false);
         let mut emitter = Emitter::new(target);
         let mut data = DataSection::new();
         let mut shared = SharedCodegenState::default();
