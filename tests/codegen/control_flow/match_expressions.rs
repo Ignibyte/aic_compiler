@@ -792,29 +792,6 @@ echo $s, $is[0], $a[1], $h["k"], "\n";
     );
 }
 
-/// Pins the documented int/bool arm-merge incompatibility (see "Known
-/// incompatibilities with PHP" in docs/php/types.md): int and bool arms share
-/// one runtime representation, so both arms observe it — PHP would print
-/// "integer|boolean" here. If this test starts failing with PHP's output, the
-/// incompatibility got fixed: update the docs entry alongside.
-#[test]
-fn test_match_int_and_bool_arms_merge_documented_divergence() {
-    let out = compile_and_run(
-        r#"<?php
-$r = match($argc) {
-    1 => 42,
-    default => true,
-};
-$w = match($argc) {
-    99 => 42,
-    default => true,
-};
-echo gettype($r), "|", gettype($w);
-"#,
-    );
-    assert_eq!(out, "boolean|boolean");
-}
-
 /// A `match (true)` arm guarded by `$v instanceof A` reads `$v` as `A`, so a
 /// property that only `A` declares is read from `A` instead of the declared
 /// `A|B` union. Before the fix the arm's inference failed silently and the

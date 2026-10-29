@@ -57,10 +57,12 @@ fn test_nested_spread_literal_merges_type_in_linear_time() {
     let mixed_list = PhpType::Array(Box::new(PhpType::Mixed));
     assert_eq!(checked.global_env.get("a"), Some(&mixed_list));
     assert_eq!(checked.global_env.get("b"), Some(&mixed_list));
-    // A hash spread makes each level a hash, and joining a hash with the `[]` arm (or with the
-    // `array<never>` left of `??`) widens to `mixed`; spreading `mixed` keeps it a hash.
-    assert_eq!(checked.global_env.get("c"), Some(&PhpType::Mixed));
-    assert_eq!(checked.global_env.get("d"), Some(&PhpType::Mixed));
+    // A hash spread makes each level a hash. Upstream widens a hash joined with the `[]` arm (or
+    // with the `array<never>` left of `??`) to `mixed`; the fork merges `[]` into any array shape
+    // (35a34cc4f), so every level stays a `mixed`-keyed hash.
+    let mixed_hash = PhpType::AssocArray { key: Box::new(PhpType::Mixed), value: Box::new(PhpType::Mixed) };
+    assert_eq!(checked.global_env.get("c"), Some(&mixed_hash));
+    assert_eq!(checked.global_env.get("d"), Some(&mixed_hash));
     assert!(
         elapsed < std::time::Duration::from_secs(30),
         "nested spread literal typing took {elapsed:?}"
