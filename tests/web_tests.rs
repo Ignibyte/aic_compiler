@@ -21,6 +21,9 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+#[path = "web/application.rs"]
+mod application;
+
 static TEST_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Creates an isolated temp dir unique across parallel test threads/processes.
@@ -110,6 +113,27 @@ struct ServerGuard {
     child: std::process::Child,
 }
 
+/// Spawns web-server children in their own process group, owned by a
+/// [`ServerGuard`] that tears the whole group down.
+trait SpawnGroup {
+    /// Spawns the command as the leader of a new process group with stdin and
+    /// stdout detached, so the server (and its forked workers) never hold the
+    /// test harness's captured pipes and can be killed together via `killpg`.
+    fn spawn_group(&mut self) -> std::io::Result<ServerGuard>;
+}
+
+impl SpawnGroup for Command {
+    /// See [`SpawnGroup::spawn_group`].
+    fn spawn_group(&mut self) -> std::io::Result<ServerGuard> {
+        use std::os::unix::process::CommandExt;
+        self.process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .spawn()
+            .map(ServerGuard::new)
+    }
+}
+
 impl ServerGuard {
     /// Wraps an already-spawned server child so it is reaped on scope exit.
     fn new(child: std::process::Child) -> Self {
@@ -127,24 +151,64 @@ impl ServerGuard {
     /// covers a wedged master after a short grace period. This inherent method
     /// shadows `Child::kill` through the `Deref`, so every existing
     /// `child.kill()` call site becomes graceful with no change. Idempotent: an
-    /// already-exited child returns `Ok` immediately.
+    /// already-reaped child returns `Ok` immediately.
+    ///
+    /// The group signals are all sent BEFORE the leader is reaped: its zombie
+    /// keeps the pid, so the process group id cannot be handed to an unrelated
+    /// group while `killpg` still targets it. Reaping is left to `wait()`.
     fn kill(&mut self) -> std::io::Result<()> {
-        if matches!(self.child.try_wait(), Ok(Some(_))) {
-            return Ok(());
+        let pgid = self.child.id() as libc::pid_t;
+        match self.leader_state() {
+            LeaderState::Reaped => return Ok(()),
+            LeaderState::Exited => {
+                // Sweep any worker that outlived the master.
+                unsafe { libc::killpg(pgid, libc::SIGKILL) };
+                return Ok(());
+            }
+            LeaderState::Running => {}
         }
-        let pid = self.child.id().to_string();
-        let _ = Command::new("kill").arg("-TERM").arg(&pid).status();
+        unsafe { libc::killpg(pgid, libc::SIGTERM) };
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
-            if matches!(self.child.try_wait(), Ok(Some(_))) {
-                return Ok(());
+            if self.leader_state() != LeaderState::Running {
+                break;
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        // Wedged master: force-kill. Its workers may briefly orphan, but this
-        // path is the rare exception, not the steady-state teardown.
-        self.child.kill()
+        // Sweep the workers, or force-kill a wedged master with them.
+        if self.leader_state() != LeaderState::Reaped {
+            unsafe { libc::killpg(pgid, libc::SIGKILL) };
+        }
+        Ok(())
     }
+
+    /// Reports whether the group leader still runs, has exited (a zombie not
+    /// reaped yet, so its pgid is still reserved) or was already reaped, without
+    /// reaping it (`WNOWAIT`).
+    fn leader_state(&self) -> LeaderState {
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let flags = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
+        let status = unsafe { libc::waitid(libc::P_PID, self.child.id() as libc::id_t, &mut info, flags) };
+        if status != 0 {
+            // ECHILD: `wait()`/`try_wait()` already reaped it.
+            LeaderState::Reaped
+        } else if unsafe { info.si_pid() } == 0 {
+            LeaderState::Running
+        } else {
+            LeaderState::Exited
+        }
+    }
+}
+
+/// What `ServerGuard::leader_state` observed about the server process.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LeaderState {
+    /// The leader still runs.
+    Running,
+    /// The leader exited and is a zombie: its pid, and so the group id, stays reserved.
+    Exited,
+    /// The leader was reaped: the group id may already belong to someone else.
+    Reaped,
 }
 
 impl std::ops::Deref for ServerGuard {
@@ -165,7 +229,8 @@ impl std::ops::DerefMut for ServerGuard {
 impl Drop for ServerGuard {
     /// Gracefully terminates and reaps the server unconditionally, even during a
     /// panic unwind, so neither the master nor its workers leak. Best-effort: an
-    /// already-reaped child is a no-op.
+    /// already-reaped child is a no-op. `kill` signals the whole group before
+    /// `wait()` reaps the leader, never after (the group id could be reused).
     fn drop(&mut self) {
         let _ = self.kill();
         let _ = self.child.wait();
@@ -187,14 +252,12 @@ fn spawn_server_with_args(
     workers: &str,
     extra_args: &[&str],
 ) -> ServerGuard {
-    let child = ServerGuard::new(
-        Command::new(bin)
-            .arg("--listen").arg(addr)
-            .arg("--workers").arg(workers)
-            .args(extra_args)
-            .spawn()
-            .expect("failed to spawn web server"),
-    );
+    let child = Command::new(bin)
+        .arg("--listen").arg(addr)
+        .arg("--workers").arg(workers)
+        .args(extra_args)
+        .spawn_group()
+        .expect("failed to spawn web server");
     wait_until_ready(addr);
     child
 }
@@ -529,53 +592,6 @@ fn web_pool_reuses_and_recycles_handler_children() {
     let _ = server.wait();
 }
 
-/// Regression: an object that only a reference cycle keeps alive is destructed when its
-/// request ends, as PHP's shutdown does, so a pooled handler does not leak what its
-/// destructor releases (an open PDO connection, one per request) into later requests.
-#[test]
-fn web_pool_destructs_request_cycles_before_the_next_request() {
-    let dir = make_test_dir("web_pool_cycle_destruct");
-    let log = dir.join("destructed.log");
-    let source = format!(
-        r#"<?php
-final class Node {{
-    public ?Node $next = null;
-    public function __construct(private string $name) {{}}
-    public function __destruct() {{
-        file_put_contents('{log}', $this->name, FILE_APPEND);
-    }}
-}}
-$seen = file_exists('{log}') ? file_get_contents('{log}') : '';
-echo 'seen:', $seen, ';';
-$a = new Node('a');
-$b = new Node('b');
-$a->next = $b;
-$b->next = $a;
-"#,
-        log = log.display()
-    );
-    let bin = compile_isolated_web(&dir, &source, "app", "pool");
-    let port = free_port();
-    let addr = format!("127.0.0.1:{port}");
-    let mut server = spawn_server_with_args(
-        &bin,
-        &addr,
-        "1",
-        &["--handler-concurrency", "1", "--max-handler-requests", "0"],
-    );
-
-    assert!(raw_response_body(&http_get(&addr, "/")).contains("seen:;"));
-    let response = http_get(&addr, "/");
-    let second = raw_response_body(&response);
-    assert!(
-        second.contains("seen:ab;") || second.contains("seen:ba;"),
-        "the first request's cycle was not destructed before the second: {second}"
-    );
-
-    let _ = server.kill();
-    let _ = server.wait();
-}
-
 /// Regression: concurrent pool traffic must tolerate handlers that close immediately
 /// after a framed response, while still keeping SIGPIPE contained as an I/O error.
 #[test]
@@ -843,6 +859,130 @@ fn web_reset_clears_static_property() {
     let _ = child.wait();
     assert!(r1.ends_with("1"), "first response body: {:?}", r1);
     assert!(r2.ends_with("1"), "second response body: {:?}", r2);
+}
+
+/// Verifies an output buffer left open by one request is discarded before the next
+/// request runs. `_ob_level` gates every `ob_*` operation and every terminal write's
+/// capture branch, so a stale level would route the next request's output into heap
+/// storage that `__rt_web_reset` already reclaimed.
+#[test]
+fn web_reset_discards_output_buffers_between_requests() {
+    let dir = make_test_dir("web_reset_output_buffer");
+    let src = r#"<?php
+if (($_SERVER["REQUEST_URI"] ?? "") === "/leave") {
+    ob_start();
+    echo "LEFTOVER";
+} else {
+    $level = ob_get_level();
+    $stale = $level > 0 ? ob_get_clean() : "";
+    echo "level=", $level, ";stale=", $stale;
+}
+"#;
+    let bin = compile_web(&dir, src, "app");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{}", port);
+    let mut child = spawn_server(&bin, &addr, "1");
+    let _ = http_get(&addr, "/leave");
+    let r2 = http_get(&addr, "/check");
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        r2.ends_with("level=0;stale="),
+        "second request inherited the previous output buffer: {:?}",
+        r2
+    );
+    assert!(
+        !r2.contains("LEFTOVER"),
+        "second request read stale buffered bytes: {:?}",
+        r2
+    );
+}
+
+/// Verifies the request-scoped stream context options are cleared between requests.
+/// `stream_context_create()` stores its options hash in a process-global slot; the
+/// hash is request memory, so leaving it published would let a later request read or
+/// free a reclaimed pointer. The pre-fix sequence crashed the worker with SIGSEGV.
+#[test]
+fn web_reset_clears_stream_context_between_requests() {
+    let dir = make_test_dir("web_reset_stream_context");
+    let src = r#"<?php
+if (($_SERVER["REQUEST_URI"] ?? "") === "/set") {
+    stream_context_create(["http" => ["header" => "X-Leak: req1"]]);
+    echo "set";
+} else {
+    $opts = stream_context_get_options(stream_context_get_default());
+    echo "opts=", json_encode($opts);
+}
+"#;
+    let bin = compile_web(&dir, src, "app");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{}", port);
+    let mut child = spawn_server(&bin, &addr, "1");
+    let r1 = http_get(&addr, "/set");
+    let r2 = http_get(&addr, "/get");
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(r1.ends_with("set"), "first response body: {:?}", r1);
+    assert!(
+        r2.ends_with("opts=[]") || r2.ends_with("opts={}"),
+        "second request inherited stream context options: {:?}",
+        r2
+    );
+    assert!(
+        !r2.contains("X-Leak"),
+        "second request leaked the previous stream context: {:?}",
+        r2
+    );
+}
+
+/// Verifies state created by a destructor during the request reset cannot survive into
+/// the next handler. Static-property release runs PHP destructors inside `__rt_web_reset`;
+/// this destructor re-opens an output buffer and publishes a fresh stream context after
+/// the early clears, so only the final clear before `emit_heap_arena_reset` prevents the
+/// next request from observing pointers into the arena it is about to reclaim.
+#[test]
+fn web_reset_clears_state_created_by_destructors_during_reset() {
+    let dir = make_test_dir("web_reset_destructor_residue");
+    let src = r#"<?php
+class ResetResidue {
+    public function __destruct() {
+        stream_context_create(["http" => ["header" => "X-Residue: 1"]]);
+        ob_start();
+        echo "RESIDUE";
+    }
+}
+class ResetResidueHolder {
+    public static $value = null;
+}
+ResetResidueHolder::$value = new ResetResidue();
+if (($_SERVER["REQUEST_URI"] ?? "") === "/first") {
+    echo "first";
+} else {
+    $level = ob_get_level();
+    $stale = $level > 0 ? ob_get_clean() : "";
+    $opts = stream_context_get_options(stream_context_get_default());
+    echo "level=", $level, ";stale=", $stale, ";opts=", json_encode($opts);
+}
+"#;
+    let bin = compile_web(&dir, src, "app");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{}", port);
+    let mut child = spawn_server(&bin, &addr, "1");
+    let r1 = http_get(&addr, "/first");
+    let r2 = http_get(&addr, "/check");
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(r1.ends_with("first"), "first response body: {:?}", r1);
+    assert!(
+        r2.ends_with("level=0;stale=;opts=[]") || r2.ends_with("level=0;stale=;opts={}"),
+        "second request inherited state created by the reset destructor: {:?}",
+        r2
+    );
+    assert!(
+        !r2.contains("RESIDUE") && !r2.contains("X-Residue"),
+        "second request leaked reset-destructor state: {:?}",
+        r2
+    );
 }
 
 /// Verifies that "Hello World" is served as the response body.
@@ -1307,7 +1447,7 @@ fn web_late_header_and_status_emit_headers_already_sent_warnings() {
     let mut child = Command::new(&bin)
         .args(["--listen", &addr, "--workers", "1"])
         .stderr(Stdio::from(stderr))
-        .spawn()
+        .spawn_group()
         .expect("spawn late-header warning server");
     wait_until_ready(&addr);
 
@@ -1426,7 +1566,7 @@ fn web_gc_stats_are_emitted_per_request() {
     let mut child = Command::new(&bin)
         .args(["--listen", &addr, "--workers", "1"])
         .stderr(Stdio::from(stderr_file))
-        .spawn()
+        .spawn_group()
         .expect("spawn web server with gc stats");
     wait_until_ready(&addr);
 
@@ -1488,10 +1628,11 @@ echo "cleared";
     let addr = format!("127.0.0.1:{}", free_port());
     let stderr_path = dir.join("server.stderr");
     let stderr_file = fs::File::create(&stderr_path).expect("create server stderr capture");
-    let mut child = ServerGuard::new(Command::new(&bin)
+    let mut child = Command::new(&bin)
         .args(["--listen", &addr, "--workers", "1"])
         .stderr(Stdio::from(stderr_file))
-        .spawn().expect("spawn eval superglobal server"));
+        .spawn_group()
+        .expect("spawn eval superglobal server");
     wait_until_ready(&addr);
     for rounds in [1, 2, 4, 8] {
         let request_started = Instant::now();
@@ -1617,12 +1758,10 @@ fn web_body_size_limit_returns_413() {
     let bin = compile_web(&dir, src, "app");
     let port = free_port();
     let addr = format!("127.0.0.1:{}", port);
-    let mut child = ServerGuard::new(
-        Command::new(&bin)
-            .args(["--listen", &addr, "--workers", "1", "--max-body-size", "64"])
-            .spawn()
-            .expect("spawn"),
-    );
+    let mut child = Command::new(&bin)
+        .args(["--listen", &addr, "--workers", "1", "--max-body-size", "64"])
+        .spawn_group()
+        .expect("spawn");
     wait_until_ready(&addr);
     let small = http_request(&addr, "POST", "/", &[("Content-Type", "text/plain")], &"x".repeat(10));
     let big = http_request(&addr, "POST", "/", &[("Content-Type", "text/plain")], &"x".repeat(1000));
@@ -1650,7 +1789,7 @@ fn web_body_read_timeout_returns_408_for_trickled_request() {
             "--body-read-timeout",
             "1",
         ])
-        .spawn()
+        .spawn_group()
         .expect("spawn body-timeout server");
     wait_until_ready(&addr);
 
@@ -1799,93 +1938,6 @@ echo "done";
         "the first response chunk was still buffered until handler completion: {} bytes received",
         early.len()
     );
-}
-
-/// Serves `src` under pool isolation with gzip enabled and returns what each of two requests
-/// (plain, then accepting gzip) received in the 700 ms after it was sent, lowercased.
-fn web_flush_early_heads(src: &str, prefix: &str) -> Vec<String> {
-    let dir = make_test_dir(prefix);
-    let bin = compile_isolated_web(&dir, src, "app", "pool");
-    let port = free_port();
-    let addr = format!("127.0.0.1:{port}");
-    let mut child = spawn_server_with_args(&bin, &addr, "1", &["--gzip"]);
-
-    let mut heads = Vec::new();
-    for accept_encoding in ["", "Accept-Encoding: gzip\r\n"] {
-        let mut stream = TcpStream::connect(&addr).expect("connect flushing client");
-        stream
-            .set_read_timeout(Some(Duration::from_millis(100)))
-            .expect("set bounded flushing read timeout");
-        let request = format!(
-            "GET / HTTP/1.1\r\nHost: {addr}\r\n{accept_encoding}Connection: close\r\n\r\n"
-        );
-        stream
-            .write_all(request.as_bytes())
-            .expect("send flushing request");
-
-        let deadline = Instant::now() + Duration::from_millis(700);
-        let mut early = Vec::new();
-        while Instant::now() < deadline && !early.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-            let mut chunk = [0u8; 8192];
-            match stream.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(read) => early.extend_from_slice(&chunk[..read]),
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) => {}
-                Err(error) => panic!("flushing response read failed: {error}"),
-            }
-        }
-        heads.push(String::from_utf8_lossy(&early).to_ascii_lowercase());
-        // Let the handler finish before the next request needs it.
-        stream
-            .set_read_timeout(Some(Duration::from_secs(5)))
-            .expect("set draining read timeout");
-        let mut rest = Vec::new();
-        let _ = stream.read_to_end(&mut rest);
-    }
-
-    let _ = child.kill();
-    let _ = child.wait();
-    heads
-}
-
-/// Asserts each early read holds the complete head with `X-Ready` and no body, and that the
-/// gzip request kept its compression.
-fn assert_flushed_heads(heads: &[String]) {
-    for head in heads {
-        assert!(
-            head.contains("\r\n\r\n") && head.contains("x-ready: yes"),
-            "flush() left the response head queued until handler completion: {head:?}"
-        );
-        assert!(!head.contains("done"), "the body arrived before the handler slept: {head:?}");
-    }
-    assert!(heads[1].contains("content-encoding: gzip"), "gzip was dropped: {:?}", heads[1]);
-}
-
-/// Verifies `flush()` sends the status and headers before any body output, as PHP's built-in
-/// server does: the client sees the head while the handler is still running, with and without
-/// the worker's gzip (which otherwise waits for a body prefix).
-#[test]
-fn web_flush_sends_headers_before_body_output() {
-    let heads = web_flush_early_heads(
-        "<?php\nheader(\"X-Ready: yes\");\nflush();\nusleep(1000000);\necho \"done\";\n",
-        "web_flush_headers",
-    );
-    assert_flushed_heads(&heads);
-}
-
-/// Verifies `flush()` called from eval'd code sends the head too: eval reaches the compiled
-/// runtime's flush through the bridge.
-#[test]
-fn web_eval_flush_sends_headers_before_body_output() {
-    let heads = web_flush_early_heads(
-        "<?php\nheader(\"X-Ready: yes\");\neval('flush();');\nusleep(1000000);\necho \"done\";\n",
-        "web_eval_flush_headers",
-    );
-    assert_flushed_heads(&heads);
 }
 
 /// Verifies the server shuts down cleanly (exit code 0) on SIGTERM, promptly.
@@ -2051,7 +2103,7 @@ echo "fast";
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
+        .spawn_group()
         .expect("spawn response-timeout server");
     wait_until_ready(&addr);
 
@@ -2226,13 +2278,11 @@ fn web_env_superglobal_populated() {
     let bin = compile_web(&dir, src, "app");
     let port = free_port();
     let addr = format!("127.0.0.1:{}", port);
-    let mut child = ServerGuard::new(
-        Command::new(&bin)
+    let mut child =         Command::new(&bin)
             .args(["--listen", &addr, "--workers", "1"])
             .env("ELEPHC_WEB_TEST_ENV", "present")
-            .spawn()
-            .expect("spawn"),
-    );
+            .spawn_group()
+            .expect("spawn");
     wait_until_ready(&addr);
     let resp = http_request(&addr, "GET", "/", &[], "");
     let _ = child.kill();
@@ -2289,12 +2339,10 @@ fn web_max_requests_recycles_and_keeps_serving() {
     let bin = compile_web(&dir, "<?php echo 'ok';", "app");
     let port = free_port();
     let addr = format!("127.0.0.1:{}", port);
-    let mut child = ServerGuard::new(
-        Command::new(&bin)
+    let mut child =         Command::new(&bin)
             .args(["--listen", &addr, "--workers", "1", "--max-requests", "2"])
-            .spawn()
-            .expect("spawn"),
-    );
+            .spawn_group()
+            .expect("spawn");
     wait_until_ready(&addr);
     // More requests than the cap: the server must keep serving across recycles.
     // A single-worker recycle has a brief no-listener window, so tolerate transient
@@ -2327,8 +2375,7 @@ fn web_max_requests_drains_keep_alive_before_recycle() {
         };
         let port = free_port();
         let addr = format!("127.0.0.1:{port}");
-        let mut child = ServerGuard::new(
-            Command::new(&bin)
+        let mut child =             Command::new(&bin)
                 .args([
                     "--listen",
                     &addr,
@@ -2337,9 +2384,8 @@ fn web_max_requests_drains_keep_alive_before_recycle() {
                     "--max-requests",
                     "1",
                 ])
-                .spawn()
-                .expect("spawn isolated web server"),
-        );
+                .spawn_group()
+                .expect("spawn isolated web server");
         wait_until_ready(&addr);
 
         let mut socket = TcpStream::connect(&addr).expect("connect keep-alive client");
@@ -2391,7 +2437,7 @@ fn web_max_requests_survives_sustained_recycle_churn() {
     let addr = format!("127.0.0.1:{}", port);
     let mut child = Command::new(&bin)
         .args(["--listen", &addr, "--workers", "1", "--max-requests", "2"])
-        .spawn()
+        .spawn_group()
         .expect("spawn");
     wait_until_ready(&addr);
     // 30 requests with a quota of 2 forces ~15 recycles (> MAX_FAST_DEATHS).
@@ -2452,12 +2498,10 @@ fn web_max_execution_time_kills_runaway_handler() {
     let bin = compile_web(&dir, src, "app");
     let port = free_port();
     let addr = format!("127.0.0.1:{}", port);
-    let mut child = ServerGuard::new(
-        Command::new(&bin)
+    let mut child =         Command::new(&bin)
             .args(["--listen", &addr, "--workers", "1", "--max-execution-time", "1"])
-            .spawn()
-            .expect("spawn"),
-    );
+            .spawn_group()
+            .expect("spawn");
     wait_until_ready(&addr);
     assert!(http_request(&addr, "GET", "/", &[], "").ends_with("fast"));
     // The runaway request is killed by the watchdog (dropped connection); tolerate it.
@@ -2537,12 +2581,10 @@ fn web_gzip_compresses_when_accepted() {
     );
     let port = free_port();
     let addr = format!("127.0.0.1:{}", port);
-    let mut child = ServerGuard::new(
-        Command::new(&bin)
+    let mut child =         Command::new(&bin)
             .args(["--listen", &addr, "--workers", "1", "--gzip"])
-            .spawn()
-            .expect("spawn"),
-    );
+            .spawn_group()
+            .expect("spawn");
     wait_until_ready(&addr);
     // The gzipped body is binary, so read raw bytes and inspect the (ASCII) header
     // block rather than http_request's read_to_string.
@@ -2569,66 +2611,6 @@ fn web_gzip_compresses_when_accepted() {
     assert!(!plain.to_lowercase().contains("content-encoding"), "must not compress without Accept-Encoding");
     // The uncompressed response carries the full 2000-byte body.
     assert!(plain.ends_with(&"ABCD".repeat(500)), "plain body mismatch");
-}
-
-/// Verifies `is_uploaded_file()` and `move_uploaded_file()` accept only this request's uploads,
-/// that a move keeps the bytes and gives the file `0666 & ~umask()`, and that an upload the
-/// handler left in place is deleted when the request ends, in the default worker model and under
-/// pool isolation.
-#[test]
-fn web_move_uploaded_file_accepts_only_uploads_and_unmoved_ones_are_deleted() {
-    let src = r#"<?php
-$tmp = $_FILES['upload']['tmp_name'] ?? '';
-$to = $_GET['to'] ?? '';
-if ($to === '') {
-    echo $tmp;
-    return;
-}
-echo is_uploaded_file($tmp) ? 'up' : 'no', '|', is_uploaded_file(__FILE__) ? 'up' : 'no', '|';
-echo @move_uploaded_file(__FILE__, $to) ? 'moved' : 'refused', '|';
-echo move_uploaded_file($tmp, $to) ? 'moved' : 'failed', '|', file_get_contents($to), '|';
-echo file_exists($tmp) ? 'left' : 'gone', '|', is_uploaded_file($tmp) ? 'up' : 'no', '|';
-echo (fileperms($to) & 0777) === (0666 & ~umask()) ? 'mode' : 'badmode';
-"#;
-    let boundary = "Xbnd";
-    let body = format!(
-        "--{b}\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"up.txt\"\r\n\
-         Content-Type: text/plain\r\n\r\nFILEDATA-123\r\n--{b}--\r\n",
-        b = boundary
-    );
-    let ct = format!("multipart/form-data; boundary={}", boundary);
-    for mode in ["worker", "pool"] {
-        let dir = make_test_dir(&format!("web_move_uploaded_{mode}"));
-        let bin = if mode == "pool" {
-            compile_isolated_web(&dir, src, "app", "pool")
-        } else {
-            compile_web(&dir, src, "app")
-        };
-        let port = free_port();
-        let addr = format!("127.0.0.1:{port}");
-        let mut child = spawn_server(&bin, &addr, "1");
-        let dest = dir.join("moved.txt");
-        let moved = http_request(
-            &addr,
-            "POST",
-            &format!("/?to={}", dest.display()),
-            &[("Content-Type", &ct)],
-            &body,
-        );
-        let left = http_request(&addr, "POST", "/", &[("Content-Type", &ct)], &body);
-        let _ = child.kill();
-        let _ = child.wait();
-        assert!(
-            moved.ends_with("up|no|refused|moved|FILEDATA-123|gone|no|mode"),
-            "{mode}: move_uploaded_file: {moved:?}"
-        );
-        let unmoved = raw_response_body(&left).trim().to_string();
-        assert!(unmoved.contains("elephc_up"), "{mode}: no upload temp path: {left:?}");
-        assert!(
-            !std::path::Path::new(&unmoved).exists(),
-            "{mode}: the unmoved upload {unmoved} outlived its request"
-        );
-    }
 }
 
 /// Verifies multipart/form-data parsing (A5): text fields land in $_POST and file
@@ -3043,6 +3025,190 @@ echo count($c6), "|", implode(",", array_keys($_GET)), "\n";
     assert!(r2.ends_with(expected), "second response body: {:?}", r2);
 }
 
+/// The Mixed-valued hash builtins must keep an aliased superglobal alive.
+#[test]
+fn aliased_superglobal_survives_new_mixed_hash_builtins() {
+    let dir = make_test_dir("web_aliased_superglobal_mixed");
+    let src = r#"<?php
+$c1 = $_GET; array_shift($_GET);
+echo count($c1), "|", count($_GET), "|", implode(",", array_keys($_GET)), "\n";
+$c2 = $_GET; array_unshift($_GET, "n0");
+echo count($c2), "|", count($_GET), "|", implode(",", array_keys($_GET)), "\n";
+$c3 = $_GET; rsort($_GET);
+echo count($c3), "|", count($_GET), "|", implode(",", array_keys($_GET)), "\n";
+$c4 = $_GET; array_reverse($_GET);
+echo count($c4), "|", count($_GET), "\n";
+"#;
+    let bin = compile_web(&dir, src, "app");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{}", port);
+    let mut child = spawn_server(&bin, &addr, "1");
+    let r1 = http_get(&addr, "/?a=1&b=2&c=3");
+    let r2 = http_get(&addr, "/?a=1&b=2&c=3");
+    let _ = child.kill();
+    let _ = child.wait();
+    let expected = "3|2|b,c\n2|3|0,b,c\n3|3|0,1,2\n3|3\n";
+    assert!(r1.ends_with(expected), "first response body: {:?}", r1);
+    assert!(r2.ends_with(expected), "second response body: {:?}", r2);
+}
+
+/// `array_push()` onto a request superglobal publishes the grown or split table without
+/// releasing the old one a second time (#1341).
+///
+/// Under `--web` the request superglobals are associative arrays read with `LoadGlobal`. A push
+/// that grows the table, or splits it because `$held` still shares it, must publish the result
+/// the way `$_GET[] = $v` does; retiring the old pointer on top of what the insert already
+/// released double-freed it, which a later request then trips over.
+#[test]
+fn web_array_push_onto_a_request_superglobal_keeps_the_worker_alive() {
+    let dir = make_test_dir("web_array_push_super");
+    let src = "<?php $held = $_GET; for ($i = 0; $i < 40; $i++) { array_push($_GET, $i, 'v' . $i); } echo count($_GET), '/', count($held);";
+    let bin = compile_web_with_flags(&dir, src, "app", &["--heap-debug"]);
+    let port = free_port();
+    let addr = format!("127.0.0.1:{}", port);
+    let mut child = spawn_server(&bin, &addr, "1");
+    let responses: Vec<String> =
+        (0..4).map(|_| http_request(&addr, "GET", "/?a=1&b=2", &[], "")).collect();
+    let _ = child.kill();
+    let _ = child.wait();
+    for (index, response) in responses.iter().enumerate() {
+        assert!(response.ends_with("82/2"), "response {index}: {response:?}");
+    }
+}
+
+#[path = "web/memory_metrics.rs"]
+mod memory_metrics;
+
+/// Regression: an object that only a reference cycle keeps alive is destructed when its
+/// request ends, as PHP's shutdown does, so a pooled handler does not leak what its
+/// destructor releases (an open PDO connection, one per request) into later requests.
+#[test]
+fn web_pool_destructs_request_cycles_before_the_next_request() {
+    let dir = make_test_dir("web_pool_cycle_destruct");
+    let log = dir.join("destructed.log");
+    let source = format!(
+        r#"<?php
+final class Node {{
+    public ?Node $next = null;
+    public function __construct(private string $name) {{}}
+    public function __destruct() {{
+        file_put_contents('{log}', $this->name, FILE_APPEND);
+    }}
+}}
+$seen = file_exists('{log}') ? file_get_contents('{log}') : '';
+echo 'seen:', $seen, ';';
+$a = new Node('a');
+$b = new Node('b');
+$a->next = $b;
+$b->next = $a;
+"#,
+        log = log.display()
+    );
+    let bin = compile_isolated_web(&dir, &source, "app", "pool");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let mut server = spawn_server_with_args(
+        &bin,
+        &addr,
+        "1",
+        &["--handler-concurrency", "1", "--max-handler-requests", "0"],
+    );
+
+    assert!(raw_response_body(&http_get(&addr, "/")).contains("seen:;"));
+    let response = http_get(&addr, "/");
+    let second = raw_response_body(&response);
+    assert!(
+        second.contains("seen:ab;") || second.contains("seen:ba;"),
+        "the first request's cycle was not destructed before the second: {second}"
+    );
+
+    let _ = server.kill();
+    let _ = server.wait();
+}
+
+/// Verifies `flush()` sends the status and headers before any body output, as PHP's built-in
+/// server does: the client sees the head while the handler is still running, with and without
+/// the worker's gzip (which otherwise waits for a body prefix).
+#[test]
+fn web_flush_sends_headers_before_body_output() {
+    let heads = web_flush_early_heads(
+        "<?php\nheader(\"X-Ready: yes\");\nflush();\nusleep(1000000);\necho \"done\";\n",
+        "web_flush_headers",
+    );
+    assert_flushed_heads(&heads);
+}
+
+/// Verifies `flush()` called from eval'd code sends the head too: eval reaches the compiled
+/// runtime's flush through the bridge.
+#[test]
+fn web_eval_flush_sends_headers_before_body_output() {
+    let heads = web_flush_early_heads(
+        "<?php\nheader(\"X-Ready: yes\");\neval('flush();');\nusleep(1000000);\necho \"done\";\n",
+        "web_eval_flush_headers",
+    );
+    assert_flushed_heads(&heads);
+}
+
+/// Verifies `is_uploaded_file()` and `move_uploaded_file()` accept only this request's uploads,
+/// that a move keeps the bytes and gives the file `0666 & ~umask()`, and that an upload the
+/// handler left in place is deleted when the request ends, in the default worker model and under
+/// pool isolation.
+#[test]
+fn web_move_uploaded_file_accepts_only_uploads_and_unmoved_ones_are_deleted() {
+    let src = r#"<?php
+$tmp = $_FILES['upload']['tmp_name'] ?? '';
+$to = $_GET['to'] ?? '';
+if ($to === '') {
+    echo $tmp;
+    return;
+}
+echo is_uploaded_file($tmp) ? 'up' : 'no', '|', is_uploaded_file(__FILE__) ? 'up' : 'no', '|';
+echo @move_uploaded_file(__FILE__, $to) ? 'moved' : 'refused', '|';
+echo move_uploaded_file($tmp, $to) ? 'moved' : 'failed', '|', file_get_contents($to), '|';
+echo file_exists($tmp) ? 'left' : 'gone', '|', is_uploaded_file($tmp) ? 'up' : 'no', '|';
+echo (fileperms($to) & 0777) === (0666 & ~umask()) ? 'mode' : 'badmode';
+"#;
+    let boundary = "Xbnd";
+    let body = format!(
+        "--{b}\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"up.txt\"\r\n\
+         Content-Type: text/plain\r\n\r\nFILEDATA-123\r\n--{b}--\r\n",
+        b = boundary
+    );
+    let ct = format!("multipart/form-data; boundary={}", boundary);
+    for mode in ["worker", "pool"] {
+        let dir = make_test_dir(&format!("web_move_uploaded_{mode}"));
+        let bin = if mode == "pool" {
+            compile_isolated_web(&dir, src, "app", "pool")
+        } else {
+            compile_web(&dir, src, "app")
+        };
+        let port = free_port();
+        let addr = format!("127.0.0.1:{port}");
+        let mut child = spawn_server(&bin, &addr, "1");
+        let dest = dir.join("moved.txt");
+        let moved = http_request(
+            &addr,
+            "POST",
+            &format!("/?to={}", dest.display()),
+            &[("Content-Type", &ct)],
+            &body,
+        );
+        let left = http_request(&addr, "POST", "/", &[("Content-Type", &ct)], &body);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(
+            moved.ends_with("up|no|refused|moved|FILEDATA-123|gone|no|mode"),
+            "{mode}: move_uploaded_file: {moved:?}"
+        );
+        let unmoved = raw_response_body(&left).trim().to_string();
+        assert!(unmoved.contains("elephc_up"), "{mode}: no upload temp path: {left:?}");
+        assert!(
+            !std::path::Path::new(&unmoved).exists(),
+            "{mode}: the unmoved upload {unmoved} outlived its request"
+        );
+    }
+}
+
 /// Regression: under pool isolation, a class method that requires a template with `?>`, inline
 /// HTML and `<?=` inside `ob_start()` answers every request with the bytes PHP prints.
 #[test]
@@ -3065,4 +3231,68 @@ fn web_pool_renders_required_inline_html_template() {
 
     let _ = server.kill();
     let _ = server.wait();
+}
+
+/// Serves `src` under pool isolation with gzip enabled and returns what each of two requests
+/// (plain, then accepting gzip) received in the 700 ms after it was sent, lowercased.
+fn web_flush_early_heads(src: &str, prefix: &str) -> Vec<String> {
+    let dir = make_test_dir(prefix);
+    let bin = compile_isolated_web(&dir, src, "app", "pool");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let mut child = spawn_server_with_args(&bin, &addr, "1", &["--gzip"]);
+
+    let mut heads = Vec::new();
+    for accept_encoding in ["", "Accept-Encoding: gzip\r\n"] {
+        let mut stream = TcpStream::connect(&addr).expect("connect flushing client");
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("set bounded flushing read timeout");
+        let request = format!(
+            "GET / HTTP/1.1\r\nHost: {addr}\r\n{accept_encoding}Connection: close\r\n\r\n"
+        );
+        stream
+            .write_all(request.as_bytes())
+            .expect("send flushing request");
+
+        let deadline = Instant::now() + Duration::from_millis(700);
+        let mut early = Vec::new();
+        while Instant::now() < deadline && !early.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let mut chunk = [0u8; 8192];
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => early.extend_from_slice(&chunk[..read]),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(error) => panic!("flushing response read failed: {error}"),
+            }
+        }
+        heads.push(String::from_utf8_lossy(&early).to_ascii_lowercase());
+        // Let the handler finish before the next request needs it.
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set draining read timeout");
+        let mut rest = Vec::new();
+        let _ = stream.read_to_end(&mut rest);
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    heads
+}
+
+/// Asserts each early read holds the complete head with `X-Ready` and no body, and that the
+/// gzip request kept its compression.
+fn assert_flushed_heads(heads: &[String]) {
+    for head in heads {
+        assert!(
+            head.contains("\r\n\r\n") && head.contains("x-ready: yes"),
+            "flush() left the response head queued until handler completion: {head:?}"
+        );
+        assert!(!head.contains("done"), "the body arrived before the handler slept: {head:?}");
+    }
+    assert!(heads[1].contains("content-encoding: gzip"), "gzip was dropped: {:?}", heads[1]);
 }

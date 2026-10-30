@@ -357,6 +357,7 @@ pub(super) fn lower_property_get_from_value(
     op: Op,
     expr: &Expr,
 ) -> LoweredValue {
+    let object = refine_member_receiver(ctx, object, expr);
     if op == Op::NullsafePropGet && value_is_definitely_null(ctx, object.value) {
         return lower_boxed_null(ctx, expr);
     }
@@ -903,6 +904,7 @@ pub(super) fn lower_dynamic_property_fetch_from_value(
     mode: PropertyFetchMode,
     expr: &Expr,
 ) -> LoweredValue {
+    let object = refine_member_receiver(ctx, object, expr);
     // A literal name on a C struct receiver is the named field read (`$r->{'y'}` is `$r->y`): it
     // keeps the width-aware load and the owned copy of a `char*` field the named read takes. That
     // holds in probe mode too: the checker only admits declared fields, which always exist, so
@@ -913,6 +915,14 @@ pub(super) fn lower_dynamic_property_fetch_from_value(
         }
     }
     let result_type = dynamic_property_get_result_type(ctx, object.value, property, expr);
+    // A silent fetch can answer null for a typed slot that has not been initialized. Buffer
+    // handles keep their element type and use the raw missing-value sentinel, like buffer
+    // element probes: boxing a buffer loses the descriptor's element layout at a later merge.
+    let result_type = if mode.is_read() || matches!(result_type, PhpType::Buffer(_)) {
+        result_type
+    } else {
+        nullable_result_type(result_type)
+    };
     let property = lower_expr(ctx, property);
     let property = coerce_runtime_property_name(ctx, property, expr.span);
     lower_dynamic_property_fetch_from_operands(ctx, object, property, result_type, mode, expr)
@@ -935,6 +945,11 @@ pub(super) fn lower_dynamic_property_fetch_from_operands(
         Op::DynamicPropGet.default_effects(),
         Some(expr.span),
     );
+    // A name computed for this read (`$o->{(string) $mixed}`) is a temporary the
+    // lookup only reads; the result borrows from the object, never from it.
+    if ctx.value_is_owning_temporary(property) {
+        crate::ir_lower::ownership::release_if_owned(ctx, property, Some(expr.span));
+    }
     stabilize_borrowed_result_and_release_receiver(ctx, object, result, expr.span)
 }
 
@@ -951,6 +966,7 @@ pub(super) fn lower_property_probe_from_value(
     property: &str,
     expr: &Expr,
 ) -> LoweredValue {
+    let object = refine_member_receiver(ctx, object, expr);
     // Runtime-name probes must suppress typed uninitialized reads just like coalesce.
     // In particular, isset() on the C|false receiver after a rejected readonly fallback
     // must answer false rather than take DynamicPropGet's ordinary typed-slot guard.
@@ -960,6 +976,39 @@ pub(super) fn lower_property_probe_from_value(
     }
     let name = Expr::new(ExprKind::StringLiteral(property.to_string()), expr.span);
     lower_dynamic_property_fetch_from_value(ctx, object, &name, PropertyFetchMode::Probe, expr)
+}
+
+/// Like `lower_property_probe_from_value`, for `empty()`: a receiver with `__get` but no
+/// `__isset` reports the name absent without calling `__get` (`PropertyFetchMode::Empty`).
+pub(super) fn lower_property_empty_probe_from_value(
+    ctx: &mut LoweringContext<'_, '_>,
+    object: LoweredValue,
+    property: &str,
+    expr: &Expr,
+) -> LoweredValue {
+    if property_can_be_uninitialized(ctx, object.value, property)
+        || union_hook_probe_class(ctx, object.value, property).is_some() {
+        return lower_initialized_property_value(ctx, object, property, expr);
+    }
+    let name = Expr::new(ExprKind::StringLiteral(property.to_string()), expr.span);
+    lower_dynamic_property_fetch_from_value(ctx, object, &name, PropertyFetchMode::Empty, expr)
+}
+
+/// Like `lower_property_probe_from_value`, for `isset()`: only the answer's nullness is used,
+/// so a receiver answering through magic is asked `__isset` alone (`PropertyFetchMode::Isset`).
+pub(super) fn lower_property_isset_probe_from_value(
+    ctx: &mut LoweringContext<'_, '_>,
+    object: LoweredValue,
+    property: &str,
+    expr: &Expr,
+) -> LoweredValue {
+    // As for `??`: a typed slot that may still be uninitialized is probed, never read.
+    if property_can_be_uninitialized(ctx, object.value, property)
+        || union_hook_probe_class(ctx, object.value, property).is_some() {
+        return lower_initialized_property_value(ctx, object, property, expr);
+    }
+    let name = Expr::new(ExprKind::StringLiteral(property.to_string()), expr.span);
+    lower_dynamic_property_fetch_from_value(ctx, object, &name, PropertyFetchMode::Isset, expr)
 }
 
 /// Returns whether `$object->name` must be probed through the runtime-name form.
@@ -1183,7 +1232,24 @@ pub(crate) fn static_property_result_type(
     }) {
         property_ty.clone()
     } else {
-        property_ty.codegen_repr()
+        crate::types::eir_value_php_type(property_ty)
     };
     normalize_value_php_type(result_type)
+}
+
+/// Returns the slot type of a static property that holds one raw word: a `buffer<T>` handle,
+/// a `ptr` or `ptr<T>` address, or a `?ptr<T>` word where null is address 0.
+///
+/// Merge temps and literal element stamps are predicted before the read is lowered, and the
+/// syntactic fallback types every static read `int`, which cast a buffer handle or pointer
+/// into an integer slot (a ternary of two static buffers then indexed an `int`). Other static
+/// reads answer `None` and keep the typing their callers already had.
+pub(crate) fn static_property_word_type(
+    ctx: &LoweringContext<'_, '_>,
+    receiver: &StaticReceiver,
+    property: &str,
+    expr: &Expr,
+) -> Option<PhpType> {
+    let loaded = static_property_result_type(ctx, receiver, property, expr);
+    matches!(loaded.codegen_repr(), PhpType::Buffer(_) | PhpType::Pointer(_)).then_some(loaded)
 }

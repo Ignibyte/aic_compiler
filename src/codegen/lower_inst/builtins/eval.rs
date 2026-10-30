@@ -90,6 +90,7 @@ const NATIVE_MEMBER_ATTRIBUTE_METHOD: u8 = 0;
 const NATIVE_MEMBER_ATTRIBUTE_PROPERTY: u8 = 1;
 const NATIVE_MEMBER_ATTRIBUTE_CLASS_CONSTANT: u8 = 2;
 const NATIVE_MEMBER_ATTRIBUTE_CLASS: u8 = 3;
+const NATIVE_MEMBER_ATTRIBUTE_FUNCTION: u8 = 4;
 const NATIVE_ATTRIBUTE_ARGS_UNSUPPORTED: u8 = 0;
 const NATIVE_ATTRIBUTE_ARGS_SUPPORTED: u8 = 1;
 const NATIVE_ATTRIBUTE_ARG_NULL: u8 = 0;
@@ -337,10 +338,12 @@ use scope_io::*;
 use scope_reload::*;
 #[allow(unused_imports)]
 use status::*;
+pub(in crate::codegen::lower_inst::builtins) use status::emit_eval_status_helper_body;
 
 /// Installing the compiled OPcache configuration is a STARTUP concern, not an eval one, so
 /// `crate::codegen::frame` reaches it directly from the prologue.
 pub(crate) use context_registration::configure_eval_opcache;
+pub(in crate::codegen::lower_inst::builtins) use context_registration::register_eval_inventory;
 pub(super) use calls::lower_eval;
 pub(super) use dynamic_calls::{
     lower_eval_function_call, lower_eval_function_call_array, lower_eval_method_call,

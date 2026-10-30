@@ -14,10 +14,12 @@ packed class Particle {
 
 final class ParticleSystem {
     public buffer<Particle> $particles;
+    public buffer<int> $spawnOrder;
     private int $count = 0;
 
     public function __construct(int $capacity) {
         $this->particles = buffer_new<Particle>($capacity);
+        $this->spawnOrder = buffer_new<int>($capacity);
     }
 
     public function spawn(float $x, float $y, float $vx, float $vy): void {
@@ -26,6 +28,7 @@ final class ParticleSystem {
         $this->particles[$i]->y = $y;
         $this->particles[$i]->vx = $vx;
         $this->particles[$i]->vy = $vy;
+        $this->spawnOrder[$i] = $i + 1;
         $this->count = $i + 1;
     }
 
@@ -68,6 +71,15 @@ for ($frame = 0; $frame < 4; $frame++) {
     $system->step(0.5);
 }
 describe($system->snapshot(), $system->count());
+echo "spawn order: ", $system->spawnOrder[0], ",", $system->spawnOrder[1], ",", $system->spawnOrder[2], "\n";
 
 $ring = new Ring<Particle>(buffer_new<Particle>(16));
 echo "ring capacity: ", $ring->capacity(), "\n";
+
+// Buffers have no automatic cleanup: free each one once nothing reads it any more.
+buffer<int> $spawnOrder = $system->spawnOrder;
+buffer_free($spawnOrder);
+buffer<Particle> $particles = $system->snapshot();
+buffer_free($particles);
+buffer<Particle> $slots = $ring->slots;
+buffer_free($slots);

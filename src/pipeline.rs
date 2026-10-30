@@ -40,6 +40,9 @@ mod output;
 
 use output::{dynamic_eval_capability_warning, output_paths, OutputPaths};
 
+/// Keeps source validation and native link rejection consistent for unsupported producer inputs.
+const PHPEXT_CORE_RUNTIME_ONLY: &str = "PHP extension output currently requires the core runtime without bridges, hosted extensions, web or process monitoring";
+
 /// Runs the full compilation pipeline from PHP source to native binary.
 /// Reads PHP source, tokenizes, parses, resolves names, type-checks, optimizes,
 /// generates assembly, and links into a native binary. Exits on any error.
@@ -121,6 +124,11 @@ impl<'a> EntryKind<'a> {
 
 /// Shares every compiler pass while separating generated host storage from project discovery.
 fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
+    optimize::with_hosted_output(config.emit == Emit::Phpext, || compile_config(config, entry));
+}
+
+/// Runs compiler passes with the output kind's host-callback profile installed.
+fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
     let CliConfig {
         filename,
         heap_size,
@@ -152,12 +160,22 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
         strict_locals,
         web,
         web_isolation,
+        web_application,
         with_crates,
         quiet,
         ini_overrides,
     } = config;
     let filename = filename.as_str();
     crate::progress::init(quiet);
+    // Reject incompatible options before check/EIR output can return without the backend.
+    if emit == Emit::Phpext && (web || !extra_link_libs.is_empty()
+        || !extra_link_paths.is_empty() || !extra_frameworks.is_empty()
+        || !with_crates.is_empty() || counters || gc_stats
+        || instrument != crate::codegen::Instrumentation::Off) {
+        crate::progress::clear();
+        eprintln!("{PHPEXT_CORE_RUNTIME_ONLY}");
+        process::exit(1);
+    }
     codegen::set_null_repr(null_repr);
     // Record the PHP language profile and SAPI mode BEFORE any prelude or lowering runs: it is
     // the single source of truth for the reported version surface (`PHP_VERSION` and friends,
@@ -187,6 +205,10 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     }
     let mut timings = CompileTimings::new(emit_timings);
 
+    // The entry file uses source ID 0. Register it before any frontend or autoload diagnostic,
+    // including warnings from rejected autoload closures. The resolver only resets IDs from 1
+    // upwards and leaves the path registry intact.
+    Span::register_source_path(0, filename.to_string());
     let parsed = frontend::read_and_parse(
         filename, source_mode, &defines, &mut timings,
         entry.generated_source(),
@@ -237,7 +259,7 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
             process::exit(1);
         }
     };
-    let ast = match autoload::collect_aliases(ast) {
+    let ast =match autoload::collect_aliases(ast) {
         Ok(ast) => ast,
         Err(error) => {
             crate::progress::clear();
@@ -265,6 +287,24 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
         process::exit(1);
     }
 
+    // The preludes below are decided on the entry program, but the autoload pass that loads the
+    // Composer class files runs after name resolution, much later. Probe that closure now, so a
+    // vendor file that uses PDO or curl gets its prelude as if the entry file used it.
+    crate::progress::phase("autoload-prelude-probe");
+    let phase_started = Instant::now();
+    let autoloaded_preludes = if entry.is_repl_host() {
+        HashSet::new()
+    } else {
+        autoload::prelude_probe::autoloaded_prelude_groups(
+            &ast,
+            parent,
+            &autoload_registry,
+            &defines,
+        )
+    };
+    timings.record_since("autoload-prelude-probe", phase_started);
+    let autoloaded = |group: &str| autoloaded_preludes.contains(group);
+
     let mut prelude_inventory = optimize::reachability::PreludeInventory::new();
     // `curl` belongs here for the same reason `pdo` does, and NOT listing it is a silent
     // no-op rather than a smaller binary: `--with-curl` force-injects the whole surface for
@@ -280,6 +320,7 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
         (with_crates.contains("curl"), "curl"),
         (with_crates.contains("xml"), "xml"),
         (with_crates.contains("bcmath"), "bcmath"),
+        (with_crates.contains("random"), "random"),
     ]
     .into_iter()
     .filter_map(|(forced, group)| forced.then_some(group.to_string()))
@@ -308,7 +349,7 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     // injects when `force || detect(...)`, so `force = pdo_used` reproduces the
     // exact decision without a second AST walk (the injected PDO prelude would
     // otherwise be re-scanned by the mysqli detection below too).
-    let pdo_used = pdo_force || pdo_prelude::program_uses_pdo(&ast);
+    let pdo_used = pdo_force || autoloaded("pdo") || pdo_prelude::program_uses_pdo(&ast);
     let ast = if php_version == crate::web_prelude::PhpVersion::default() {
         pdo_prelude::inject_if_used(ast, pdo_used, &mut prelude_inventory)
     } else {
@@ -333,7 +374,8 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     crate::progress::phase("mysqli-prelude");
     let phase_started = Instant::now();
     let mysqli_force = with_crates.contains("mysqli");
-    let mysqli_used = mysqli_force || mysqli_prelude::program_uses_mysqli(&ast);
+    let mysqli_used =
+        mysqli_force || autoloaded("mysqli") || mysqli_prelude::program_uses_mysqli(&ast);
     let ast =
         mysqli_prelude::inject_if_used(ast, mysqli_used, php_version, &mut prelude_inventory);
     if mysqli_used {
@@ -350,7 +392,7 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     let phase_started = Instant::now();
     let ast = tz_prelude::inject_if_used(
         ast,
-        with_crates.contains("tz"),
+        with_crates.contains("tz") || autoloaded("tz"),
         &mut prelude_inventory,
     );
     timings.record_since("tz-prelude", phase_started);
@@ -371,7 +413,11 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     // before name resolution so the call resolves to the injected function.
     crate::progress::phase("var-export-prelude");
     let phase_started = Instant::now();
-    let ast = var_export_prelude::inject_if_used(ast, &mut prelude_inventory);
+    let ast = var_export_prelude::inject_if_used_or_referenced_elsewhere(
+        ast,
+        autoloaded("var_export"),
+        &mut prelude_inventory,
+    );
     timings.record_since("var-export-prelude", phase_started);
 
     // Inject the OPcache preludes (pure elephc-PHP functions): `opcache_get_configuration()`
@@ -463,7 +509,7 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     let phase_started = Instant::now();
     let ast = crate::image_prelude::inject_if_used(
         ast,
-        with_crates.contains("image"),
+        with_crates.contains("image") || autoloaded("image"),
         &mut prelude_inventory,
     );
     timings.record_since("image-prelude", phase_started);
@@ -476,9 +522,15 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     // detected, and before name resolution so a namespaced caller resolves to it.
     crate::progress::phase("hash-prelude");
     let phase_started = Instant::now();
-    let ast = crate::hash_prelude::inject_if_used(ast, false, &mut prelude_inventory);
+    let ast = crate::hash_prelude::inject_if_used(ast, autoloaded("hash"), &mut prelude_inventory);
+    let ast = crate::tokenizer_prelude::inject_if_used(
+        ast,
+        with_crates.contains("tokenizer") || autoloaded("tokenizer"),
+        &mut prelude_inventory,
+    );
     let ast = crate::core_prelude::inject_if_used(ast, &mut prelude_inventory);
     let ast = crate::bcmath_prelude::inject_if_used(ast, with_crates.contains("bcmath"), &mut prelude_inventory);
+    let ast = crate::random_prelude::inject_if_used(ast, with_crates.contains("random"), &mut prelude_inventory);
     timings.record_since("hash-prelude", phase_started);
 
     // Inject the testing runtime (`Elephc\Testing\TestCase`, `Runner`, the PHPUnit alias)
@@ -502,13 +554,13 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     let ast = if php_version == crate::php_version::PhpVersion::default() {
         crate::curl_prelude::inject_if_used(
             ast,
-            with_crates.contains("curl"),
+            with_crates.contains("curl") || autoloaded("curl"),
             &mut prelude_inventory,
         )
     } else {
         crate::curl_prelude::inject_if_used_for_version(
             ast,
-            with_crates.contains("curl"),
+            with_crates.contains("curl") || autoloaded("curl"),
             php_version,
             &mut prelude_inventory,
         )
@@ -524,10 +576,20 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     let phase_started = Instant::now();
     let ast = crate::xml_prelude::inject_if_used(
         ast,
-        with_crates.contains("xml"),
+        with_crates.contains("xml") || autoloaded("xml"),
         &mut prelude_inventory,
     );
     timings.record_since("xml-prelude", phase_started);
+    let phase_started = Instant::now();
+    let fileinfo_force = with_crates.contains("fileinfo") || autoloaded("fileinfo");
+    let ast = if php_version == crate::php_version::PhpVersion::default() {
+        crate::fileinfo_prelude::inject_if_used(ast, fileinfo_force, &mut prelude_inventory)
+    } else {
+        crate::fileinfo_prelude::inject_if_used_for_version(
+            ast, fileinfo_force, php_version, &mut prelude_inventory,
+        )
+    };
+    timings.record_since("fileinfo-prelude", phase_started);
     // Inject the Termwind-facing DOM HTML subset only when the program names a
     // DOM class, so other binaries never carry the HTML walker. This is an
     // interim prelude (choice B vs draft PR #654's native libxml stack).
@@ -556,14 +618,21 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
 
     crate::progress::phase("web-prelude");
     let phase_started = Instant::now();
-    let ast = web_prelude::inject_if_web(
-        ast,
-        web,
-        php_version,
-        &ini_overrides,
-        &mut prelude_inventory,
-        preload_startup_path.as_deref(),
-    );
+    let ast = if web_application {
+        web_prelude::application::inject(
+            ast, php_version, &ini_overrides, &mut prelude_inventory,
+            preload_startup_path.as_deref(),
+        )
+    } else {
+        web_prelude::inject_if_web(
+            ast,
+            web,
+            php_version,
+            &ini_overrides,
+            &mut prelude_inventory,
+            preload_startup_path.as_deref(),
+        )
+    };
     timings.record_since("web-prelude", phase_started);
 
     // Inject the PHP version-surface functions (`zend_version`, `php_sapi_name`,
@@ -578,6 +647,36 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
         &mut prelude_inventory,
     );
     timings.record_since("version-prelude", phase_started);
+
+    // Declare the real PHP extensions the project hosts (`[extension]` in
+    // elephc.toml): each registered function becomes a PHP function calling it
+    // through the Zend engine archive. Injected whenever the project declares
+    // any — reachability prunes the wrappers a program never calls, and an
+    // archive nothing references contributes nothing to the link.
+    crate::progress::phase("extension-prelude");
+    let phase_started = Instant::now();
+    let hosted_php_ext = match crate::php_ext::install::resolve_hosted(Path::new(filename), target, web_application) {
+        Ok(hosted) => hosted,
+        Err(error) => {
+            crate::progress::clear();
+            eprintln!("{error}");
+            process::exit(1);
+        }
+    };
+    let ast = match &hosted_php_ext {
+        Some(hosted) => {
+            let mut combined = crate::php_ext::prelude::declarations(hosted);
+            prelude_inventory.record_program(crate::php_ext::prelude::PRELUDE_GROUP, &combined);
+            combined.extend(ast);
+            for extension in &hosted.extensions {
+                linked_php_surfaces.push(extension.surface.module.clone());
+            }
+            // The wrappers name their live instance by `WeakReference`.
+            crate::core_prelude::ensure_weak_reference(combined, &mut prelude_inventory)
+        }
+        None => ast,
+    };
+    timings.record_since("extension-prelude", phase_started);
 
     crate::progress::phase("name-resolve");
     let phase_started = Instant::now();
@@ -741,6 +840,10 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     );
     timings.record_since("opcache-manifest-bake", phase_started);
 
+    let ast = if web_application {
+        web_prelude::application::wrap_bootstrap(ast)
+    } else { ast };
+
     crate::progress::phase("opt-fold");
     let phase_started = Instant::now();
     let ast = optimize::fold_constants_for_target(ast, target);
@@ -762,6 +865,11 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
         }
     };
     timings.record_since("typecheck", phase_started);
+    if emit == Emit::Phpext && hosted_php_ext.is_some() {
+        crate::progress::clear();
+        eprintln!("{PHPEXT_CORE_RUNTIME_ONLY}");
+        process::exit(1);
+    }
     for warning in &check_result.warnings {
         errors::report_warning(warning);
     }
@@ -782,7 +890,8 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
 
     crate::progress::phase("exports-scan");
     let phase_started = Instant::now();
-    let exported_functions = match exports::collect(&ast, &check_result.functions) {
+    let collect_exports = if emit == Emit::Phpext { exports::collect_for_php } else { exports::collect };
+    let exported_functions = match collect_exports(&ast, &check_result.functions) {
         Ok(exports) => exports,
         Err(e) => {
             crate::progress::clear();
@@ -791,6 +900,11 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
         }
     };
     timings.record_since("exports-scan", phase_started);
+    if emit == Emit::Phpext && exported_functions.is_empty() {
+        crate::progress::clear();
+        eprintln!("--emit phpext requires at least one #[Export] function");
+        process::exit(1);
+    }
     if matches!(emit, Emit::Executable)
         && !check_only
         && !emit_ir
@@ -860,6 +974,14 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     if preload_startup_path.is_some() {
         exported_function_names.insert(crate::web_prelude::PRELOAD_STARTUP_FN.to_string());
     }
+    if web_application {
+        exported_function_names.extend([
+            web_prelude::application::READY,
+            web_prelude::application::REQUEST,
+            web_prelude::application::SHUTDOWN,
+            web_prelude::application::CONTEXT_OPTION,
+        ].map(str::to_string));
+    }
     // A generic instantiation is reachable by construction — it exists only because a call
     // site asked for it — but no call site NAMES it: the source still says `identity(5)` and
     // lowering is what resolves that to `identity<int>`. Without this the pruner drops every
@@ -879,6 +1001,12 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
         },
     );
     timings.record_since("decl-reach", phase_started);
+    // Reachability removes bridge requirements belonging only to dead declarations.
+    if emit == Emit::Phpext && !check_result.required_libraries.is_empty() {
+        crate::progress::clear();
+        eprintln!("{PHPEXT_CORE_RUNTIME_ONLY}");
+        process::exit(1);
+    }
     codegen::prepare_declared_name_order(
         &ast,
         &check_result.classes,
@@ -890,6 +1018,7 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
             &ast,
             &check_result,
             target,
+            emit,
             filename,
             web,
             ir_opt,
@@ -922,6 +1051,7 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
             process::exit(1);
         }
     };
+    ir_module.web_application = web_application;
     ir_module.included_files = opcache_manifest
         .iter()
         .map(|entry| entry.path.clone())
@@ -929,7 +1059,8 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
     timings.record_since("ir-lower", phase_started);
 
     if emit.is_library() || (check_only && !exported_functions.is_empty()) {
-        if let Err(error) = exports::validate_cdylib_call_graph(&ir_module, &exported_functions) {
+        let validate = if emit == Emit::Phpext { exports::validate_phpext_call_graph } else { exports::validate_cdylib_call_graph };
+        if let Err(error) = validate(&ir_module, &exported_functions) {
             crate::progress::clear();
             errors::report(&error.with_file(filename.to_string()));
             process::exit(1);
@@ -965,6 +1096,7 @@ fn compile_inner(config: CliConfig, entry: EntryKind<'_>) {
         with_crates: &with_crates,
         ini_overrides: &ini_overrides,
         linked_php_surfaces: &linked_php_surfaces,
+        hosted_php_ext: hosted_php_ext.as_ref(),
         ir_module,
         web,
         web_isolation,

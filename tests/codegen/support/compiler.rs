@@ -355,9 +355,14 @@ fn try_compile_source_to_asm_with_defines_repr_inner(
     let resolved = elephc::hash_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
     let resolved = elephc::core_prelude::inject_if_used(resolved, &mut prelude_inventory);
     let resolved = elephc::bcmath_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
+    let resolved = elephc::random_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
     let resolved = elephc::testing_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
     let resolved = elephc::curl_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
     let resolved = elephc::xml_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
+    let resolved = elephc::fileinfo_prelude::inject_if_used_for_version(
+        resolved, false, php_version, &mut prelude_inventory,
+    );
+    let resolved = elephc::tokenizer_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
     let resolved = elephc::dom_html_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
     let resolved = elephc::name_resolver::resolve(resolved).expect("name resolve failed");
     let resolved =
@@ -479,6 +484,7 @@ fn set_fixture_linked_extensions(libraries: &[String]) {
             "elephc_pdo" => Some("PDO"),
             "elephc_crypto" => Some("hash"),
             "elephc_bcmath" => Some("bcmath"),
+            "elephc_random" => Some("random"),
             "elephc_mbstring" => Some("mbstring"),
             "elephc_phar" => Some("Phar"),
             "elephc_image" => Some("gd"),

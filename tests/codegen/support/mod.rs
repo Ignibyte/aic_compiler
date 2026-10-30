@@ -41,6 +41,7 @@ mod c_fixture;
 mod compiler;
 mod curl_native;
 mod native_cache;
+pub(crate) mod fileinfo_native;
 mod native_projects;
 mod oniguruma;
 mod projects;

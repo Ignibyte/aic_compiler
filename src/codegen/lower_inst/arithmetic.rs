@@ -26,7 +26,7 @@ use crate::codegen::{CodegenIrError, Result};
 #[path = "arithmetic/borrowed_integer_rhs_tests.rs"]
 mod borrowed_integer_rhs_tests;
 
-mod stack_cell;
+pub(super) mod stack_cell;
 
 /// Lowers a two-operand integer arithmetic or bitwise instruction.
 pub(super) fn lower_int_binop(
@@ -379,6 +379,9 @@ pub(super) fn lower_mixed_numeric_binop(
     ctx: &mut FunctionContext<'_>,
     inst: &Instruction,
 ) -> Result<()> {
+    if let Some(offset) = inst.result.and_then(|value| ctx.numeric_cell_offsets.get(&value).copied()) {
+        return stack_cell::lower_mixed(ctx, inst, offset);
+    }
     let lhs = expect_operand(inst, 0)?;
     let rhs = expect_operand(inst, 1)?;
     let op = expect_mixed_numeric_op(inst)?;

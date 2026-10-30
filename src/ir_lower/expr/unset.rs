@@ -9,12 +9,20 @@
 
 use super::*;
 
+mod property_elements;
+use property_elements::*;
+
 /// Lowers supported `unset(...)` targets without evaluating them as ordinary call args.
 pub(super) fn lower_unset_locals(
     ctx: &mut LoweringContext<'_, '_>,
     args: &[Expr],
     expr: &Expr,
 ) -> Option<LoweredValue> {
+    for arg in args {
+        if let Some(message) = unset_property_element_refusal(ctx, arg) {
+            crate::ir_lower::diagnostics::refuse(arg.span, &message);
+        }
+    }
     if !args.iter().all(|arg| unset_target_supported(ctx, arg)) {
         return None;
     }
@@ -48,10 +56,13 @@ pub(super) fn unset_target_supported(ctx: &LoweringContext<'_, '_>, arg: &Expr) 
         ExprKind::ArrayAccess { array, .. } => {
             unset_array_access_has_object_receiver(ctx, array)
                 || unset_array_access_has_local_array_receiver(ctx, array)
+                || unset_array_access_property_array_type(ctx, array).is_some()
+                || unset_array_access_has_array_access_property_receiver(ctx, array)
+                || unset_array_access_static_php_array_receiver(ctx, array).is_some()
         }
         ExprKind::PropertyAccess { object, property }
         | ExprKind::NullsafePropertyAccess { object, property } => {
-            unset_property_access_has_direct_lowering(ctx, object, property)
+            unset_property_access_has_direct_lowering(ctx, object, property, arg)
         }
         // `unset($o->{$k})` lowers to `Op::DynamicPropUnset`, whose backend ladder compares the
         // runtime name against the receiver's declared names and then takes php's answer for the
@@ -127,12 +138,35 @@ pub(super) fn unset_array_access_has_object_receiver(
 /// representation change and therefore stays limited to a local this function owns. An
 /// `ArrayAccess` object dispatches to its `offsetUnset($key)` method like before, and a raw
 /// by-reference INDEXED local falls through to that path.
+///
+/// An element of a declared-array, associative or boxed `Mixed` object property, and of a
+/// declared-array static property, is removed through the same storage the element writes mutate
+/// (issue #750). A property holding an ArrayAccess object dispatches to its `offsetUnset` after
+/// the key, and a readonly array property raises PHP's indirect-modification `Error`.
 pub(super) fn lower_unset_array_access(
     ctx: &mut LoweringContext<'_, '_>,
     array: &Expr,
     index: &Expr,
     expr: &Expr,
 ) {
+    if let ExprKind::PropertyAccess { object, property } = &array.kind {
+        if let Some(property_ty) = unset_array_access_property_array_type(ctx, array) {
+            if let Some(message) = readonly_property_element_unset_message(ctx, object, property) {
+                lower_unset_readonly_property_element(ctx, object, property, &message, index, expr);
+                return;
+            }
+            lower_unset_property_array_element(ctx, object, property, &property_ty, index, expr);
+            return;
+        }
+        if unset_array_access_has_array_access_property_receiver(ctx, array) {
+            lower_unset_array_access_property_offset(ctx, array, object, property, index, expr);
+            return;
+        }
+    }
+    if let Some((receiver, property)) = unset_array_access_static_php_array_receiver(ctx, array) {
+        lower_unset_static_property_array_element(ctx, receiver, property, index, expr);
+        return;
+    }
     if let ExprKind::Variable(name) = &array.kind {
         if ctx.local_type(name).is_php_array()
             || (ctx.is_ref_bound_local(name)
@@ -209,6 +243,7 @@ pub(super) fn lower_unset_hash_element(
 ) {
     let array_value = ctx.load_local(name, Some(array_span));
     let index_value = lower_expr(ctx, index);
+    let (index_value, key_owner) = root_owned_call_operand(ctx, index_value, index.span);
     ctx.emit_void(
         Op::HashUnset,
         vec![array_value.value, index_value.value],
@@ -216,6 +251,9 @@ pub(super) fn lower_unset_hash_element(
         Op::HashUnset.default_effects(),
         Some(expr.span),
     );
+    if let Some(slot) = key_owner {
+        retire_owned_call_operand(ctx, slot, index.span);
+    }
 }
 
 /// Lowers `unset($arr[$key])` for a packed indexed-array local.
@@ -254,9 +292,10 @@ pub(super) fn unset_property_access_has_direct_lowering(
     ctx: &LoweringContext<'_, '_>,
     object: &Expr,
     property: &str,
+    member: &Expr,
 ) -> bool {
     matches!(
-        property_unset_action(ctx, object, property),
+        property_unset_action(ctx, object, property, member),
         Some(
             UnsetPropertyAction::Magic
                 | UnsetPropertyAction::Noop
@@ -274,14 +313,14 @@ pub(super) fn lower_unset_property_access(
     property: &str,
     expr: &Expr,
 ) {
-    let action = property_unset_action(ctx, object, property);
+    let action = property_unset_action(ctx, object, property, expr);
     match action {
         Some(UnsetPropertyAction::Magic) => {
-            let object = lower_expr(ctx, object);
+            let object = lower_member_receiver(ctx, object, expr);
             lower_magic_property_unset(ctx, object, property, expr);
         }
         Some(UnsetPropertyAction::Noop) => {
-            let object = lower_expr(ctx, object);
+            let object = lower_member_receiver(ctx, object, expr);
             // A runtime SUBCLASS can declare `__unset` where the static class does not, and php
             // calls it on such an instance instead of doing nothing. The receiver is lowered once,
             // before the guard, so php's evaluation order is unchanged either way.
@@ -291,7 +330,7 @@ pub(super) fn lower_unset_property_access(
         // receiver's property storage, so it picks the fixed-slot marker or the
         // dynamic-hash removal from the same instruction.
         Some(UnsetPropertyAction::ClearSlot | UnsetPropertyAction::RemoveDynamic) => {
-            let object = lower_expr(ctx, object);
+            let object = lower_member_receiver(ctx, object, expr);
             lower_guarded_magic_property_unset(ctx, object, property, expr, |ctx, object| {
                 let data = ctx.intern_string(property);
                 ctx.emit_void(
@@ -335,10 +374,12 @@ pub(super) fn unset_dynamic_property_access_has_direct_lowering(
     )
 }
 
-/// Returns an unset operand's inferred type, reading a local's checked type when there is one.
+/// Returns an unset operand's type from local storage or a known user/extern signature.
 ///
 /// Same shape as `unset_array_access_has_object_receiver`: the checker's local type is the
-/// authority when the operand is a plain variable, and the syntactic answer is the fallback.
+/// authority for a plain variable. User/extern calls retain their declared result type so an
+/// effectful string name can be classified without evaluating it. Builtins keep their existing
+/// syntactic hints, since a generic contract can be wider than its checked string result.
 fn unset_operand_type(ctx: &LoweringContext<'_, '_>, expr: &Expr) -> PhpType {
     match &expr.kind {
         ExprKind::Variable(name) => ctx
@@ -346,6 +387,12 @@ fn unset_operand_type(ctx: &LoweringContext<'_, '_>, expr: &Expr) -> PhpType {
             .get(name)
             .cloned()
             .unwrap_or_else(|| infer_expr_type_syntactic(expr)),
+        ExprKind::FunctionCall { name, .. }
+            if ctx.functions.contains_key(name.as_str())
+                || ctx.extern_functions.contains_key(name.as_str()) =>
+        {
+            call_return_type(ctx, name.as_str(), &[])
+        }
         _ => infer_expr_type_syntactic(expr),
     }
 }
@@ -361,7 +408,7 @@ pub(super) fn lower_unset_dynamic_property_access(
     property: &Expr,
     expr: &Expr,
 ) {
-    let object = lower_expr(ctx, object);
+    let object = lower_member_receiver(ctx, object, expr);
     let property = lower_expr(ctx, property);
     let property = crate::ir_lower::expr::property_access::coerce_runtime_property_name(
         ctx, property, expr.span,
@@ -407,6 +454,7 @@ fn stabilize_unset_receiver(
 /// The receiver is already lowered, so the guard adds no evaluation and every branch converges on
 /// one merge block. When no subclass adds the accessor the chain is empty and `lower_ordinary`
 /// runs exactly where it ran before, with no extra block at all.
+/// An owned receiver stays unwind-visible across removal or magic callbacks and is retired once.
 fn lower_guarded_magic_property_unset(
     ctx: &mut LoweringContext<'_, '_>,
     object: LoweredValue,
@@ -414,10 +462,13 @@ fn lower_guarded_magic_property_unset(
     expr: &Expr,
     lower_ordinary: impl FnOnce(&mut LoweringContext<'_, '_>, LoweredValue),
 ) {
+    let pins = pin_in_flight_owners(ctx, &[object.value], expr.span);
     let magic_classes =
         crate::ir_lower::stmt::magic_accessor_subclasses(ctx, object.value, property, "__unset");
     if magic_classes.is_empty() {
         lower_ordinary(ctx, object);
+        unpin_in_flight_owners(ctx, pins, expr.span);
+        stabilize_unset_receiver(ctx, object, expr.span);
         return;
     }
     let merge = ctx
@@ -456,6 +507,8 @@ fn lower_guarded_magic_property_unset(
     lower_ordinary(ctx, object);
     branch_to(ctx, merge);
     ctx.builder.position_at_end(merge);
+    unpin_in_flight_owners(ctx, pins, expr.span);
+    stabilize_unset_receiver(ctx, object, expr.span);
 }
 
 /// Describes how `unset($object->property)` should be lowered for a known receiver class.
@@ -478,8 +531,9 @@ pub(super) fn property_unset_action(
     ctx: &LoweringContext<'_, '_>,
     object: &Expr,
     property: &str,
+    member: &Expr,
 ) -> Option<UnsetPropertyAction> {
-    let (class_name, _) = isset_object_expr_class(ctx, object)?;
+    let (class_name, _) = checked_object_expr_class(ctx, object, member)?;
     // Every `stdClass` property is a hash entry, so `unset()` is a plain key removal and
     // `stdClass` declares no magic methods that could intercept it.
     if is_builtin_stdclass_name(&class_name) {

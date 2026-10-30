@@ -30,6 +30,45 @@ fn test_mixed_literal_spread_preserves_nested_element_type() {
     }
 }
 
+/// The checker types each spread source of an indexed literal once. `[...E, null]` typed `E` in
+/// its hash-spread scan and again in the element merge that followed, so nesting the literal
+/// under a lazy merge (`$maybe ?? [...E, null]`, `$flag ? [...E, null] : []`) doubled the work at
+/// every level. Indexed sources reach the list merge; hash sources (`["k" => ...]`) reach the
+/// associative one, which the codegen timing tests do not cover. Checking alone, each 24-deep
+/// nesting must finish well inside the bound with the type a single level already settles on.
+#[test]
+fn test_nested_spread_literal_merges_type_in_linear_time() {
+    let mut indexed_coalesce = String::from("[$argc]");
+    let mut indexed_ternary = String::from("[$argc]");
+    let mut hash_coalesce = String::from("[\"k\" => $argc]");
+    let mut hash_ternary = String::from("[\"k\" => $argc]");
+    for _ in 0..24 {
+        indexed_coalesce = format!("($maybe ?? [...{indexed_coalesce}, null])");
+        indexed_ternary = format!("($flag ? [...{indexed_ternary}, null] : [])");
+        hash_coalesce = format!("($maybe ?? [...{hash_coalesce}, null])");
+        hash_ternary = format!("($flag ? [...{hash_ternary}, null] : [])");
+    }
+    let source = format!(
+        "<?php\n$maybe = $argc > 100 ? null : [];\n$flag = $argc > 0;\n$a = {indexed_coalesce};\n$b = {indexed_ternary};\n$c = {hash_coalesce};\n$d = {hash_ternary};\n"
+    );
+    let started = std::time::Instant::now();
+    let checked = check_source_full(&source).expect("nested spread literals type-check");
+    let elapsed = started.elapsed();
+    let mixed_list = PhpType::Array(Box::new(PhpType::Mixed));
+    assert_eq!(checked.global_env.get("a"), Some(&mixed_list));
+    assert_eq!(checked.global_env.get("b"), Some(&mixed_list));
+    // A hash spread makes each level a hash. Upstream widens a hash joined with the `[]` arm (or
+    // with the `array<never>` left of `??`) to `mixed`; the fork merges `[]` into any array shape
+    // (35a34cc4f), so every level stays a `mixed`-keyed hash.
+    let mixed_hash = PhpType::AssocArray { key: Box::new(PhpType::Mixed), value: Box::new(PhpType::Mixed) };
+    assert_eq!(checked.global_env.get("c"), Some(&mixed_hash));
+    assert_eq!(checked.global_env.get("d"), Some(&mixed_hash));
+    assert!(
+        elapsed < std::time::Duration::from_secs(30),
+        "nested spread literal typing took {elapsed:?}"
+    );
+}
+
 /// Direct scalar property references need writeback support distinct from nested array origins.
 #[test]
 fn test_error_by_ref_argument_rejects_direct_property_storage() {
@@ -89,13 +128,75 @@ fn test_error_string_index_requires_integer() {
     );
 }
 
-/// Verifies that assigning to a string offset (character replacement) is rejected.
-/// Input: `$s = "hello"; $s[0] = "H";` — offset assignment on a string is unsupported.
+/// Verifies a string offset write keeps the string read's offset rule: a non-numeric string
+/// literal or an array offset is refused.
 #[test]
-fn test_error_string_offset_assignment_is_not_supported() {
+fn test_error_string_offset_write_requires_integer_offset() {
     expect_error(
-        "<?php $s = \"hello\"; $s[0] = \"H\";",
-        "String offset assignment is not supported",
+        "<?php $s = \"hello\"; $s[\"x\"] = \"H\";",
+        "String index must be integer",
+    );
+    expect_error(
+        "<?php $s = \"hello\"; $s[[1]] = \"H\";",
+        "String index must be integer",
+    );
+}
+
+/// Verifies compound operators on a string offset are refused with PHP's `Error` text, in the
+/// statement and the expression form; `$s[0] = $s[0] . "x"` written out stays valid.
+#[test]
+fn test_error_string_offset_compound_assignment() {
+    expect_error(
+        "<?php $s = \"hello\"; $s[0] .= \"H\";",
+        "Cannot use assign-op operators with string offsets",
+    );
+    expect_error(
+        "<?php $s = \"hello\"; $s[0] += 1;",
+        "Cannot use assign-op operators with string offsets",
+    );
+    expect_error(
+        "<?php $s = \"hello\"; $r = ($s[0] .= \"H\");",
+        "Cannot use assign-op operators with string offsets",
+    );
+}
+
+/// Verifies `++`/`--` on a string offset are refused with PHP's `Error` text.
+#[test]
+fn test_error_string_offset_increment_decrement() {
+    expect_error(
+        "<?php $s = \"hello\"; $s[0]++;",
+        "Cannot increment/decrement string offsets",
+    );
+    expect_error(
+        "<?php $s = \"hello\"; --$s[1];",
+        "Cannot increment/decrement string offsets",
+    );
+    expect_error(
+        "<?php $s = \"hello\"; $r = $s[0]++;",
+        "Cannot increment/decrement string offsets",
+    );
+}
+
+/// Verifies `$s[] = $v` on a string is refused with PHP's `Error` text.
+#[test]
+fn test_error_string_push_is_not_supported() {
+    expect_error(
+        "<?php $s = \"hello\"; $s[] = \"H\";",
+        "[] operator not supported for strings",
+    );
+}
+
+/// Verifies string offset writes into a property are refused with a
+/// diagnostic that names the workaround (they are valid PHP, not lowered yet).
+#[test]
+fn test_error_string_offset_write_on_property() {
+    expect_error(
+        "<?php class B { public string $s = \"abc\"; } $o = new B(); $o->s[0] = \"X\";",
+        "String offset assignment on a property is not supported",
+    );
+    expect_error(
+        "<?php class B { public static string $s = \"abc\"; } B::$s[0] = \"X\";",
+        "Array index assignment requires an array static property",
     );
 }
 
@@ -377,13 +478,17 @@ fn test_error_negate_string() {
     );
 }
 
-/// Verifies that comparison operators on strings produce an error.
-/// Input: `$x = "a"; echo $x < 1;` — string vs int comparison is invalid.
+/// Verifies that a relational comparison MIXING a string and a number is still rejected.
+///
+/// Two strings order fine since issue #507 — PHP's own rule, through the runtime ordering
+/// helper. A string against a number is a different conversion (PHP casts the number to a
+/// string when the string is non-numeric) and stays unsupported, so the diagnostic now names
+/// both accepted shapes.
 #[test]
-fn test_error_comparison_on_string() {
+fn test_error_comparison_mixing_string_and_number() {
     expect_error(
         "<?php $x = \"a\"; echo $x < 1;",
-        "Comparison operators require numeric operands",
+        "Comparison operators require numeric or string operands",
     );
 }
 
@@ -3490,4 +3595,37 @@ fn test_declared_union_local_accepts_the_other_member_after_a_guard() {
          if ($x instanceof A) { $x = new B(); } \
          echo \"ok\";",
     );
+}
+
+
+/// Accepted placement still activates strict parameter checking, including an earlier body.
+#[test]
+fn test_error_strict_types_after_bare_declare_is_effective() {
+    for source in [
+        "<?php declare(ticks=1) echo 0; declare(strict_types=1); function number(int $v): int { return $v; } echo number(true);",
+        "<?php declare(ticks=1) echo number(true); declare(strict_types=1); function number(int $v): int { return $v; }",
+        "<?php declare(ticks=1) if (true) { echo number(true); } declare(strict_types=1); function number(int $v): int { return $v; }",
+        "<?php declare(ticks=1) { $a = [0]; echo ($a[number(true)] += 1); } declare(strict_types=1); function number(int $v): int { return $v; }",
+    ] { expect_error(source, "`declare(strict_types=1)` is active in this file"); }
+}
+
+/// Once a script declares strict typing, a later zero does not clear its op-array flag.
+#[test]
+fn test_error_strict_types_later_zero_does_not_disable_one() {
+    expect_error("<?php declare(strict_types=1); declare(strict_types=0); function number(int $v): int { return $v; } echo number(true);",
+        "`declare(strict_types=1)` is active in this file");
+}
+
+/// Null-only returns require an explicit null value; genuine void still rejects every value.
+#[test]
+fn test_standalone_null_return_requirements() {
+    for source in [
+        "<?php function invalid(): null {}",
+        "<?php function invalid(): null { return; }",
+        "<?php function invalid(): null { return 1; }",
+        "<?php function invalid(): void { return null; }",
+        "<?php function invalid(void $value): void {}",
+    ] {
+        assert!(check_source_full(source).is_err(), "unexpectedly accepted: {source}");
+    }
 }

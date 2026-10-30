@@ -130,6 +130,7 @@ Subcommands:
 Modes:
   --web                   Compile as a prefork HTTP server
   --web-isolation MODE    worker (default) | pool | request; requires --web
+  --web-lifecycle MODE    request (default) | application; application requires worker isolation
   --strict-php            Reject elephc extensions in tagged PHP source; .lfc remains extension-enabled
   --strict-locals         Make an incompatible local retype (e.g. int then string) a compile error instead of a warning
 
@@ -137,7 +138,7 @@ Output modes:
   --check                 Type-check only, no codegen (mutually exclusive with --emit-ir/--emit-asm)
   --emit-ir               Emit EIR text instead of compiling
   --emit-asm              Emit assembly (.s) instead of linking
-  --emit KIND             Output kind: executable (default) | cdylib | staticlib
+  --emit KIND             Output kind: executable (default) | cdylib | staticlib | phpext
                           Aliases: exe/bin | dylib/shared | static/lib (`lib` is staticlib)
 
 Target:
@@ -146,7 +147,7 @@ Target:
   --php-version VERSION   8.0 through 8.6 (detected; fallback: 8.5)
 
 Codegen:
-  --heap-size=BYTES       Fixed heap size in bytes (default: 8388608)
+  --heap-size=BYTES       Fixed heap size in bytes (default: 134217728)
   --null-repr=MODE        tagged (default) | sentinel
   --regalloc=MODE         linear (default) | stack
   --ir-opt=on|off         EIR optimization passes (default: on; --no-ir-opt is an alias for --ir-opt=off)
@@ -245,6 +246,8 @@ pub(crate) struct CliConfig {
     pub(crate) web: bool,
     /// Process-isolation architecture baked into a `--web` executable.
     pub(crate) web_isolation: WebIsolation,
+    /// Retain a typed application between requests in worker isolation.
+    pub(crate) web_application: bool,
     /// Optional capabilities the user force-enabled with `--with-<name>` (short
     /// names such as `"pdo"` or `"regex"`). Bridge names force-link their
     /// staticlib; runtime capabilities enable their helper/native requirements.
@@ -271,6 +274,8 @@ pub(crate) enum Command {
     Compile(CliConfig),
     /// One validated `elephc native` subcommand.
     Native(NativeCommand),
+    /// One validated `elephc extension` hosted-extension command.
+    PhpExt(crate::php_ext::cli::PhpExtCommand),
     /// One validated `elephc monitor` sampling invocation.
     Monitor(crate::monitor::MonitorCommand),
     /// One `elephc test` run: compile the suite under a path and run it.
@@ -302,6 +307,20 @@ pub(crate) fn parse_args(args: &[String]) -> Command {
             Ok(command) => Command::Monitor(command),
             Err(error) => {
                 eprintln!("{error}\n\n{}", crate::monitor::MONITOR_USAGE);
+                process::exit(1);
+            }
+        };
+    }
+    if args.get(1).map(String::as_str) == Some("extension") {
+        use crate::php_ext::cli::{parse_php_ext_args, php_ext_help, PhpExtParseOutcome};
+        return match parse_php_ext_args(&args[2..]) {
+            Ok(PhpExtParseOutcome::Command(command)) => Command::PhpExt(command),
+            Ok(PhpExtParseOutcome::Help(help)) => {
+                print!("{help}");
+                process::exit(0);
+            }
+            Err(error) => {
+                eprintln!("{error}\n\n{}", php_ext_help());
                 process::exit(1);
             }
         };
@@ -341,7 +360,7 @@ pub(crate) fn parse_compile_args(args: &[String]) -> CliConfig {
         process::exit(0);
     }
 
-    let mut heap_size: usize = 8_388_608; // 8MB default
+    let mut heap_size: usize = 134_217_728; // 128 MB, PHP's default memory_limit
     let mut gc_stats = false;
     let mut counters = false;
     let mut instrument = crate::codegen::Instrumentation::Off;
@@ -369,6 +388,8 @@ pub(crate) fn parse_compile_args(args: &[String]) -> CliConfig {
     let mut web = false;
     let mut web_isolation = WebIsolation::default();
     let mut web_isolation_explicit = false;
+    let mut web_application = false;
+    let mut web_lifecycle_explicit = false;
     let mut quiet = false;
     let mut with_crates: HashSet<String> = HashSet::new();
     let mut ini_overrides: Vec<(String, String)> = Vec::new();
@@ -530,6 +551,15 @@ pub(crate) fn parse_compile_args(args: &[String]) -> CliConfig {
             strict_locals = true;
         } else if arg == "--web" {
             web = true;
+        } else if arg == "--web-lifecycle" {
+            i += 1;
+            web_application = parse_web_lifecycle(&required_value(
+                &args, i, "Missing mode after --web-lifecycle (expected request|application)",
+            ));
+            web_lifecycle_explicit = true;
+        } else if let Some(value) = arg.strip_prefix("--web-lifecycle=") {
+            web_application = parse_web_lifecycle(value);
+            web_lifecycle_explicit = true;
         } else if arg == "--web-isolation" {
             i += 1;
             web_isolation = parse_web_isolation(&required_value(
@@ -591,7 +621,7 @@ pub(crate) fn parse_compile_args(args: &[String]) -> CliConfig {
     // --web restructures the process entry point, which a library artifact does
     // not have: both library kinds are incompatible with it for the same reason.
     if web && emit.is_library() {
-        fail("--web cannot be combined with a library --emit kind (cdylib, staticlib)");
+        fail("--web cannot be combined with a library --emit kind (cdylib, staticlib, phpext)");
     }
     // A library has no `main`, and `main` is where the profiling runtimes are
     // initialized. Accepting this produced a library carrying an enter/exit hook
@@ -613,6 +643,12 @@ pub(crate) fn parse_compile_args(args: &[String]) -> CliConfig {
     }
     if web_isolation_explicit && !web {
         fail("--web-isolation requires --web (or --with-web)");
+    }
+    if web_lifecycle_explicit && !web {
+        fail("--web-lifecycle requires --web (or --with-web)");
+    }
+    if web_application && web_isolation != WebIsolation::Worker {
+        fail("--web-lifecycle=application requires --web-isolation=worker");
     }
 
     // With no explicit `--php-version`, take the profile the project already declares. Every
@@ -661,6 +697,7 @@ pub(crate) fn parse_compile_args(args: &[String]) -> CliConfig {
         strict_locals,
         web,
         web_isolation,
+        web_application,
         with_crates,
         quiet,
         ini_overrides,
@@ -782,7 +819,7 @@ fn parse_required_emit(args: &[String], index: usize) -> Emit {
     if index < args.len() {
         parse_emit(&args[index])
     } else {
-        fail("Missing emit kind after --emit (expected: executable, cdylib, staticlib)")
+        fail("Missing emit kind after --emit (expected: executable, cdylib, staticlib, phpext)")
     }
 }
 
@@ -792,8 +829,9 @@ fn parse_emit(value: &str) -> Emit {
         "executable" | "exe" | "bin" => Emit::Executable,
         "cdylib" | "dylib" | "shared" => Emit::Cdylib,
         "staticlib" | "static" | "lib" => Emit::Staticlib,
+        "phpext" => Emit::Phpext,
         other => fail(&format!(
-            "Invalid --emit kind '{}': expected one of: executable, cdylib, staticlib",
+            "Invalid --emit kind '{}': expected one of: executable, cdylib, staticlib, phpext",
             other
         )),
     }
@@ -856,6 +894,15 @@ fn parse_web_isolation(value: &str) -> WebIsolation {
     }
 }
 
+/// Parses the independent PHP application lifetime selection.
+fn parse_web_lifecycle(value: &str) -> bool {
+    match value {
+        "request" => false,
+        "application" => true,
+        _ => fail("Unknown --web-lifecycle value (expected request|application)"),
+    }
+}
+
 /// Parse a target string to a Target enum, or fail with an error message.
 fn parse_target(value: &str) -> Target {
     match Target::parse(value) {
@@ -875,6 +922,9 @@ fn validate_target_output(
     check_only: bool,
     emit_ir: bool,
 ) -> Result<(), &'static str> {
+    if emit == Emit::Phpext && target.is_ios() {
+        return Err("PHP extension output is unsupported for iOS targets");
+    }
     if target.is_ios() && emit == Emit::Executable && !check_only && !emit_ir {
         return Err(
             "iOS targets do not emit standalone executables; use --emit staticlib (or --emit \
@@ -1033,6 +1083,7 @@ mod tests {
         assert_eq!(parse_emit("executable"), Emit::Executable);
         assert_eq!(parse_emit("cdylib"), Emit::Cdylib);
         assert_eq!(parse_emit("staticlib"), Emit::Staticlib);
+        assert_eq!(parse_emit("phpext"), Emit::Phpext);
     }
 
     /// Verifies the accepted aliases map to their canonical variants so users coming
@@ -1065,6 +1116,7 @@ mod tests {
             assert!(validate_target_output(target, Emit::Executable, false, false).is_err());
             assert!(validate_target_output(target, Emit::Staticlib, false, false).is_ok());
             assert!(validate_target_output(target, Emit::Cdylib, false, false).is_ok());
+            assert!(validate_target_output(target, Emit::Phpext, false, false).is_err());
             assert!(validate_target_output(target, Emit::Executable, true, false).is_ok());
             assert!(validate_target_output(target, Emit::Executable, false, true).is_ok());
         }
@@ -1101,6 +1153,20 @@ mod tests {
         let config = compile_config(&args);
         assert!(config.web);
         assert_eq!(config.web_isolation, WebIsolation::Worker);
+        assert!(!config.web_application);
+    }
+
+    /// Both lifecycle spellings retain request semantics unless application is explicit.
+    #[test]
+    fn web_lifecycle_selects_application_explicitly() {
+        for (value, expected) in [("request", false), ("application", true)] {
+            for flags in [vec![format!("--web-lifecycle={value}")], vec!["--web-lifecycle".into(), value.into()]] {
+                let mut args = vec!["elephc".into(), "--web".into()];
+                args.extend(flags);
+                args.push("app.php".into());
+                assert_eq!(compile_config(&args).web_application, expected);
+            }
+        }
     }
 
     /// Verifies all explicit web-isolation spellings select their compile-time model.

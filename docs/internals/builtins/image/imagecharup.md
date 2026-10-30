@@ -2,7 +2,7 @@
 title: "imagecharup() - internals"
 description: "Compiler internals for imagecharup(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 464
+  order: 472
 ---
 
 ## `imagecharup()` - internals

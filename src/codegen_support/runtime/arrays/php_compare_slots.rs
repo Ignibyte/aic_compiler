@@ -7,10 +7,9 @@
 //!   `crate::codegen_support::runtime::arrays`.
 //!
 //! Key details:
-//! - Written to `__rt_usort`'s callback ABI: `(a, b)` in the first two argument
-//!   registers and ordering in the result register, so `sort()` over `Mixed`
-//!   elements is the existing slot permuter driven by the existing ordering
-//!   table, with nothing new deciding what "less than" means.
+//! - Uses `(a, b)` in the first two argument registers and ordering in the result
+//!   register. The stable scalar-slot sorter consumes this adapter without
+//!   duplicating the shared PHP ordering table.
 //! - A validation pass rejects non-scalar runtime tags before sorting. The shared
 //!   comparator does not yet implement PHP ordering for containers or objects,
 //!   so accepting those values would silently report them as equal.
@@ -19,8 +18,8 @@
 //!   comparison here would be a second answer to a question the runtime already
 //!   answers, and the two would drift.
 //! - The descending variant negates the result rather than swapping the operands.
-//!   Swapping would reverse the order of EQUAL elements too, and PHP's `rsort` is
-//!   not specified to do that.
+//!   NAN comparisons are not antisymmetric, so swapping operands would give a
+//!   different result from reversing the PHP comparison result.
 
 use crate::codegen_support::{abi, emit::Emitter, platform::Arch};
 use crate::codegen_support::runtime::data::MIXED_SORT_NON_SCALAR_MSG;
@@ -66,6 +65,7 @@ fn emit_mixed_sort_scalar_guard(emitter: &mut Emitter) {
 
             // -- report an unsupported runtime value before terminating --
             emitter.label("__rt_mixed_sort_non_scalar");
+            if emitter.phpext_output { abi::emit_cdylib_exit_escape(emitter); }
             emitter.instruction("mov x0, #2");                                  // select stderr for the explicit Mixed-sort diagnostic
             abi::emit_symbol_address(emitter, "x1", "_mixed_sort_non_scalar_msg");
             emitter.instruction(&format!("mov x2, #{}", MIXED_SORT_NON_SCALAR_MSG.len())); // pass the diagnostic byte length to write()
@@ -97,6 +97,7 @@ fn emit_mixed_sort_scalar_guard(emitter: &mut Emitter) {
 
             // -- report an unsupported runtime value before terminating --
             emitter.label("__rt_mixed_sort_non_scalar_x86");
+            if emitter.phpext_output { abi::emit_cdylib_exit_escape(emitter); }
             emitter.instruction("mov edi, 2");                                  // select stderr for the explicit Mixed-sort diagnostic
             abi::emit_symbol_address(emitter, "rsi", "_mixed_sort_non_scalar_msg");
             emitter.instruction(&format!("mov edx, {}", MIXED_SORT_NON_SCALAR_MSG.len())); // pass the diagnostic byte length to write()

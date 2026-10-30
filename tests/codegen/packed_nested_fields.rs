@@ -268,6 +268,245 @@ echo $w[1]->player->id, " ", $w[1]->tick, " ", $w[0]->player->pos->y, "\n";
     assert_eq!(out, "32 24 2.5 7 3 0\n");
 }
 
+/// Verifies packed pointer fields may name their own class or a later packed declaration without
+/// introducing a by-value layout dependency.
+#[test]
+fn test_packed_pointer_fields_accept_self_and_forward_targets() {
+    let out = compile_and_run(
+        r#"<?php
+packed class Node { public int $value; public ptr<Node> $next; }
+packed class Holder { public ptr<Target> $target; }
+packed class Target { public int $value; }
+$nodes = buffer_new<Node>(2);
+$nodes[1]->value = 9;
+$nodes[0]->next = $nodes[1];
+$holders = buffer_new<Holder>(1);
+$targets = buffer_new<Target>(1);
+$targets[0]->value = 7;
+$holders[0]->target = $targets[0];
+echo ptr_sizeof("Node"), " ", ptr_sizeof("Holder"), " ";
+echo $nodes[0]->next->value, " ", $holders[0]->target->value, "\n";
+"#,
+    );
+    assert_eq!(out, "16 8 9 7\n");
+}
+
+/// Verifies packed record addresses flow into returns, pointer fields, extern calls, and pointer
+/// builtins for both buffer elements and nested records.
+#[test]
+fn test_packed_record_addresses_work_at_pointer_sinks() {
+    let out = compile_and_run(
+        r#"<?php
+extern function memcmp(ptr<Vec2> $left, ptr<Vec2> $right, u64 $size): i32;
+packed class Vec2 { public int $x; public int $y; }
+packed class Body { public Vec2 $pos; }
+packed class Holder { public ptr<Vec2> $value; }
+function first(buffer<Vec2> $values): ptr<Vec2> { return $values[0]; }
+$values = buffer_new<Vec2>(1);
+$values[0]->x = 11;
+$values[0]->y = 22;
+$holders = buffer_new<Holder>(1);
+$holders[0]->value = $values[0];
+$bodies = buffer_new<Body>(1);
+$bodies[0]->pos->x = 33;
+$bodies[0]->pos->y = 44;
+echo ptr_is_null(first($values)) ? "null " : "live ";
+echo $holders[0]->value->y, " ", memcmp($values[0], first($values), ptr_sizeof("Vec2")), "\n";
+echo ptr_get($values[0]), " ", ptr_get(ptr_offset($values[0], 8)), " ";
+echo ptr_get($bodies[0]->pos), " ", ptr_get(ptr_offset($bodies[0]->pos, 8)), "\n";
+"#,
+    );
+    assert_eq!(out, "live 22 0\n11 22 33 44\n");
+}
+
+/// Verifies a packed record address compares by address identity with `===` and `!==`, both
+/// against another packed address and against a `ptr<T>` that stored it.
+#[test]
+fn test_packed_record_addresses_compare_by_identity() {
+    let out = compile_and_run(
+        r#"<?php
+packed class Vec2 { public int $x; public int $y; }
+packed class Holder { public ptr<Vec2> $p; }
+$values = buffer_new<Vec2>(2);
+$holder = buffer_new<Holder>(1);
+$holder[0]->p = $values[0];
+echo $values[0] === $holder[0]->p ? "same " : "different ";
+echo $values[1] === $holder[0]->p ? "same " : "different ";
+echo $values[0] !== $values[1] ? "distinct " : "equal ";
+echo $values[1] === $values[1] ? "same" : "different", "\n";
+"#,
+    );
+    assert_eq!(out, "same different distinct same\n");
+}
+
+/// Verifies a packed record address reaches an extern parameter and a return that name another
+/// pointer class (both accept any pointer), `ptr_cast<T>` of a buffer element, and the stored
+/// word of `ptr_set`. A packed `ptr<T>` field keeps rejecting another class at type check.
+#[test]
+fn test_packed_record_addresses_reach_cross_target_sinks_casts_and_ptr_set() {
+    let out = compile_and_run(
+        r#"<?php
+extern function memset(ptr<Other> $target, int $byte, u64 $size): ptr;
+packed class Vec2 { public int $x; public int $y; }
+packed class Other { public int $z; }
+packed class Holder { public ptr<Vec2> $p; }
+function as_other(buffer<Vec2> $values): ptr<Other> { return $values[1]; }
+$values = buffer_new<Vec2>(2);
+$values[0]->x = 5;
+$values[1]->x = 6;
+memset($values[0], 0, 8);
+echo $values[0]->x, " ", as_other($values)->z, " ";
+$cast = ptr_cast<Vec2>($values[1]);
+$cast->y = 9;
+echo $values[1]->y, " ", ptr_get(ptr_cast<int>($values[1])), " ";
+$holder = buffer_new<Holder>(1);
+ptr_set($holder[0], $values[1]);
+echo $holder[0]->p->x, "\n";
+"#,
+    );
+    assert_eq!(out, "0 6 9 6 6\n");
+}
+
+/// Verifies a packed record address keeps its pointer word through ternary, `??` and `match`
+/// merges with `ptr_null()`, and works as the operand of `if`, `empty`, `switch`, `echo` and
+/// every string conversion (`(string)`, `strval`, `.`, `sprintf("%s")`), like the `ptr<T>` the
+/// checker types it as.
+#[test]
+fn test_packed_record_addresses_survive_merges_and_scalar_contexts() {
+    let out = compile_and_run(
+        r#"<?php
+packed class Vec2 { public int $x; public int $y; }
+$values = buffer_new<Vec2>(2);
+$values[0]->x = 7;
+$values[1]->x = 8;
+$p = ($argc > 0) ? $values[0] : ptr_null();
+echo $p->x, " ";
+$q = $values[1] ?? ptr_null();
+echo $q->x, " ";
+$r = match ($argc) { 1 => $values[1], default => ptr_null() };
+echo $r->x, " ";
+$s = match ($argc) { 1 => $values[1], default => $values[0] };
+echo $s->x, " ";
+$t = match ($argc) { 2 => ptr_null(), default => $values[0] };
+echo $t->x, " ";
+if ($values[0]) { echo "live "; }
+echo empty($values[0]) ? "empty " : "set ";
+switch ($values[0]) {
+    case $values[1]:
+        echo "second";
+        break;
+    case $values[0]:
+        echo "first";
+        break;
+    default:
+        echo "none";
+}
+echo "\n", $values[0], "\n";
+echo (string) $values[0], "\n", strval($values[0]), "\n";
+echo "x" . $values[0], "\n", sprintf("%s", $values[0]), "\n";
+"#,
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.first(), Some(&"7 8 8 8 7 live set first"), "{out}");
+    let address = lines[1];
+    assert!(address.starts_with("0x"), "{out}");
+    assert_eq!(&lines[2..], &[address, address, &format!("x{address}"), address], "{out}");
+}
+
+/// Verifies a nested packed field read keeps its record address through ternary, `?:`, `??`
+/// and `match` merges, alone and against another nested field or `ptr_null()`.
+#[test]
+fn test_nested_packed_field_addresses_survive_merges() {
+    let out = compile_and_run(
+        r#"<?php
+packed class Vec2 { public int $x; public int $y; }
+packed class Body { public Vec2 $pos; public Vec2 $vel; }
+$bodies = buffer_new<Body>(2);
+$bodies[0]->pos->x = 4;
+$bodies[1]->pos->x = 5;
+$bodies[0]->vel->x = 6;
+$a = ($argc > 0) ? $bodies[0]->pos : ptr_null();
+$b = $bodies[1]->pos ?: ptr_null();
+$c = $bodies[0]->vel ?? $bodies[1]->pos;
+$d = match ($argc) { 1 => $bodies[1]->pos, default => $bodies[0]->pos };
+$e = ($argc > 0) ? $bodies[0]->vel : $bodies[1]->pos;
+echo $a->x, " ", $b->x, " ", $c->x, " ", $d->x, " ", $e->x, "\n";
+$first = $bodies[0]->pos;
+$second = $bodies[1]->pos;
+$f = ($argc > 0) ? $first : $second;
+$g = match ($argc) { 1 => $second, default => $first };
+echo $f->x, " ", $g->x, "\n";
+"#,
+    );
+    assert_eq!(out, "4 5 6 5 6\n4 5\n");
+}
+
+/// Verifies two locals holding packed buffer element addresses merge through a ternary and a
+/// `match` without boxing, and that `gettype` names a packed address `pointer` like the
+/// `ptr<T>` it becomes at a pointer return.
+#[test]
+fn test_packed_record_address_locals_merge_and_name_as_pointers() {
+    let out = compile_and_run(
+        r#"<?php
+packed class Vec2 { public int $x; public int $y; }
+function id(ptr<Vec2> $p): ptr<Vec2> { return $p; }
+$values = buffer_new<Vec2>(2);
+$values[0]->x = 7;
+$values[1]->x = 8;
+$a = $values[0];
+$b = $values[1];
+$s = ($argc > 0) ? $a : $b;
+$m = match ($argc) { 1 => $b, default => $a };
+echo $s->x, " ", $m->x, " ", gettype($values[0]), " ", gettype(id($values[0])), "\n";
+"#,
+    );
+    assert_eq!(out, "7 8 pointer pointer\n");
+}
+
+/// Verifies a packed `ptr<T>` field and an element of a buffer returned by a function keep their
+/// pointer word through ternary, `match` and `?:` merges with `ptr_null()`.
+#[test]
+fn test_pointer_fields_and_returned_buffer_elements_survive_merges() {
+    let out = compile_and_run(
+        r#"<?php
+packed class Vec2 { public int $x; public int $y; }
+packed class Holder { public ptr<Vec2> $value; }
+function make(buffer<Vec2> $values): buffer<Vec2> { return $values; }
+$values = buffer_new<Vec2>(1);
+$values[0]->x = 7;
+$holders = buffer_new<Holder>(1);
+$holders[0]->value = $values[0];
+$a = ($argc > 0) ? $holders[0]->value : ptr_null();
+$b = match ($argc) { 1 => $holders[0]->value, default => ptr_null() };
+$c = $holders[0]->value ?: ptr_null();
+$d = ($argc > 0) ? make($values)[0] : ptr_null();
+$e = match ($argc) { 1 => make($values)[0], default => ptr_null() };
+echo $a->x, " ", $b->x, " ", $c->x, " ", $d->x, " ", $e->x, "\n";
+"#,
+    );
+    assert_eq!(out, "7 7 7 7 7\n");
+}
+
+/// Verifies a nested record read through a call returning `ptr<T>` keeps its pointer word
+/// through ternary, `match` and `?:` merges.
+#[test]
+fn test_nested_fields_through_pointer_returning_calls_survive_merges() {
+    let out = compile_and_run(
+        r#"<?php
+packed class Vec2 { public int $x; public int $y; }
+packed class Body { public Vec2 $pos; }
+function first(buffer<Body> $bodies): ptr<Body> { return $bodies[0]; }
+$bodies = buffer_new<Body>(1);
+$bodies[0]->pos->x = 9;
+$a = ($argc > 0) ? first($bodies)->pos : ptr_null();
+$b = match ($argc) { 1 => first($bodies)->pos, default => ptr_null() };
+$c = first($bodies)->pos ?: ptr_null();
+echo $a->x, " ", $b->x, " ", $c->x, "\n";
+"#,
+    );
+    assert_eq!(out, "9 9 9\n");
+}
+
 /// Verifies a nested record placed beyond the AArch64 `add` immediate range (byte offset 4104)
 /// is addressed correctly for reads, writes and compound assignments.
 #[test]

@@ -2,7 +2,7 @@
 title: "deg2rad() - internals"
 description: "Compiler internals for deg2rad(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 575
+  order: 583
 ---
 
 ## `deg2rad()` - internals
@@ -10,7 +10,7 @@ sidebar:
 ## Where it lives
 
 - **Signature**: [`src/builtins/math/deg2rad.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/math/deg2rad.rs)
-- **Lowering**: [`src/builtins/semantics.rs`:704](https://github.com/illegalstudio/elephc/blob/main/src/builtins/semantics.rs#L704) (`lower_registry_call`)
+- **Lowering**: [`src/builtins/semantics.rs`:706](https://github.com/illegalstudio/elephc/blob/main/src/builtins/semantics.rs#L706) (`lower_registry_call`)
 - **Function symbol**: `lower_registry_call()`
 
 

@@ -2,7 +2,7 @@
 title: "gc_enable() - internals"
 description: "Compiler internals for gc_enable(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 618
+  order: 632
 ---
 
 ## `gc_enable()` - internals
@@ -10,7 +10,7 @@ sidebar:
 ## Where it lives
 
 - **Signature**: [`src/builtins/system/gc_enable.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/system/gc_enable.rs)
-- **Lowering**: [`src/builtins/semantics.rs`:704](https://github.com/illegalstudio/elephc/blob/main/src/builtins/semantics.rs#L704) (`lower_registry_call`)
+- **Lowering**: [`src/builtins/semantics.rs`:706](https://github.com/illegalstudio/elephc/blob/main/src/builtins/semantics.rs#L706) (`lower_registry_call`)
 - **Function symbol**: `lower_registry_call()`
 
 

@@ -17,9 +17,10 @@ macro_rules! class {
     (
         $name:literal, $canonical:literal, $kind:ident, $module:ident, $route:ident
         $(, since: $since:ident)? $(, extension: $extension:literal)? $(, internal: $internal:literal)?
-        $(, targets: $targets:expr)? $(, operators: $operators:expr)? $(,)?
+        $(, targets: $targets:expr)? $(, operators: $operators:expr)? $(, cloneable: $cloneable:literal)? $(,)?
     ) => {
         ClassContract {
+            cloneable: class!(@cloneable $($cloneable)?),
             operators: class!(@operators $($operators)?),
             id: BuiltinId::from_canonical_name($canonical),
             name: $name,
@@ -39,11 +40,17 @@ macro_rules! class {
     (@flag) => { false };
     (@targets $targets:expr) => { Some($targets) };
     (@targets) => { None };
+    (@cloneable $cloneable:literal) => { $cloneable };
+    (@cloneable) => { true };
     (@operators $operators:expr) => { Some($operators) };
     (@operators) => { None };
 }
 
 pub(crate) static CLASSES: &[ClassContract] = &[
+    class!("Elephc\\Web\\Request", "elephc\\web\\request", Class, Elephc, Prelude),
+    class!("Elephc\\Web\\WorkerApplication", "elephc\\web\\workerapplication", Interface, Elephc, Prelude),
+    class!("Elephc\\Web\\Worker", "elephc\\web\\worker", Class, Elephc, Prelude),
+    class!("__ElephcFinfoHandle", "__elephcfinfohandle", Class, Elephc, Prelude, internal: true),
     class!("__ElephcCallableSessionHandler", "__elephccallablesessionhandler", Class, Elephc, Prelude, internal: true),
     class!("__ElephcDOMNodeListIterator", "__elephcdomnodelistiterator", Class, Elephc, Prelude, internal: true),
     class!("__ElephcMysqliResultIterator", "__elephcmysqliresultiterator", Class, Elephc, Prelude, internal: true),
@@ -205,10 +212,23 @@ pub(crate) static CLASSES: &[ClassContract] = &[
     class!("PDOStatement", "pdostatement", Class, Pdo, Prelude),
     class!("Phar", "phar", Class, Phar, CheckerInjected),
     class!("PharData", "phardata", Class, Phar, CheckerInjected),
+    class!("finfo", "finfo", Class, Fileinfo, Prelude, cloneable: false),
     class!("PharFileInfo", "pharfileinfo", Class, Phar, CheckerInjected),
     class!("php_user_filter", "php_user_filter", Class, Standard, CheckerInjected),
+    class!("PhpToken", "phptoken", Class, Tokenizer, Prelude),
     class!("PHPUnit\\Framework\\TestCase", "phpunit\\framework\\testcase", Class, Elephc, Prelude),
     class!("PropertyHookType", "propertyhooktype", Enum, Reflection, CheckerInjected, since: Php84),
+    class!("Random\\BrokenRandomEngineError", "random\\brokenrandomengineerror", Class, Random, Prelude, since: Php82),
+    class!("Random\\CryptoSafeEngine", "random\\cryptosafeengine", Interface, Random, Prelude, since: Php82),
+    class!("Random\\Engine", "random\\engine", Interface, Random, Prelude, since: Php82),
+    class!("Random\\Engine\\Mt19937", "random\\engine\\mt19937", Class, Random, Prelude, since: Php82),
+    class!("Random\\Engine\\PcgOneseq128XslRr64", "random\\engine\\pcgoneseq128xslrr64", Class, Random, Prelude, since: Php82),
+    class!("Random\\Engine\\Secure", "random\\engine\\secure", Class, Random, Prelude, since: Php82),
+    class!("Random\\Engine\\Xoshiro256StarStar", "random\\engine\\xoshiro256starstar", Class, Random, Prelude, since: Php82),
+    class!("Random\\IntervalBoundary", "random\\intervalboundary", Enum, Random, Prelude, since: Php83),
+    class!("Random\\RandomError", "random\\randomerror", Class, Random, Prelude, since: Php82),
+    class!("Random\\RandomException", "random\\randomexception", Class, Random, Prelude, since: Php82),
+    class!("Random\\Randomizer", "random\\randomizer", Class, Random, Prelude, since: Php82),
     class!("RangeException", "rangeexception", Class, Spl, CheckerInjected),
     class!("RecursiveArrayIterator", "recursivearrayiterator", Class, Spl, CheckerInjected),
     class!("RecursiveCachingIterator", "recursivecachingiterator", Class, Spl, CheckerInjected),

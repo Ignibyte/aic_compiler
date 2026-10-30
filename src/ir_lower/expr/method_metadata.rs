@@ -10,7 +10,7 @@
 use super::*;
 
 /// Returns the checked signature for an instance method call when metadata is available.
-pub(super) fn method_signature(
+pub(in crate::ir_lower) fn method_signature(
     ctx: &LoweringContext<'_, '_>,
     object: crate::ir::ValueId,
     method: &str,

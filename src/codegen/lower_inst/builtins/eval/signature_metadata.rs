@@ -58,8 +58,10 @@ pub(super) fn constructor_signature_can_bridge_with_eval(signature: &FunctionSig
 }
 
 /// Returns true when one native method argument type fits the eval method bridge.
+///
+/// A `?ptr<T>` argument is cast like an int by the bridge: PHP null becomes address 0.
 pub(super) fn eval_native_method_param_supported(ty: &PhpType) -> bool {
-    matches!(
+    crate::types::is_nullable_pointer_type(ty) || matches!(
         ty.codegen_repr(),
         PhpType::Int
             | PhpType::Bool
@@ -76,8 +78,10 @@ pub(super) fn eval_native_method_param_supported(ty: &PhpType) -> bool {
 }
 
 /// Returns true when one native constructor argument type fits the eval bridge.
+///
+/// A `?ptr<T>` argument is cast like an int by the bridge: PHP null becomes address 0.
 pub(super) fn eval_native_constructor_param_supported(ty: &PhpType) -> bool {
-    matches!(
+    crate::types::is_nullable_pointer_type(ty) || matches!(
         ty.codegen_repr(),
         PhpType::Int
             | PhpType::Bool
@@ -94,8 +98,10 @@ pub(super) fn eval_native_constructor_param_supported(ty: &PhpType) -> bool {
 }
 
 /// Returns true when one native method return type can be boxed back for eval.
+///
+/// A `?ptr<T>` return is boxed by its declared union, address 0 as PHP null.
 pub(super) fn eval_native_method_return_supported(ty: &PhpType) -> bool {
-    matches!(
+    crate::types::is_nullable_pointer_type(ty) || matches!(
         ty.codegen_repr(),
         PhpType::Void
             | PhpType::Int
@@ -224,6 +230,7 @@ pub(super) fn eval_native_php_type_spec(php_type: &PhpType, allow_return_atoms: 
         | PhpType::Packed(_)
         | PhpType::Pointer(_)
         | PhpType::Resource(_)
+        | PhpType::Narrow(_)
         | PhpType::TaggedScalar => None,
     }
 }

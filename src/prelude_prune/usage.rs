@@ -60,6 +60,8 @@ pub(crate) struct Usage {
     pub(crate) classes: HashSet<String>,
     /// Method names seen on a receiver whose class this walk cannot know.
     pub(crate) methods: HashSet<String>,
+    /// Global constant names, case-sensitive, normalized without a leading separator.
+    pub(crate) constants: HashSet<String>,
     /// Every string literal in the subtree, normalized. The fallback root set.
     pub(crate) literals: HashSet<String>,
     /// PHP variable names written exactly as they appear (`$_SERVER` → `_SERVER`),
@@ -368,7 +370,7 @@ fn scan_type(ty: &crate::parser::ast::TypeExpr, usage: &mut Usage) {
                 scan_type(member, usage);
             }
         }
-        TypeExpr::Ptr(Some(name)) => record_class(usage, &name.as_canonical()),
+        TypeExpr::Ptr(Some(name)) => record_class(usage, crate::names::pointer_target_leaf(&name.as_canonical())),
         _ => {}
     }
 }
@@ -822,7 +824,7 @@ fn scan_expr(expr: &Expr, usage: &mut Usage) {
                 InstanceOfTarget::Name(name) => record_class(usage, &name.as_canonical()),
                 InstanceOfTarget::Generic(class_type) => {
                     for name in class_type.named_classes() {
-                        record_class(usage, &name.as_canonical());
+                        record_class(usage, crate::names::pointer_target_leaf(&name.as_canonical()));
                     }
                 }
             }
@@ -944,7 +946,7 @@ fn scan_expr(expr: &Expr, usage: &mut Usage) {
         // type arguments name classes of their own and are recorded the same way.
         ExprKind::NewGeneric { class_type, args } => {
             for name in class_type.named_classes() {
-                record_class(usage, &name.as_canonical());
+                record_class(usage, crate::names::pointer_target_leaf(&name.as_canonical()));
             }
             for arg in args {
                 scan_expr(arg, usage);
@@ -1046,6 +1048,13 @@ fn scan_expr(expr: &Expr, usage: &mut Usage) {
                 record_class(usage, &name.as_canonical());
             }
         }
+        ExprKind::ConstRef(name) => {
+            usage.constants.insert(
+                name.as_canonical()
+                    .trim_start_matches('\\')
+                    .to_string(),
+            );
+        }
         ExprKind::IntLiteral(_)
         | ExprKind::FloatLiteral(_)
         | ExprKind::BoolLiteral(_)
@@ -1054,7 +1063,6 @@ fn scan_expr(expr: &Expr, usage: &mut Usage) {
         | ExprKind::PostIncrement(_)
         | ExprKind::PreDecrement(_)
         | ExprKind::PostDecrement(_)
-        | ExprKind::ConstRef(_)
         | ExprKind::This
         | ExprKind::MagicConstant(_) => {}
         ExprKind::ObjectClassName { object } => scan_expr(object, usage),

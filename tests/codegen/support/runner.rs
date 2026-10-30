@@ -77,6 +77,11 @@ struct TestBridgeStaticlib {
 /// Lists bridge staticlibs that codegen fixtures may link through `extra_link_libs`.
 const TEST_BRIDGE_STATICLIBS: &[TestBridgeStaticlib] = &[
     TestBridgeStaticlib {
+        lib_name: "elephc_tokenizer",
+        package: "elephc-tokenizer",
+        php_extensions: &["tokenizer"],
+    },
+    TestBridgeStaticlib {
         lib_name: "elephc_tls",
         package: "elephc-tls",
         php_extensions: &["openssl"],
@@ -97,6 +102,11 @@ const TEST_BRIDGE_STATICLIBS: &[TestBridgeStaticlib] = &[
         lib_name: "elephc_bcmath",
         package: "elephc-bcmath",
         php_extensions: &["bcmath"],
+    },
+    TestBridgeStaticlib {
+        lib_name: "elephc_random",
+        package: "elephc-random",
+        php_extensions: &["random"],
     },
     TestBridgeStaticlib {
         lib_name: "elephc_mbstring",
@@ -137,6 +147,11 @@ const TEST_BRIDGE_STATICLIBS: &[TestBridgeStaticlib] = &[
         lib_name: "elephc_curl",
         package: "elephc-curl",
         php_extensions: &["curl"],
+    },
+    TestBridgeStaticlib {
+        lib_name: "elephc_fileinfo",
+        package: "elephc-fileinfo",
+        php_extensions: &["fileinfo"],
     },
     TestBridgeStaticlib {
         lib_name: "elephc_xml",
@@ -192,7 +207,7 @@ impl std::ops::Deref for TestLinkRequirements {
 
 /// Assemble `asm` to `obj_path` by piping the source through `as`'s stdin so
 /// no intermediate `.s` file is created.
-fn assemble_from_stdin(asm: &str, obj_path: &Path) {
+pub(crate) fn assemble_from_stdin(asm: &str, obj_path: &Path) {
     let mut cmd = Command::new(assembler_cmd());
     if target().platform == Platform::MacOS {
         cmd.args(["-arch", target().darwin_arch_name()]);
@@ -386,6 +401,7 @@ mod bridge_extension_tests {
     #[test]
     fn bridge_extension_metadata_matches_distinct_and_shared_surfaces() {
         let linked = vec![
+            "elephc_tokenizer".to_string(),
             "elephc_pdo".to_string(),
             "elephc_iconv".to_string(),
             "elephc_pcntl".to_string(),
@@ -393,7 +409,7 @@ mod bridge_extension_tests {
         ];
         assert_eq!(
             test_linked_extensions(&linked),
-            ["iconv", "pcntl", "posix", "curl"]
+            ["tokenizer", "iconv", "pcntl", "posix", "curl"]
         );
     }
 }
@@ -1309,6 +1325,11 @@ fn test_link_plan(
     // reads the same durable cache structurally (see `super::xml_native`). A fixture
     // whose artifact is missing skips (or, under `ELEPHC_TEST_REQUIRE_XML_NATIVE`,
     // panics) before it ever reaches this point.
+    if named.contains("elephc_fileinfo") {
+        if let Some(archives) = super::fileinfo_native::archives() {
+            for archive in archives { plan.push(LinkItem::managed_archive(archive, "libmagic")); }
+        }
+    }
     if named.contains("elephc_xml") && !xml_pushed {
         push_xml_native_if_available(&mut plan);
     }

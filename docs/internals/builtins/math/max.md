@@ -2,7 +2,7 @@
 title: "max() - internals"
 description: "Compiler internals for max(): lowering path, type checks, and runtime helpers."
 sidebar:
-  order: 589
+  order: 599
 ---
 
 ## `max()` - internals
@@ -10,7 +10,7 @@ sidebar:
 ## Where it lives
 
 - **Signature**: [`src/builtins/math/max.rs`](https://github.com/illegalstudio/elephc/blob/main/src/builtins/math/max.rs)
-- **Lowering**: [`src/builtins/semantics.rs`:704](https://github.com/illegalstudio/elephc/blob/main/src/builtins/semantics.rs#L704) (`lower_registry_call`)
+- **Lowering**: [`src/builtins/semantics.rs`:706](https://github.com/illegalstudio/elephc/blob/main/src/builtins/semantics.rs#L706) (`lower_registry_call`)
 - **Function symbol**: `lower_registry_call()`
 
 

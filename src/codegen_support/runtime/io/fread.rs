@@ -140,6 +140,7 @@ pub fn emit_fread(emitter: &mut Emitter) {
     emitter.instruction("ldr x2, [sp, #24]");                                   // return actual bytes read as length
 
     // -- apply an attached read filter to the bytes just read --
+    emitter.instruction("cbz x2, __rt_fread_ret");                              // EOF and transient empty reads have no bucket to filter
     emitter.instruction("ldr x0, [sp, #0]");                                    // reload the file descriptor
     crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_fread_ret");
     crate::codegen_support::abi::emit_symbol_address(emitter, "x9", "_stream_read_filters");

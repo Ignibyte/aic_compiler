@@ -274,7 +274,7 @@ fn unserialize_static_type_name(ty: &PhpType) -> &str {
         PhpType::Callable => "Closure",
         PhpType::Iterable => "object",
         PhpType::Buffer(_) | PhpType::Pointer(_) => "resource",
-        PhpType::Mixed | PhpType::Union(_) | PhpType::TaggedScalar => "unknown",
+        PhpType::Mixed | PhpType::Union(_) | PhpType::TaggedScalar | PhpType::Narrow(_) => "unknown",
     }
 }
 

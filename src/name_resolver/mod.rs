@@ -10,6 +10,7 @@
 
 mod expressions;
 mod function_fallbacks;
+mod generic_calls;
 mod names;
 mod declarations;
 mod statements;
@@ -78,6 +79,8 @@ fn resolve_on_compiler_stack(
     global_functions: &[&str],
     global_classes: &[&str],
 ) -> Result<Program, CompileError> {
+    // Expose declaration groups without erasing lowered array-append boundaries.
+    let program = crate::parser::declaration_groups::flatten_top_level_declaration_groups(program);
     let mut symbols = Symbols::default();
     symbols::collect_symbols(&program, None, &mut symbols);
     for function in global_functions {

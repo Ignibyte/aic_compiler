@@ -68,6 +68,7 @@ mod tests {
         arithmetic: &[(ObjectArithmetic::Add, "synthetic_sum")], compare: Some("synthetic_order"), boolean: None,
     };
     static SYNTHETIC: ClassContract = ClassContract {
+        cloneable: true,
         id: BuiltinId::from_canonical_name("syntheticvalue"), name: "SyntheticValue",
         kind: ClassKind::Class, module: PhpModule::Elephc, since: None, aot: ClassRoute::Prelude,
         target_support: None, extension: false, internal: true, php_manual: None, operators: Some(&OPERATORS),

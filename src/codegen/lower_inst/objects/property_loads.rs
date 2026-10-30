@@ -112,11 +112,22 @@ pub(super) fn emit_reference_property_load(
 }
 
 /// Emits a compact packed-field load from a pointer to the containing packed record.
+///
+/// A width-declared field (`i32`, `u8`, `f32`, ...) loads through the shared width emitter,
+/// which extends an integer into the PHP int and widens an `f32` into the PHP float.
 pub(super) fn emit_packed_field_load(
     ctx: &mut FunctionContext<'_>,
     slot: &PropertySlot,
     base_reg: &str,
 ) -> Result<()> {
+    if let Some(width) = slot.width {
+        return super::super::scalar_widths::emit_width_load(
+            ctx,
+            width.abi(),
+            base_reg,
+            slot.offset,
+        );
+    }
     match slot.php_type.codegen_repr() {
         PhpType::Float => {
             let float_reg = abi::float_result_reg(ctx.emitter);

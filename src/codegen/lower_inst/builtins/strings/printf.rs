@@ -321,7 +321,8 @@ pub(super) fn pack_static_sprintf_arg(
         PhpType::TaggedScalar => {
             return pack_sprintf_tagged_scalar_arg(ctx, value, owner);
         }
-        PhpType::Pointer(_) => {
+        // A packed record address is the same pointer word a `ptr<T>` holds.
+        PhpType::Pointer(_) | PhpType::Packed(_) => {
             // A runtime format is not known here, so pack the same "0x..." string record a
             // literal `%s` gets: a pointer converts to that text, `echo` prints it.
             load_sprintf_arg_as_string(ctx, value, owner)?;
