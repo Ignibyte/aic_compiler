@@ -1146,3 +1146,123 @@ echo $total, "\n";
     );
     assert_eq!(out, "3\n");
 }
+
+/// Verifies a `switch` case that leaves the loop around it (`break 2`, `continue 2`) does not
+/// count as reaching the end of the `switch`, so the other cases' facts hold after it.
+#[test]
+fn test_switch_case_leaving_the_enclosing_loop_keeps_the_other_cases_facts() {
+    let out = compile_and_run(
+        r#"<?php
+function viaBreak(int $kind, ?array $v): array {
+    foreach ([$kind] as $k) {
+        switch ($k) {
+            case 0:
+                break 2;
+            default:
+                if ($v === null) { throw new Exception("x"); }
+        }
+        return $v;
+    }
+    return [];
+}
+function viaContinue(array $kinds, ?array $v): int {
+    $n = 0;
+    foreach ($kinds as $kind) {
+        switch ($kind) {
+            case 0:
+                continue 2;
+            default:
+                if ($v === null) { throw new Exception("x"); }
+        }
+        $n += count($v);
+    }
+    return $n;
+}
+echo count(viaBreak(0, null)), "|", count(viaBreak(1, [1, 2])), "|", viaContinue([0, 0], null), "|", viaContinue([0, 1], [1, 2, 3]), "\n";
+"#,
+    );
+    assert_eq!(out, "0|2|0|3\n");
+}
+
+/// Verifies a guard in a `try` body is not trusted after a `finally` that reassigns the local
+/// to a value of the same type: `$v` may be null again when it is returned.
+#[test]
+fn test_finally_reassignment_does_not_revive_a_try_body_guard() {
+    let err = compile_expect_type_error(
+        r#"<?php
+function f(?array $v, ?array $other): array {
+    try {
+        if ($v === null) { throw new Exception("x"); }
+    } finally {
+        $v = $other;
+    }
+    return $v;
+}
+var_dump(f([1], null));
+"#,
+    );
+    assert!(err.contains("return type expects array"), "{err}");
+}
+
+/// Verifies a chain of guards on one local inside a `switch` restores the type from before the
+/// whole chain when the enclosing `if` ends: the path that skipped the `if` keeps the array.
+#[test]
+fn test_chained_switch_guards_restore_the_type_from_before_the_chain() {
+    let err = compile_expect_type_error(
+        r#"<?php
+function g(int|string|array $v, bool $c, int $k): int|string {
+    if ($c) {
+        switch ($k) {
+            default:
+                if (is_array($v)) { return "a"; }
+                if (is_string($v)) { return "s"; }
+        }
+    }
+    return $v;
+}
+var_dump(g([1], false, 0));
+"#,
+    );
+    assert!(err.contains("return type expects int|string"), "{err}");
+}
+
+/// A guard on a `readonly` property survives a call: `$this->plugin->name()` inside
+/// `if ($this->plugin instanceof Sold)` cannot reassign `$this->plugin`, so a later
+/// `$this->plugin->count()` still reads it as `Sold`. Every call used to drop all property
+/// narrowings, and the second read failed with "Undefined method: Plugin::count".
+#[test]
+fn test_readonly_property_narrowing_survives_a_call() {
+    let out = compile_and_run(
+        r#"<?php
+interface Plugin { public function name(): string; }
+final readonly class Sold implements Plugin
+{
+    public function name(): string { return "sold"; }
+    public function count(): int { return 7; }
+}
+final readonly class Other implements Plugin { public function name(): string { return "other"; } }
+final readonly class Report
+{
+    public function __construct(private Plugin $plugin) {}
+    public function line(): string
+    {
+        if ($this->plugin instanceof Sold) {
+            return $this->plugin->name() . " " . $this->plugin->count();
+        }
+        return $this->plugin->name();
+    }
+}
+final class Box { public function __construct(public readonly Plugin $plugin) {} }
+function boxed(Box $box): string {
+    if ($box->plugin instanceof Sold) {
+        return $box->plugin->name() . " " . $box->plugin->count();
+    }
+    return $box->plugin->name();
+}
+echo (new Report(new Sold()))->line(), "\n";
+echo (new Report(new Other()))->line(), "\n";
+echo boxed(new Box(new Sold())), " ", boxed(new Box(new Other())), "\n";
+"#,
+    );
+    assert_eq!(out, "sold 7\nother\nsold 7 other\n");
+}

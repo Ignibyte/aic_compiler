@@ -448,6 +448,12 @@ pub(super) fn materialized_expr_type_for_merge(ctx: &LoweringContext<'_, '_>, ex
         ExprKind::ArrayLiteralAssoc(pairs) => {
             super::assoc_array_literals::assoc_array_literal_type_for_ir(ctx, pairs, expr)
         }
+        // An enum case or class constant is typed the way `lower_scoped_constant` resolves it.
+        // The syntactic fallback calls every `X::NAME` a string, so `$c ? E::A : E::B` cast
+        // both enum cases into a string temp the function could not return.
+        ExprKind::ScopedConstantAccess { receiver, name } => {
+            scoped_constant_value_type_for_ir(ctx, receiver, name, expr)
+        }
         _ => fallback_expr_type(expr),
     }
 }

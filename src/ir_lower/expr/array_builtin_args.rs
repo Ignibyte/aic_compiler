@@ -421,12 +421,18 @@ fn lower_planned_builtin_call_args(
                 .enumerate()
                 .map(|(index, arg)| {
                     let value = lower_expr(ctx, arg);
-                    if index + 1 < args.len()
-                        && !sig.is_some_and(|sig| {
-                            sig.ref_params.get(index).copied().unwrap_or(false)
-                        })
-                    {
-                        root_evaluated_call_argument(ctx, value, arg.span).value
+                    let by_ref =
+                        sig.is_some_and(|sig| sig.ref_params.get(index).copied().unwrap_or(false));
+                    // A Mixed pattern or subject (a foreach key or value of an untyped array)
+                    // becomes an owned string here, rooted so the call's cleanup releases it.
+                    let coerced = match sig {
+                        Some(sig) if !by_ref => {
+                            coerce_scalar_arg_to_param_storage(ctx, sig, index, value, arg)
+                        }
+                        _ => value,
+                    };
+                    if coerced.value != value.value || (index + 1 < args.len() && !by_ref) {
+                        root_evaluated_call_argument(ctx, coerced, arg.span).value
                     } else {
                         value.value
                     }
