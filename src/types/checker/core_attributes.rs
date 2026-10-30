@@ -34,12 +34,14 @@ pub(super) fn validate(checker: &Checker) -> Result<(), CompileError> {
     }
     for class in checker.classes.values() {
         validate_names(&class.attribute_names, 1, Span::dummy())?;
-        // A promoted constructor parameter's attributes apply to its property and its parameter,
-        // so, as php-src's compiler does, either target admits them on each.
-        for (property, names) in &class.property_attribute_names {
-            let target = if class.promoted_properties.contains(property) { 8 | 32 } else { 8 };
-            validate_names(names, target, Span::dummy())?;
+        // Parameters first: an attribute on a promoted parameter that matches neither the
+        // parameter nor the property target is kept on both, and php-src reports the parameter.
+        for signature in class.methods.values().chain(class.static_methods.values()) {
+            for attributes in &signature.param_attributes {
+                validate_names(&collect_attribute_names(attributes), 32, attribute_span(attributes))?;
+            }
         }
+        for names in class.property_attribute_names.values() { validate_names(names, 8, Span::dummy())?; }
         for names in class.constant_attribute_names.values() { validate_names(names, 16, Span::dummy())?; }
         for names in class.method_attribute_names.values() { validate_names(names, 4, Span::dummy())?; }
         for method in &class.method_decls {
@@ -50,17 +52,13 @@ pub(super) fn validate(checker: &Checker) -> Result<(), CompileError> {
                 return Err(CompileError::new(method.span, "NoDiscard cannot apply to a void or never method"));
             }
         }
-        for (method, signature) in class.methods.iter().chain(class.static_methods.iter()) {
-            let constructor = method.eq_ignore_ascii_case("__construct");
-            for (index, attributes) in signature.param_attributes.iter().enumerate() {
-                let promoted = constructor
-                    && signature.params.get(index).is_some_and(|(name, _)| class.promoted_properties.contains(name));
-                let target = if promoted { 32 | 8 } else { 32 };
-                validate_names(&collect_attribute_names(attributes), target, Span::dummy())?;
-            }
-        }
     }
     Ok(())
+}
+
+/// Returns the source span of a declaration's first attribute group, for a target diagnostic.
+fn attribute_span(groups: &[AttributeGroup]) -> Span {
+    groups.first().map_or(Span::dummy(), |group| group.span)
 }
 
 /// Applies immediate Core validation unless a declaration explicitly defers its targets.
