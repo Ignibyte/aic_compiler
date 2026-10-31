@@ -93,6 +93,7 @@ pub(crate) use return_alias::{
 };
 pub(crate) use result::LoopStorageTypes;
 pub use checker::CheckOptions;
+pub(crate) use checker::normalize_union_members;
 // `check_with_target` is superseded by `check_with_target_and_options` on the
 // production compile path; it stays public for tests that don't need `CheckOptions`.
 #[allow(unused_imports)]
