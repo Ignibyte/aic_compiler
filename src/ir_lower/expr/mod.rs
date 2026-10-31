@@ -114,6 +114,7 @@ mod member_receivers;
 mod enum_interface_calls;
 mod enum_argument_guards;
 mod union_return_guards;
+mod scalar_argument_guards;
 mod enum_method_args;
 mod enum_static_args;
 mod enum_ref_args;
@@ -257,6 +258,7 @@ pub(crate) use instanceof_coercions::{
 pub(crate) use merge_temps::emit_bool_literal;
 pub(in crate::ir_lower) use merge_temps::{store_value_into_temp, take_owned_temp};
 pub(in crate::ir_lower) use union_return_guards::bind_declared_union_return;
+use scalar_argument_guards::name_method_argument_callee;
 pub(crate) use property_access::{
     lower_owned_ref_assign_array_elem, lower_ref_assign_array_elem, lower_ref_assign_call,
     lower_ref_assign_property, lower_ref_assign_static_property,

@@ -53,6 +53,7 @@ mod enums;
 pub(super) mod exceptions;
 mod mixed_boundary_guard;
 mod mixed_narrowing;
+mod scalar_argument_guard;
 mod numeric_payloads;
 mod numeric_comparisons;
 mod externs;
@@ -453,6 +454,7 @@ pub(super) fn lower_instruction(ctx: &mut FunctionContext<'_>, inst_id: InstId) 
         Op::ReturnBoundaryMixedGuard => {
             mixed_boundary_guard::lower_return_boundary_mixed_guard(ctx, &inst)
         }
+        Op::ScalarArgumentGuard => scalar_argument_guard::lower_scalar_argument_guard(ctx, &inst),
         Op::ExternCall => externs::lower_extern_call(ctx, &inst),
         Op::LanguageConstructCall => builtins::lower_language_construct_call(ctx, &inst),
         Op::EvalLiteralCall => builtins::lower_eval_literal_call(ctx, &inst),

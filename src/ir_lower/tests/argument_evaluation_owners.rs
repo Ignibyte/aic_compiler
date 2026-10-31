@@ -467,10 +467,13 @@ function exerciseMixedNamed(MixedArgumentSource $source, int $choice, string $co
         .iter()
         .find(|function| function.name == "exerciseMixedNamed")
         .unwrap();
-    let string_cast = function.instructions.iter().find_map(|inst| {
+    // The run-time scalar argument check builds its refusal message with casts of its own, so
+    // the argument's cast is the one an evaluation pin acquires, not the first in the body.
+    let string_casts = function.instructions.iter().filter_map(|inst| {
         (inst.op == Op::Cast && inst.result_php_type == crate::types::PhpType::Str)
             .then_some(inst.result?)
-    }).expect("named Mixed string must use an explicit owned cast");
+    }).collect::<Vec<_>>();
+    assert!(!string_casts.is_empty(), "named Mixed string must use an explicit owned cast");
     let string_evaluation_pins = function
         .instructions
         .iter()
@@ -486,7 +489,8 @@ function exerciseMixedNamed(MixedArgumentSource $source, int $choice, string $co
             let acquire = function.instruction(acquire)?;
             if acquire.op != Op::Acquire
                 || acquire.immediate != Some(Immediate::Bool(true))
-                || acquire.operands != [string_cast]
+                || acquire.operands.len() != 1
+                || !string_casts.contains(&acquire.operands[0])
             {
                 return None;
             }

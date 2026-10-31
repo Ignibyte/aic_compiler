@@ -265,6 +265,8 @@ pub enum Immediate {
     HeapKind(IrHeapKind),
     MixedTag(u8),
     TypePredicate(PhpTypePredicate),
+    /// The message prefix, declared scalar and binding mode of a `ScalarArgumentGuard`.
+    ScalarArgumentCheck(ScalarArgumentCheck),
     MixedNumericOp(MixedNumericOp),
     /// Ordered add/sub/mul operations in an unboxed checked numeric chain.
     CheckedNumericChain(Box<CheckedNumericChainImmediate>),
@@ -509,6 +511,34 @@ impl PropertyFetchMode {
     pub const fn is_read(self) -> bool {
         matches!(self, Self::Read)
     }
+}
+
+/// The declared scalar parameter type a `ScalarArgumentGuard` checks a value against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScalarGuardTarget {
+    Int,
+    Float,
+    Bool,
+}
+
+impl ScalarGuardTarget {
+    /// Returns the stable textual spelling used by the EIR printer.
+    pub const fn as_eir(self) -> &'static str {
+        match self {
+            Self::Int => "int",
+            Self::Float => "float",
+            Self::Bool => "bool",
+        }
+    }
+}
+
+/// What a `ScalarArgumentGuard` checks: the `TypeError` message prefix, the declared scalar,
+/// and whether the CALLER's file binds strictly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScalarArgumentCheck {
+    pub prefix: DataId,
+    pub target: ScalarGuardTarget,
+    pub strict: bool,
 }
 
 /// PHP runtime type category tested by the backend-neutral `TypePredicate` opcode.
@@ -1195,6 +1225,15 @@ pub enum Op {
     /// appends the runtime type word and `" returned"`. The declared type is the function's own
     /// `return_php_type`. No result.
     ReturnBoundaryMixedGuard,
+    /// Verifies a `mixed` argument bound to a DECLARED `int`, `float` or `bool` parameter of a
+    /// user callee, the check php-src performs when the callee receives it. A strict caller
+    /// accepts the exact type (and an int for a float); a weak caller also accepts what PHP
+    /// coerces: a bool, a finite in-range float or an int-coercible numeric string for `int`,
+    /// a bool or a numeric string for `float`, any scalar for `bool`. Everything else throws a
+    /// catchable `TypeError`. It only reads the value; the call's ordinary argument conversion
+    /// follows. Operand: the value (boxed Mixed, or a raw scalar after folding or counter
+    /// scalarization). Immediate: `ScalarArgumentCheck`. No result.
+    ScalarArgumentGuard,
     ClassConstant,
     ScopedConstantGet,
     ClassAttrNames,
@@ -1571,7 +1610,7 @@ impl Op {
             StrEq | StrCmp | StrLooseEq | StrictEq | StrictNotEq | InstanceOf => E::READS_HEAP,
             EnumBackingStringToInt | EnumBackingMixedToInt | PackedFieldMixedToInt
             | PackedFieldMixedToFloat | PackedFieldMixedToBool | ReturnBoundaryMixedToInt
-            | ReturnBoundaryMixedGuard => {
+            | ReturnBoundaryMixedGuard | ScalarArgumentGuard => {
                 E::READS_HEAP | E::ALLOC_HEAP | E::MAY_THROW
             }
             EvalFunctionExists | EvalClassExists | EvalConstantExists => E::READS_GLOBAL,
@@ -1910,6 +1949,7 @@ impl Op {
             PackedFieldMixedToBool => "packed_field_mixed_to_bool",
             ReturnBoundaryMixedToInt => "return_boundary_mixed_to_int",
             ReturnBoundaryMixedGuard => "return_boundary_mixed_guard",
+            ScalarArgumentGuard => "scalar_argument_guard",
             ClassConstant => "class_constant",
             ScopedConstantGet => "scoped_constant_get",
             ClassAttrNames => "class_attr_names",

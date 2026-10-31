@@ -91,6 +91,16 @@ pub(super) fn lower_static_method_call(
         ctx, sig.as_ref(), &return_alias, &result_type, expr.span,
     );
     begin_call_argument_evaluation(ctx);
+    if dispatch_method == method {
+        let late_bound = matches!(receiver, StaticReceiver::Static);
+        let callee = static_receiver_class_name(ctx, receiver).and_then(|class| {
+            scalar_argument_guards::method_callee(ctx, &class, method, true, late_bound)
+                .or_else(|| scalar_argument_guards::method_callee(ctx, &class, method, false, false))
+        });
+        if let Some(callee) = callee {
+            name_argument_callee(ctx, callee);
+        }
+    }
     let operands = lower_args_with_signature(ctx, sig.as_ref(), call_args);
     let mut operands =
         coerce_int_backed_enum_string_argument(ctx, receiver, dispatch_method, operands, expr);

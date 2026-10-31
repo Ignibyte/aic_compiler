@@ -65,6 +65,9 @@ pub(super) fn lower_static_callable_call(
                 ctx, sig.as_ref(), &return_alias, &php_type, expr.span,
             );
             begin_call_argument_evaluation(ctx);
+            if let Some(callee) = scalar_argument_guards::callable_function_callee(ctx, &function_name) {
+                name_argument_callee(ctx, callee);
+            }
             let mut operands = lower_args_with_signature(ctx, sig.as_ref(), callback_args);
             let evaluation_intermediates = finish_call_argument_evaluation(ctx, &mut operands);
             let roots = root_user_call_operands(
@@ -188,6 +191,9 @@ pub(super) fn lower_static_callable_call(
                 expr.span,
             );
             begin_call_argument_evaluation(ctx);
+            if let Some(callee) = scalar_argument_guards::callable_function_callee(ctx, &name) {
+                name_argument_callee(ctx, callee);
+            }
             let mut arg_values = lower_args_with_signature(ctx, Some(&signature), callback_args);
             let evaluation_intermediates = finish_call_argument_evaluation(ctx, &mut arg_values);
             let roots = root_user_call_operands(
