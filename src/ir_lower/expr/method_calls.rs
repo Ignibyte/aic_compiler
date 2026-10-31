@@ -179,6 +179,7 @@ pub(super) fn lower_method_call(
     let (object, receiver_owner) = root_method_receiver(ctx, object, expr.span);
     let mut operands = vec![object.value];
     begin_call_argument_evaluation(ctx);
+    name_method_argument_callee(ctx, object.value, dispatch_method, method);
     let arg_values = lower_args_with_signature(ctx, sig.as_ref(), args);
     let mut arg_values = arg_values;
     if method_is_fiber_start(ctx, object.value, dispatch_method) {

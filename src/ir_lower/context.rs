@@ -147,6 +147,16 @@ pub(crate) struct CallArgumentEvaluationOwner {
 pub(crate) struct CallArgumentEvaluationScope {
     pub expression_depth: usize,
     pub owners: Vec<CallArgumentEvaluationOwner>,
+    /// The user callee whose declared scalar parameters check a `mixed` argument at run time;
+    /// `None` for builtin, extern and dynamic calls, which keep their own binding rules.
+    pub callee: Option<ArgumentCallee>,
+}
+
+/// Names a user callee for the run-time scalar argument check.
+#[derive(Debug, Clone)]
+pub(crate) struct ArgumentCallee {
+    /// The name php-src prints before `(): Argument #N`, such as `f` or `C::m`.
+    pub display: String,
 }
 
 /// Staging for one `$target = &call()`, recorded while its source expression is lowered.
@@ -900,9 +910,10 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
             .insert(closure_name.to_string(), format!("{{closure:{context}:{line}}}"));
     }
 
-    /// Takes the label recorded by [`Self::register_closure_display_name`] for `closure_name`.
-    pub(crate) fn take_closure_display_name(&mut self, closure_name: &str) -> Option<String> {
-        self.closure_display_names.remove(closure_name)
+    /// Reads the label recorded by [`Self::register_closure_display_name`] for `closure_name`:
+    /// the closure's own body takes it, and so does a direct call naming its callee.
+    pub(crate) fn closure_display_name(&self, closure_name: &str) -> Option<String> {
+        self.closure_display_names.get(closure_name).cloned()
     }
 
     /// Interns a string literal or metadata name in the module data pool.

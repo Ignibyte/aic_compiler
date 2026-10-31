@@ -175,6 +175,7 @@ fn lower_method_call_with_binding(
     let (object, receiver_owner) = root_method_receiver(ctx, object, expr.span);
     let mut operands = vec![object.value];
     begin_call_argument_evaluation(ctx);
+    name_method_argument_callee(ctx, object.value, dispatch_method, method);
     let enum_args = singular_object_class(&ctx.builder.value_php_type(object.value))
         .and_then(|(class, _)| ctx.enums.contains_key(class).then(|| class.to_string()))
         .and_then(|class| sig.as_ref().and_then(|signature|

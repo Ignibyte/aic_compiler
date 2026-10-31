@@ -634,6 +634,9 @@ fn validate_instruction_immediate(
         TypePredicate => require_immediate(inst_id, inst, "type predicate", |imm| {
             matches!(imm, Imm::TypePredicate(_))
         }),
+        ScalarArgumentGuard => require_immediate(inst_id, inst, "scalar argument check", |imm| {
+            matches!(imm, Imm::ScalarArgumentCheck(_))
+        }),
         GcControl => require_immediate(inst_id, inst, "GC control selector", |imm| {
             matches!(imm, Imm::I64(value) if crate::ir::GcControlOp::from_i64(*value).is_some())
         }),

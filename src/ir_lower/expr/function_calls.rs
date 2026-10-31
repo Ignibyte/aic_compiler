@@ -145,6 +145,10 @@ pub(super) fn lower_function_call(ctx: &mut LoweringContext<'_, '_>, name: &Name
         _ => None,
     };
     begin_call_argument_evaluation(ctx);
+    // An extern keeps its own C-boundary checks, which refuse with a fatal error.
+    if is_user_function && !is_extern {
+        name_argument_callee(ctx, scalar_argument_guards::function_callee(canonical));
+    }
     let mut operands = if is_user_function {
         // A source-declared `array` has packed-or-hash Mixed storage. Its unpack must walk
         // runtime keys and bind each boxed cell before entering the direct function ABI, just

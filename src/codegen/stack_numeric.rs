@@ -189,6 +189,8 @@ impl Proof<'_> {
                         .result
                         .is_some_and(|result| self.value_uses(result, producer, seen, stores)),
                     Op::Cast | Op::ReturnBoundaryMixedToInt => scalar_observation(user),
+                    // Reads the cell's tag and payload in place and keeps no address.
+                    Op::ScalarArgumentGuard => user.operands.len() == 1,
                     _ if tagged_producer(user) && self.numeric_inputs(&user.operands) => true,
                     Op::StoreLocal => match user.immediate {
                         Some(Immediate::LocalSlot(slot)) => {

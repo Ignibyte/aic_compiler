@@ -294,6 +294,9 @@ impl CounterProof {
                     Op::PhpRelCmp => {
                         proof.comparisons.insert(id);
                     }
+                    // A declared scalar argument check only reads the value, and its lowering
+                    // accepts the raw integer a proven counter becomes.
+                    Op::ScalarArgumentGuard => {}
                     // Numeric helpers borrow their inputs. The unchanged opcode accepts
                     // a raw integer after the recurrence's complete range proof succeeds.
                     Op::MixedNumericBinop if matches!(inst.immediate,

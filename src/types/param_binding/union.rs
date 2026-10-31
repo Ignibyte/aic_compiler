@@ -87,7 +87,10 @@ pub(crate) fn runtime_int_binding_needs_diagnostics(expected: &PhpType, value: &
     let span = value.span;
     let accepted = runtime_weak_int_param_acceptance(value);
     let selected = match expected {
-        PhpType::Int => accepted,
+        // An exact integer needs no diagnostic; testing it first spares the numeric probe below,
+        // which boxes a value on every call.
+        PhpType::Int => both(Expr::new(ExprKind::Not(Box::new(call("is_int", value))), span),
+            accepted, span),
         PhpType::Union(members) if members.contains(&PhpType::Int)
             && !members.contains(&PhpType::Float) && !members.contains(&PhpType::Mixed) => {
             let exact = members.iter().map(|member| exact_member(member, value))

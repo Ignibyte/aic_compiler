@@ -443,7 +443,16 @@ pub(super) fn coerce_scalar_arg_to_param_storage(
         return unbox_iterable_param_storage(ctx, value, Some(arg.span));
     }
     if param_ty == PhpType::Str && matches!(source_ty, PhpType::Mixed | PhpType::Union(_)) {
-        return coerce_to_string(ctx, value, arg);
+        // A checked parameter is bound after every argument is evaluated, by
+        // `coerce_operands_to_params`, which must still see the unconverted value.
+        let checked = argument_callee(ctx).is_some()
+            && scalar_argument_guards::checked_scalar_parameter(
+                sig, index, &ctx.builder.value_php_type(value.value),
+            ).is_some();
+        if !checked {
+            return coerce_to_string(ctx, value, arg);
+        }
+        return value;
     }
     if bindable {
         if let Some(cast) = crate::types::param_binding::scalar_param_cast(&param_ty, &source_ty) {
@@ -566,8 +575,17 @@ pub(super) fn coerce_operands_to_params(
 ) -> Vec<crate::ir::ValueId> {
     let regular_param_count = crate::types::call_args::regular_param_count(sig);
     let limit = operands.len().min(regular_param_count);
+    let callee = argument_callee(ctx);
+    let checked = (0..limit)
+        .map(|index| callee.as_ref().and_then(|_| {
+            scalar_argument_guards::checked_scalar_parameter(
+                sig, index, &ctx.builder.value_php_type(operands[index]),
+            )
+        }))
+        .collect::<Vec<_>>();
     let needs_coercion = (0..limit)
-        .map(|index| operand_needs_param_coercion(ctx, sig, &operands, index))
+        .map(|index| checked[index].is_some()
+            || operand_needs_param_coercion(ctx, sig, &operands, index))
         .collect::<Vec<_>>();
     if needs_coercion.iter().any(|needs_coercion| *needs_coercion) {
         // Source evaluation has completed, but any parameter conversion below can throw.
@@ -590,6 +608,14 @@ pub(super) fn coerce_operands_to_params(
             continue;
         };
         let value = operands[index];
+        if let (Some(callee), Some(declared)) = (callee.as_ref(), checked[index].as_ref()) {
+            if let Some(bound) = scalar_argument_guards::bind_scalar_argument(
+                ctx, callee, sig, index, declared, value,
+            ) {
+                operands[index] = root_evaluated_call_argument(ctx, bound, Span::dummy()).value;
+                continue;
+            }
+        }
         let operand_ty = ctx.builder.value_php_type(value).codegen_repr();
         let param_ty = param_ty.codegen_repr();
         if param_ty == PhpType::Float && matches!(operand_ty, PhpType::Int | PhpType::Bool) {

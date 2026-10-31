@@ -1590,7 +1590,7 @@ fn lower_closure_function_with_signature(
     );
     function.lexical_class = parent.current_class.clone();
     function.callable_default = callable_default;
-    function.display_name = parent.take_closure_display_name(name);
+    function.display_name = parent.closure_display_name(name);
     function.flags = FunctionFlags {
         is_closure: true,
         is_synthetic: function.callable_default.is_some(),
