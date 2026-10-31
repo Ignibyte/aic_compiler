@@ -124,7 +124,7 @@ pub(super) fn collect_boundary_checks(
                 if let Some(positions) = boundary_hint_positions(params) {
                     functions.insert(name.clone(), positions);
                 }
-                if return_type.as_ref().is_some_and(hint_checks_a_mixed_value) {
+                if return_type.as_ref().is_some_and(return_hint_checks_a_value) {
                     returns.insert(name.clone());
                 }
             }
@@ -140,7 +140,7 @@ pub(super) fn collect_boundary_checks(
                             instance_methods.insert(key.clone(), positions);
                         }
                     }
-                    if method.return_type.as_ref().is_some_and(hint_checks_a_mixed_value) {
+                    if method.return_type.as_ref().is_some_and(return_hint_checks_a_value) {
                         returns.insert(key);
                     }
                 }
@@ -177,6 +177,21 @@ fn hint_checks_a_mixed_value(hint: &TypeExpr) -> bool {
         TypeExpr::Union(members) => members.iter().any(hint_checks_a_mixed_value),
         _ => false,
     }
+}
+
+/// Returns whether a return hint checks the returned value at run time: an `array` or class
+/// boundary, or a nullable scalar or a union with a scalar member (`?int`, `int|string`).
+fn return_hint_checks_a_value(hint: &TypeExpr) -> bool {
+    let scalar = |member: &TypeExpr| {
+        matches!(member, TypeExpr::Int | TypeExpr::Float | TypeExpr::Str | TypeExpr::Bool
+            | TypeExpr::False)
+    };
+    hint_checks_a_mixed_value(hint)
+        || match hint {
+            TypeExpr::Nullable(inner) => scalar(inner),
+            TypeExpr::Union(members) => members.len() > 1 && members.iter().any(scalar),
+            _ => false,
+        }
 }
 
 /// Finds hints whose by-reference entry check may reject a previously retyped cell.

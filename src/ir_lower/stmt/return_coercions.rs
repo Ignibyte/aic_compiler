@@ -109,7 +109,7 @@ fn guard_declared_mixed_return(
     };
     let prefix = format!(
         "{}(): Return value must be of type {}, ",
-        ctx.owner_name(),
+        ctx.diagnostic_owner_name(),
         boundary.php_type_name()
     );
     let data = ctx.intern_string(&prefix);
@@ -204,7 +204,7 @@ fn declared_int_return_boundary(
     ) {
         return None;
     }
-    let prefix = format!("{}(): Return value must be of type int, ", ctx.owner_name());
+    let prefix = format!("{}(): Return value must be of type int, ", ctx.diagnostic_owner_name());
     let data = ctx.intern_string(&prefix);
     let verified = ctx.emit_value(
         Op::ReturnBoundaryMixedToInt,

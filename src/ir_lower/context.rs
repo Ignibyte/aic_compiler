@@ -2030,6 +2030,18 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         &self.owner_name
     }
 
+    /// Name php-src gives this body in a boundary `TypeError`: a closure's
+    /// `{closure:<context>:<line>}` label, otherwise [`Self::owner_name`].
+    pub(crate) fn diagnostic_owner_name(&self) -> String {
+        let function = self.builder.function();
+        function
+            .flags
+            .is_closure
+            .then(|| function.display_name.clone())
+            .flatten()
+            .unwrap_or_else(|| self.owner_name.clone())
+    }
+
     /// Returns a deterministic EIR function name for the next closure literal in this body.
     pub(crate) fn next_closure_name(&mut self) -> String {
         let name = format!(

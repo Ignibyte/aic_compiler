@@ -37,6 +37,8 @@ mod nullable_array_merge;
 mod narrowing;
 #[path = "types/mixed_boundaries.rs"]
 mod mixed_boundaries;
+#[path = "types/union_returns.rs"]
+mod union_returns;
 #[path = "types/narrowed_object_arguments.rs"]
 mod narrowed_object_arguments;
 mod guarded_interface_receivers;

@@ -112,9 +112,12 @@ fn boundary_param_positions(signature: &FunctionSig) -> Option<Vec<bool>> {
     positions.contains(&true).then_some(positions)
 }
 
-/// Returns whether a signature's declared return checks a `mixed` value.
+/// Returns whether a signature's declared return checks a `mixed` value: an `array` or class
+/// boundary, or a union with a scalar member, which can refuse the value with `TypeError`.
 fn returns_through_a_boundary(signature: &FunctionSig) -> bool {
-    signature.declared_return && signature.return_type.mixed_boundary().is_some()
+    signature.declared_return
+        && (signature.return_type.mixed_boundary().is_some()
+            || signature.return_type.checks_scalar_union())
 }
 
 /// Returns whether an expression may evaluate to a value the checker only knows as `mixed`.
