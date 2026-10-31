@@ -167,6 +167,27 @@ impl PhpType {
         (boundary.arrays || boundary.any_object || !boundary.classes.is_empty()).then_some(boundary)
     }
 
+    /// Returns whether this DECLARED return type is a union with a scalar member that a returned
+    /// value must be checked and bound against at run time (`int|string`, `?int`, `false|string`).
+    ///
+    /// Every member must be one the union return guard can test: the scalars, `null`, either
+    /// array shape and named classes. `iterable`, `callable` and `static` members leave the
+    /// declaration to the existing return coercions.
+    pub(crate) fn checks_scalar_union(&self) -> bool {
+        let Self::Union(members) = self else {
+            return false;
+        };
+        let scalar = |member: &PhpType| {
+            matches!(member, Self::Int | Self::Float | Self::Str | Self::Bool | Self::False)
+        };
+        let supported = |member: &PhpType| {
+            scalar(member)
+                || matches!(member, Self::Void | Self::Array(_) | Self::AssocArray { .. })
+                || matches!(member, Self::Object(class) if !class.eq_ignore_ascii_case("static"))
+        };
+        members.iter().any(scalar) && members.iter().all(supported)
+    }
+
     /// Returns whether an array slot can safely hold a managed live reference for `array_push`.
     pub(crate) fn supports_live_array_push_place(&self) -> bool {
         self.is_php_array() || self.codegen_repr() == Self::Mixed
