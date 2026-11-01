@@ -5816,12 +5816,14 @@ pub(crate) fn type_expr_to_php_type(type_expr: &TypeExpr) -> PhpType {
         // arrive uninstantiated, its head is the class it denotes — conservative metadata,
         // which is all this fallback promises.
         TypeExpr::GenericClass { name, .. } => named_type_expr_to_php_type(name.as_str()),
-        TypeExpr::Nullable(inner) => {
-            PhpType::Union(vec![PhpType::Void, type_expr_to_php_type(inner)])
-        }
-        TypeExpr::Union(members) => {
-            PhpType::Union(members.iter().map(type_expr_to_php_type).collect())
-        }
+        // The checker's own normalizer, so a closure's `?array` is the flat
+        // `array<mixed>|array<mixed, mixed>|null` a function's is, not a union nested in one.
+        TypeExpr::Nullable(inner) => crate::types::normalize_union_members(
+            vec![type_expr_to_php_type(inner), PhpType::Void],
+        ),
+        TypeExpr::Union(members) => crate::types::normalize_union_members(
+            members.iter().map(type_expr_to_php_type).collect(),
+        ),
         // An intersection value is an object pointer; type it as its first member.
         TypeExpr::Intersection(members) => members
             .first()

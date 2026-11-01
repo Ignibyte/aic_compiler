@@ -122,3 +122,33 @@ echo g(new stdClass()), "|", g(5), "|", h(new stdClass()), "|", h("s"), "\n";
         "ok|f(): Argument #1 ($o) must be of type object, int given|ok|r(): Return value must be of type object, string returned\n"
     );
 }
+
+/// Verifies a closure or arrow function declared `?array`, `array`, a class or `?Class` checks a
+/// `mixed` return as a named function does, its refusal naming the `{closure:…}` label.
+#[test]
+fn test_closure_return_checks_a_mixed_value_at_its_declared_boundary() {
+    let out = compile_and_run(
+        r#"<?php
+class Box {}
+function report(TypeError $e): void {
+    $message = $e->getMessage();
+    $cut = strpos($message, '(): ');
+    echo str_starts_with($message, '{closure') ? '{closure}' : substr($message, 0, $cut), substr($message, $cut), "\n";
+}
+$array = function (mixed $v): ?array { return $v; };
+$arrow = fn(mixed $v): ?array => $v;
+$box = function (mixed $v): Box { return $v; };
+$maybeBox = fn(mixed $v): ?Box => $v;
+$list = function (mixed $v): array { return $v; };
+try { var_dump($array(null)); var_dump($array([1])); $array(1); } catch (TypeError $e) { report($e); }
+try { var_dump($arrow([])); $arrow("x"); } catch (TypeError $e) { report($e); }
+try { echo get_class($box(new Box())), "\n"; $box(new stdClass()); } catch (TypeError $e) { report($e); }
+try { var_dump($maybeBox(null)); $maybeBox(true); } catch (TypeError $e) { report($e); }
+try { var_dump($list([2])); $list(null); } catch (TypeError $e) { report($e); }
+"#,
+    );
+    assert_eq!(
+        out,
+        "NULL\narray(1) {\n  [0]=>\n  int(1)\n}\n{closure}(): Return value must be of type ?array, int returned\narray(0) {\n}\n{closure}(): Return value must be of type ?array, string returned\nBox\n{closure}(): Return value must be of type Box, stdClass returned\nNULL\n{closure}(): Return value must be of type ?Box, true returned\narray(1) {\n  [0]=>\n  int(2)\n}\n{closure}(): Return value must be of type array, null returned\n"
+    );
+}
