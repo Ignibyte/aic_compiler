@@ -912,6 +912,26 @@ In full-reset `--web` mode, the next request reclaims the previous PHP heap aren
 - **Object destructors (`__destruct`)**: `__rt_call_object_destructor` dispatches through the eval hook or class-id-indexed `_class_destruct_ptrs` table with a borrowed `$this`. Refcount bit 31 guards active execution. For collector-triggered destruction, heap-kind bit 14 remembers completion after that temporary guard is cleared, so a resurrected object is not destructed again on later collection or final release. Eval class/property metadata survives until actual object release. Ordinary last-owner destruction still runs at the top of `__rt_object_free_deep`, before property release; resurrection on that ordinary path remains unsupported
 - **Process exit**: all memory is reclaimed by the OS
 
+EIR array-element removal instructions report whether the key existed,
+including entries whose value was null. EIR combines these flags for an
+array-only unset list and runs its final automatic cycle collection only if an
+entry was removed. Missing keys therefore avoid a full heap graph scan. The flag
+lives in the runtime call's stack frame so reentrant destructors cannot overwrite
+another removal's result. Copy-on-write publication, sparse-array promotion, and
+normal key evaluation still precede removal.
+
+This gate applies to scalar key literals and concrete scalar locals, plus pure
+unary string builtins applied to concrete strings, such as
+`unset($fields[strtolower($name)])`. Keys that can invoke user code, weak-coercion
+diagnostics, or other effects keep unconditional collection. Unsets of local
+roots, properties, and `ArrayAccess` offsets keep their existing safe point,
+including lists mixing those targets with array offsets. Explicit
+`gc_collect_cycles()` remains independent of the removal flags.
+When a boxed reference holds a non-array value, its runtime fallback conservatively
+requests collection, preserving `ArrayAccess` and false-conversion callback effects.
+Float and boxed-key diagnostic snapshots preserve the removal flag across their
+temporary hash-owner cleanup.
+
 Collector-triggered destructors run under individual native exception handlers.
 Both explicit collection and automatic EIR safe points have conservative callback
 effects, including `MAY_THROW`, so optimizers must preserve surrounding catches
@@ -1706,6 +1726,30 @@ skips the string-registry lookup; the child's release still retires its own
 identity before allocator reuse. Eval array-reference observers retire before
 this skip, including when a Mixed cell no longer contains its former array
 value. Other allocation kinds retain their existing identity retirement path.
+
+The native INI registry records origins before the first INI call so copies made
+earlier still share their logical identity. Initially, fresh strings and literals
+store only their kind and length in the allocation-address map. Copying a tracked
+full string or resolving it for INI promotes that origin to shared metadata;
+fresh replacement detaches the source while existing aliases keep the old
+origin. Repeated literal observations preserve both unresolved and resolved
+origins. Scratch pointers and different-length views never inherit a tracked
+identity.
+
+Once a promoted fresh origin has no remaining copied aliases and has never been
+resolved, refresh reuses that metadata allocation. Repeated update/copy/release
+loops therefore avoid allocating shared metadata again on each update. Interned
+or resolved origins and origins with live aliases still detach on replacement.
+
+The map hashes internal allocation addresses with an integer mixer, independently
+of PHP string-key hashing. Request reset releases every origin and identity lease
+outside the map borrow, then reuses the empty table. Its capacity therefore follows
+the worker thread's largest request instead of being allocated again each request.
+No native byte storage is retained by that capacity. The callback benchmark
+`cargo run -p elephc-mbstring --release --example native_ini_tracking` reports
+allocation calls and timing for fresh strings, refreshes, literals, copies, and
+256-string request resets. It measures the Rust callbacks; generated register
+preservation hooks and HTTP request handling add separate costs.
 
 ### Packed integer prefixes in JSON arrays
 

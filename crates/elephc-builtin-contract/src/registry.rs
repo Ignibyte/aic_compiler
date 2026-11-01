@@ -36,6 +36,7 @@ pub fn contracts() -> &'static [BuiltinContract] {
             let curl_capacity = 0;
             let mut contracts = Vec::with_capacity(
                 crate::catalog_data::CONTRACTS.len()
+                    + crate::catalog_gmp::CONTRACTS.len()
                     + crate::catalog_mbstring::CONTRACTS.len()
                     + crate::catalog_pcntl::CONTRACTS.len()
                     + crate::catalog_xml::CONTRACTS.len()
@@ -43,6 +44,7 @@ pub fn contracts() -> &'static [BuiltinContract] {
                     + curl_capacity,
             );
             contracts.extend_from_slice(crate::catalog_data::CONTRACTS);
+            contracts.extend_from_slice(crate::catalog_gmp::CONTRACTS);
             contracts.extend_from_slice(crate::catalog_mbstring::CONTRACTS);
             contracts.extend_from_slice(crate::catalog_pcntl::CONTRACTS);
             contracts.extend_from_slice(crate::catalog_xml::CONTRACTS);
@@ -165,7 +167,7 @@ mod tests {
         // the extension-hosting prelude calls.
         // +2: PHP 8.5 array value-edge functions.
         // Fork: +1 `flush`, +2 the `--web` prelude's `is_uploaded_file` and `move_uploaded_file`.
-        assert_eq!(contracts().len(), 1199 + curl_surface);
+        assert_eq!(contracts().len(), 1251 + curl_surface);
         assert_eq!(lookup("STRLEN").map(|contract| contract.name), Some("strlen"));
         assert_eq!(lookup("\\parse_url").map(|contract| contract.name), Some("parse_url"));
     }
