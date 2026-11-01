@@ -1,6 +1,7 @@
 //! Purpose:
 //! Verifies a `mixed` argument bound to a DECLARED `int`, `float` or `bool` parameter of a user
-//! callee, the run-time check php-src performs when the callee receives it.
+//! callee, or to a declared `string` one from a strict caller, the run-time check php-src
+//! performs when the callee receives it.
 //!
 //! Called from:
 //! - `crate::codegen::lower_inst::lower_instruction()` for `Op::ScalarArgumentGuard`.
@@ -8,7 +9,8 @@
 //! Key details:
 //! - The guard only reads the value: the call's ordinary argument conversion follows it, so
 //!   an accepted value is converted, warned about and deprecated exactly as before.
-//! - A strict caller accepts the declared type, plus an int for `float`. A weak caller also
+//! - A strict caller accepts the declared type, plus an int for `float`; `string` is checked
+//!   for strict callers only. A weak caller also
 //!   accepts what PHP coerces: a bool, a finite float inside the int range or an int-coercible
 //!   numeric string for `int`; a bool or a numeric string for `float`; any scalar for `bool`.
 //! - The operand may be a raw scalar: constant folding and counter scalarization retype it
@@ -74,7 +76,7 @@ fn verdict(check: ScalarArgumentCheck, tag: u8) -> Verdict {
     let scalar = matches!(tag, 0..=3);
     match (check.target, check.strict, tag) {
         (ScalarGuardTarget::Int, _, 0) | (ScalarGuardTarget::Float, _, 0 | 2) => Verdict::Accept,
-        (ScalarGuardTarget::Bool, _, 3) => Verdict::Accept,
+        (ScalarGuardTarget::Bool, _, 3) | (ScalarGuardTarget::Str, _, 1) => Verdict::Accept,
         (_, true, _) => Verdict::Refuse,
         (ScalarGuardTarget::Int, false, 3) | (ScalarGuardTarget::Float, false, 3) => Verdict::Accept,
         (ScalarGuardTarget::Int, false, 2) => Verdict::FloatFitsInt,
