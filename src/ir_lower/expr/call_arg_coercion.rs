@@ -444,7 +444,9 @@ pub(super) fn coerce_scalar_arg_to_param_storage(
     let by_reference = sig.ref_params.get(index).copied().unwrap_or(false);
     if !by_reference {
         if let PhpType::Object(class_name) = param_ty {
-        {
+        // The bare `object` type (an empty class name) accepts every object; the codegen's
+        // mixed boundary guard checks a `mixed` argument there (fork carry).
+        if !class_name.is_empty() {
             let source_ty = ctx.builder.value_php_type(value.value);
             // A union-typed local is stored in a boxed Mixed slot, so its IR type no longer
             // names the `Class|false` alternative. Recover the checker's static type from the
