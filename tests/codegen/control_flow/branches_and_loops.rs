@@ -593,6 +593,8 @@ echo viaDoCond(true, 1), viaDoCond(false, 1), "|", viaSwitch(0), viaSwitch(1), "
 "#,
     );
     assert_eq!(out, "afterr|afterr|afterr|afterr|afterdr\n");
+}
+
 /// A `mixed` switch matches `case null` with PHP's loose comparison while other cases are
 /// present. The null case value used to reach `loose_eq` as a pointer type, so the backend
 /// refused the whole program (#1994).

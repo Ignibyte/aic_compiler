@@ -3296,5 +3296,6 @@ fn assert_flushed_heads(heads: &[String]) {
     }
     assert!(heads[1].contains("content-encoding: gzip"), "gzip was dropped: {:?}", heads[1]);
 }
+
 #[path = "web/environment.rs"]
 mod environment;
