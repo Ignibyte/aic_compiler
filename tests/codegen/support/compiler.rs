@@ -383,6 +383,7 @@ fn try_compile_source_to_asm_with_defines_repr_inner(
     let resolved = elephc::tz_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
     let resolved = elephc::list_id_prelude::inject_if_used(resolved, &mut prelude_inventory);
     let resolved = elephc::var_export_prelude::inject_if_used(resolved, &mut prelude_inventory);
+    let resolved = elephc::key_set_prelude::inject_if_used(resolved, &mut prelude_inventory);
     let resolved =
         elephc::image_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
     let resolved = elephc::hash_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
@@ -446,6 +447,9 @@ fn try_compile_source_to_asm_with_defines_repr_inner(
     let instantiation_roots: HashSet<String> =
         elephc::generics::instantiation_roots(&check_result.requested_instantiations)
             .into_iter()
+            .chain(elephc::key_set_prelude::retarget_roots(
+                check_result.generic_call_sites.values(),
+            ))
             .collect();
     let optimized = elephc::optimize::prune_unreachable_declarations(
         optimized,

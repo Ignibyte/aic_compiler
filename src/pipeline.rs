@@ -421,6 +421,7 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
         &mut prelude_inventory,
     );
     timings.record_since("var-export-prelude", phase_started);
+    let ast = crate::key_set_prelude::inject_if_used(ast, &mut prelude_inventory);
 
     // Inject the OPcache preludes (pure elephc-PHP functions): `opcache_get_configuration()`
     // returns a compile-time array literal built from the version-keyed OPcache
@@ -1039,6 +1040,10 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
     // instantiation as unreferenced and lowering finds nothing to call.
     exported_function_names.extend(crate::generics::instantiation_roots(
         &check_result.requested_instantiations,
+    ));
+    // A key-set call retargeted to its prelude function names it only in that map, likewise.
+    exported_function_names.extend(crate::key_set_prelude::retarget_roots(
+        check_result.generic_call_sites.values(),
     ));
     let exported_function_names = exported_function_names;
     let ast = optimize::prune_unreachable_declarations(
