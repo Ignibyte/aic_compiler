@@ -32,6 +32,25 @@ builtin! {
 /// argument once for side effects. The result preserves the first-operand array shape.
 fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     let ty1 = cx.checker.infer_type(&cx.args[0], cx.env)?;
+    let ty2 = cx.checker.infer_type(&cx.args[1], cx.env)?;
+    // Two concrete hashes take the native helper. Any other array operand (a declared `array`, a
+    // boxed `array_filter()` result, a list) retargets the call to the key-set prelude, which
+    // takes any PHP array and answers a declared `array`.
+    let hash = |ty: &PhpType| matches!(ty.codegen_repr(), PhpType::AssocArray { .. });
+    let array = |ty: &PhpType| {
+        ty.is_php_array() || matches!(ty.codegen_repr(), PhpType::Array(_) | PhpType::AssocArray { .. })
+    };
+    if !(hash(&ty1) && hash(&ty2))
+        && array(&ty1)
+        && array(&ty2)
+        && cx.checker.functions.contains_key(crate::key_set_prelude::INTERSECT)
+    {
+        let site = (cx.checker.current_loop_storage_scope.clone(), cx.span);
+        cx.checker
+            .generic_call_sites
+            .insert(site, crate::key_set_prelude::INTERSECT.to_string());
+        return Ok(PhpType::php_array());
+    }
     if !matches!(ty1, PhpType::Array(_) | PhpType::AssocArray { .. }) {
         return Err(CompileError::new(
             cx.span,

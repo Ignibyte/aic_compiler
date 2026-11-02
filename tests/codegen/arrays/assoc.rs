@@ -1382,3 +1382,29 @@ echo f(5), "|", g("s"), "\n";
     );
     assert_eq!(out, "{\"a\":\"x\",\"k\":5}|{\"a\":1,\"0\":\"s\"}\n");
 }
+
+/// Verifies `array_intersect_key()` and `array_diff_key()` take operands that are not two
+/// concrete hashes: a class constant declared `array`, a boxed `array_filter()` result and a
+/// list. Such a call runs the key-set prelude, keeps the first operand's keys and order, and
+/// leaves a clean heap (AIC #165).
+#[test]
+fn test_key_set_builtins_take_declared_boxed_and_list_operands() {
+    let output = compile_and_run_with_heap_debug(
+        r#"<?php
+final class Entry {
+    private const array PROBLEMS = ['a' => 'A wrong', 'b' => 'B wrong', 'c' => 'C wrong'];
+    public function problems(bool $a, bool $b): array { return array_intersect_key(self::PROBLEMS, array_filter(['a' => $a, 'b' => $b])); }
+    public function rest(bool $a): array { return array_diff_key(self::PROBLEMS, array_filter(['a' => $a])); }
+}
+$e = new Entry();
+foreach ($e->problems(true, false) as $k => $v) { echo "$k=$v,"; }
+foreach ($e->rest(true) as $k => $v) { echo "$k=$v,"; }
+$list = ['x', 'y', 'z'];
+foreach (array_intersect_key($list, [1 => true, 2 => true]) as $k => $v) { echo "$k=$v,"; }
+echo "\n";
+"#,
+    );
+    assert!(output.success, "stdout={:?}\nstderr={}", output.stdout, output.stderr);
+    assert_eq!(output.stdout, "a=A wrong,b=B wrong,c=C wrong,1=y,2=z,\n");
+    assert!(output.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", output.stderr);
+}
