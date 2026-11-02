@@ -3805,3 +3805,27 @@ echo function_exists("mktime") ? "1" : "0", function_exists("gmmktime") ? "1" : 
     );
     assert_eq!(out, "2024-06-15 12:30:45|03-15|same-year|h12|11");
 }
+
+/// Verifies `preg_match()` with a literal pattern stores each named group under its name, just
+/// before its number, as php-src does, in functions, methods, closures and top-level code, with a
+/// miss leaving an empty array, and that the result is still 1 or 0 (AIC #224).
+#[test]
+fn test_preg_match_stores_named_groups() {
+    let output = compile_and_run_with_heap_debug(
+        r#"<?php
+function ym(string $s): string { preg_match('/(?<year>\d{4})-(?<mon>\d{2})/', $s, $m); return $m['year'] . '/' . $m['mon'] . '|' . count($m) . '|' . implode(',', array_keys($m)); }
+final class Mail { public function host(string $s): string { return preg_match('~(\w+)@(?P<host>[a-z.]+)~', $s, $n) . ' ' . $n['host'] . ' ' . $n[1]; } }
+function opt(string $s): string { preg_match('/(?<miss>zzz)?(?<hit>a)/', $s, $o); return implode(',', array_keys($o)); }
+function none(string $s): string { return preg_match('/(?<x>q)/', $s, $p) . ' ' . count($p); }
+$parse = function (string $line): string { if (preg_match('/^(?<k>\w+)=(?<v>.*)$/', $line, $m) === 1) { return $m['k'] . ':' . $m['v']; } return '-'; };
+preg_match('/(?<top>t)/', 'top', $t);
+echo ym('on 2026-11 ok'), "\n", (new Mail())->host('mail ada@example.org'), "\n", opt('a'), "\n", none('nothing'), "\n", $parse('a=b'), $parse('bad'), "\n", $t['top'], count($t), "\n";
+"#,
+    );
+    assert!(output.success, "stdout={:?}\nstderr={}", output.stdout, output.stderr);
+    assert_eq!(
+        output.stdout,
+        "2026/11|5|0,year,1,mon,2\n1 example.org ada\n0,miss,1,hit,2\n0 0\na:b-\nt3\n"
+    );
+    assert!(output.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", output.stderr);
+}

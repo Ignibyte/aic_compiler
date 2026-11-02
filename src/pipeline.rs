@@ -422,6 +422,7 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
     );
     timings.record_since("var-export-prelude", phase_started);
     let ast = crate::key_set_prelude::inject_if_used(ast, &mut prelude_inventory);
+    let ast = crate::preg_named_groups::rewrite(ast, &mut prelude_inventory);
 
     // Inject the OPcache preludes (pure elephc-PHP functions): `opcache_get_configuration()`
     // returns a compile-time array literal built from the version-keyed OPcache
