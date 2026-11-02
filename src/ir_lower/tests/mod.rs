@@ -404,6 +404,18 @@ fn float_comparison_coerces_integer_operand() {
     assert!(text.contains("fcmp"), "missing float comparison in {text}");
 }
 
+/// A strict caller's `mixed` argument at a declared `string` takes the read-only scalar guard
+/// and is not staged (AIC #223); a weak caller's still stages it, since it takes a Stringable.
+#[test]
+fn strict_string_argument_takes_the_scalar_guard_without_staging() {
+    let call = r#"function f(string $s): int { return strlen($s); } echo f(json_decode('"x"'));"#;
+    let strict = print_module(&lower_source(&format!("<?php declare(strict_types=1); {call}")));
+    assert!(strict.contains("scalar_argument_guard"), "strict string argument is not guarded: {strict}");
+    assert!(!strict.contains("scalar.boundary.ok"), "strict string argument is staged: {strict}");
+    let weak = print_module(&lower_source(&format!("<?php {call}")));
+    assert!(weak.contains("scalar.boundary.ok"), "weak string argument is not staged: {weak}");
+}
+
 /// Verifies registry-backed `strlen` becomes ordinary EIR instead of a name-based builtin call.
 #[test]
 fn strlen_uses_backend_neutral_eir_graph() {

@@ -519,6 +519,8 @@ pub enum ScalarGuardTarget {
     Int,
     Float,
     Bool,
+    /// Emitted for a strict caller only; a weak caller's `string` also takes a `Stringable`.
+    Str,
 }
 
 impl ScalarGuardTarget {
@@ -528,6 +530,7 @@ impl ScalarGuardTarget {
             Self::Int => "int",
             Self::Float => "float",
             Self::Bool => "bool",
+            Self::Str => "string",
         }
     }
 }

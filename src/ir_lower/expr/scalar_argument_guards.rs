@@ -50,9 +50,10 @@ pub(super) fn checked_scalar_parameter(
 /// Checks the argument `value` against `declared`, and returns the bound value when the check
 /// converts it, or `None` when the call's ordinary argument conversion follows.
 ///
-/// A declared `int`, `float` or `bool` takes `Op::ScalarArgumentGuard`, one instruction that
-/// only reads the value: a loop counter the optimizer keeps unboxed stays unboxed. A `string`
-/// or a union stages the value and binds it through PHP's coercion order.
+/// A declared `int`, `float` or `bool`, and a strict caller's `string`, take
+/// `Op::ScalarArgumentGuard`, one instruction that only reads the value: a loop counter the
+/// optimizer keeps unboxed stays unboxed. A weak caller's `string` or a union stages the value
+/// and binds it through PHP's coercion order.
 pub(super) fn bind_scalar_argument(
     ctx: &mut LoweringContext<'_, '_>,
     callee: &ArgumentCallee,
@@ -74,6 +75,10 @@ pub(super) fn bind_scalar_argument(
         PhpType::Int => Some(ScalarGuardTarget::Int),
         PhpType::Float => Some(ScalarGuardTarget::Float),
         PhpType::Bool => Some(ScalarGuardTarget::Bool),
+        // A strict caller's `string` takes a string only, so the read-only guard covers it and
+        // the value needs no staging: the staged binding lost response headers on the compiled
+        // AIC site (AIC #223). A weak caller also accepts a `Stringable` object, so it stages.
+        PhpType::Str if crate::source::current_strict_types() => Some(ScalarGuardTarget::Str),
         _ => None,
     };
     let Some(target) = target else {

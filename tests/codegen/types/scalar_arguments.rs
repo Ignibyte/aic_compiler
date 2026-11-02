@@ -188,3 +188,49 @@ echo "\n";
     assert_eq!(output.stdout, "3,E,3,E,E,7,E,-1,E,E,E,E,3,E,3,E,E,7,E,-1,E,E,E,E,3,E,3,E,E,7,E,-1,E,E,E,E,\n");
     assert!(output.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", output.stderr);
 }
+
+/// Verifies a strict file checks a `mixed` argument at a declared `string` with the read-only
+/// guard: a string taken from a destructured list passes through a static call intact, every
+/// other type is refused by php-src's name for it, and nothing leaks (AIC #223).
+#[test]
+fn test_strict_string_argument_is_guarded_and_kept_intact() {
+    let output = compile_and_run_with_heap_debug(
+        r#"<?php
+declare(strict_types=1);
+final class Span { public function __construct(public string $from, public string $to) {} }
+final class Ranges {
+    public static function parse(string $line): Span {
+        [$from, $to] = self::ends($line);
+        return self::span($from, $to);
+    }
+    private static function ends(string $line): array { return explode('-', $line, 2) + ['', '']; }
+    private static function span(string $from, string $to): Span { return new Span($from, $to === '' ? 'end' : $to); }
+}
+function f(string $s): string { return "<$s>"; }
+$spans = [];
+foreach (['0-3', '999-', '5-77'] as $line) { $spans[] = Ranges::parse($line); }
+$noise = [];
+for ($i = 0; $i < 40; $i++) { $noise[] = str_repeat('x', 24) . $i; }
+foreach ($spans as $span) { echo $span->from, '..', $span->to, ','; }
+echo "\n";
+foreach (json_decode('["s", 1, 1.5, true, null, [1], {"k": 1}]') as $value) {
+    try { echo f($value), ','; } catch (TypeError $e) { echo explode(', called in', $e->getMessage())[0], ','; }
+}
+echo "\n";
+"#,
+    );
+    assert!(output.success, "stdout={:?}\nstderr={}", output.stdout, output.stderr);
+    assert_eq!(
+        output.stdout,
+        concat!(
+            "0..3,999..end,5..77,\n",
+            "<s>,f(): Argument #1 ($s) must be of type string, int given,",
+            "f(): Argument #1 ($s) must be of type string, float given,",
+            "f(): Argument #1 ($s) must be of type string, true given,",
+            "f(): Argument #1 ($s) must be of type string, null given,",
+            "f(): Argument #1 ($s) must be of type string, array given,",
+            "f(): Argument #1 ($s) must be of type string, stdClass given,\n",
+        )
+    );
+    assert!(output.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", output.stderr);
+}
