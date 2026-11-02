@@ -51,6 +51,13 @@ pub(super) fn lower_object_echo_value(
 ) -> Result<()> {
     let normalized = class_name.trim_start_matches('\\');
     if !object_class_has_tostring(ctx, normalized) {
+        if super::conversions::object_class_dispatches_tostring(ctx, normalized) {
+            return super::conversions::emit_object_tostring_dispatch(
+                ctx,
+                value,
+                super::conversions::MixedStringContextMode::Stdout,
+            );
+        }
         emit_missing_tostring_fatal(ctx, normalized);
         return Ok(());
     }
@@ -191,6 +198,9 @@ pub(super) fn emit_loaded_value_to_stdout(ctx: &mut FunctionContext<'_>, ty: &Ph
         | PhpType::Iterable
         | PhpType::Resource(_)
         | PhpType::Pointer(_) => {
+            if matches!(ty, PhpType::Float) {
+                super::predicates::emit_nan_string_coercion_probe(ctx);
+            }
             abi::emit_write_stdout(ctx.emitter, ty);
             Ok(())
         }
