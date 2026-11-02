@@ -1,7 +1,7 @@
 # Fixes not upstream yet
 
-This fork carries 236 fix and feature commits that upstream elephc (`9419f7ac8c`) does not have.
-19 of them are in an open pull request on [illegalstudio/elephc](https://github.com/illegalstudio/elephc/pulls); the rest are not sent.
+This fork carries 235 fix and feature commits that upstream elephc (`cba3ddd08d`) does not have.
+18 of them are in an open pull request on [illegalstudio/elephc](https://github.com/illegalstudio/elephc/pulls); the rest are not sent.
 The list should shrink: a row leaves when upstream merges the fix, or fixes the same bug its own way,
 and the fork drops its copy at the next sync.
 
@@ -243,5 +243,4 @@ Generated from `git log upstream/main..main` and our upstream pull requests. Do 
 | [`089c152e31`](https://github.com/Ignibyte/aic_compiler/commit/089c152e31) | fix | - | map a hash of objects or mixed values, and a list of objects | [#2212](https://github.com/illegalstudio/elephc/pull/2212) |
 | [`6774b2aaef`](https://github.com/Ignibyte/aic_compiler/commit/6774b2aaef) | fix | - | convert a weak scalar argument at a builtin's string parameter | [#2214](https://github.com/illegalstudio/elephc/pull/2214) |
 | [`bcbc9866fe`](https://github.com/Ignibyte/aic_compiler/commit/bcbc9866fe) | fix | - | take any array operand in array_intersect_key() and array_diff_key() | not sent |
-| [`6ff3ca85d7`](https://github.com/Ignibyte/aic_compiler/commit/6ff3ca85d7) | fix | - | release the result of array_intersect_key() and array_diff_key() | [#2220](https://github.com/illegalstudio/elephc/pull/2220) |
 | [`22b1a150d4`](https://github.com/Ignibyte/aic_compiler/commit/22b1a150d4) | fix | - | store a literal pattern's named groups in preg_match()'s matches | not sent |
