@@ -131,6 +131,8 @@ pub mod fileinfo_prelude;
 pub mod tokenizer_prelude;
 /// Conditionally-injected `var_export` prelude (elephc-PHP rendering function).
 pub mod var_export_prelude;
+/// Rewrites `preg_match()` on a literal pattern with named groups to its prelude helper.
+pub mod preg_named_groups;
 /// Conditionally-injected PHP version-surface prelude (`zend_version`, `php_sapi_name`,
 /// `ini_restore`).
 pub mod version_prelude;

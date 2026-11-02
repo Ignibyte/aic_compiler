@@ -94,6 +94,7 @@ mod xml_prelude;
 mod fileinfo_prelude;
 mod tokenizer_prelude;
 mod var_export_prelude;
+mod preg_named_groups;
 mod version_prelude;
 mod web_prelude;
 
