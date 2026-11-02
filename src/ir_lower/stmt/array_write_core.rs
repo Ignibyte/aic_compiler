@@ -256,6 +256,13 @@ fn lower_array_assign_with_update(
         lower_write_key_and_value(ctx, index, value);
     let container_ty = ctx.builder.value_php_type(array_value.value);
     value_value = ctx.retype_value_for_container_element(&container_ty, value_value, Some(value.span));
+    // A hash whose stamped value type cannot hold the assigned value widens its storage first,
+    // like the indexed path does; PHP's untyped arrays keep the runtime value (#1951).
+    let (array_value, hash_storeback) = if op == Op::HashSet {
+        super::array_write_storage::prepare_hash_local_write(ctx, array, array_value, value_value, span)
+    } else {
+        (array_value, None)
+    };
     // Concrete string keys normally select associative storage. Ref-bound Mixed-slot
     // arrays instead use the shared writer, preserving invoker markers and keeping numeric
     // strings indexed. A boxed Mixed/Union index may hold either
@@ -392,12 +399,6 @@ fn lower_array_assign_with_update(
         release_indexed_array_write_operand(ctx, elem_ty.as_ref(), value_value, span);
         return;
     }
-    // A function-local hash widens before a write of another value type (fork carry).
-    let (array_value, updated_ty) = if op == Op::HashSet {
-        prepare_assoc_array_local_set(ctx, array_value, value_value, span)
-    } else {
-        (array_value, None)
-    };
     lower_concrete_array_set_values(
         ctx,
         array_value,
@@ -407,9 +408,9 @@ fn lower_array_assign_with_update(
         span,
         key_already_diagnosed,
     );
-    if let Some(updated_ty) = updated_ty {
-        ctx.store_mutated_local(array, array_value, updated_ty, Some(span));
-    }
+    super::array_write_storage::finish_hash_local_write(
+        ctx, array, array_value, hash_storeback, span,
+    );
 }
 
 /// Stores evaluated operands after concrete storage promotion and scalar coercion are complete.

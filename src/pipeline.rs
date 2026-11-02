@@ -141,6 +141,7 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
         null_repr,
         emit_asm,
         emit,
+        export_constants,
         check_only,
         emit_timings,
         emit_source_map,
@@ -320,6 +321,7 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
         (with_crates.contains("curl"), "curl"),
         (with_crates.contains("xml"), "xml"),
         (with_crates.contains("bcmath"), "bcmath"),
+        (with_crates.contains("gmp"), "gmp"),
         (with_crates.contains("random"), "random"),
     ]
     .into_iter()
@@ -530,6 +532,7 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
     );
     let ast = crate::core_prelude::inject_if_used(ast, &mut prelude_inventory);
     let ast = crate::bcmath_prelude::inject_if_used(ast, with_crates.contains("bcmath"), &mut prelude_inventory);
+    let ast = crate::gmp_prelude::inject_if_used(ast, with_crates.contains("gmp"), &mut prelude_inventory);
     let ast = crate::random_prelude::inject_if_used(ast, with_crates.contains("random"), &mut prelude_inventory);
     timings.record_since("hash-prelude", phase_started);
 
@@ -618,18 +621,24 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
 
     crate::progress::phase("web-prelude");
     let phase_started = Instant::now();
-    let ast = if web_application {
+    let ast = if web_application && autoloaded("web_environment") {
+        web_prelude::application::inject_with_autoload_usage(
+            ast, php_version, &ini_overrides, &mut prelude_inventory,
+            preload_startup_path.as_deref(), true,
+        )
+    } else if web_application {
         web_prelude::application::inject(
             ast, php_version, &ini_overrides, &mut prelude_inventory,
             preload_startup_path.as_deref(),
         )
+    } else if autoloaded("web_environment") {
+        web_prelude::inject_if_web_with_autoload_usage(
+            ast, web, php_version, &ini_overrides, &mut prelude_inventory,
+            preload_startup_path.as_deref(), true,
+        )
     } else {
         web_prelude::inject_if_web(
-            ast,
-            web,
-            php_version,
-            &ini_overrides,
-            &mut prelude_inventory,
+            ast, web, php_version, &ini_overrides, &mut prelude_inventory,
             preload_startup_path.as_deref(),
         )
     };
@@ -854,7 +863,7 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
     let check_options = types::CheckOptions { strict_locals };
     // Type checking runs to a generic-instantiation fixpoint, so every reachable template has
     // become an ordinary monomorphic declaration before anything downstream sees the program.
-    let (ast, mut check_result) = match crate::generics::monomorphize(ast, |program, bounds| {
+    let (mut ast, mut check_result) = match crate::generics::monomorphize(ast, |program, bounds| {
         types::check_with_target_and_options(program, target, check_options, bounds)
     }) {
         Ok(pair) => pair,
@@ -890,8 +899,22 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
 
     crate::progress::phase("exports-scan");
     let phase_started = Instant::now();
-    let collect_exports = if emit == Emit::Phpext { exports::collect_for_php } else { exports::collect };
-    let exported_functions = match collect_exports(&ast, &check_result.functions) {
+    let exported_classes = if emit == Emit::Phpext {
+        crate::phpext::constants::materialize_native_constants(
+            &mut ast, &mut check_result.classes, &mut check_result.interfaces, target,
+        );
+        match crate::phpext::classes::collect(&ast, &check_result.classes, target) {
+            Ok(classes) => classes,
+            Err(error) => {
+                crate::progress::clear();
+                errors::report(&error.with_file(filename.to_string()));
+                process::exit(1);
+            }
+        }
+    } else { Vec::new() };
+    let mut exported_functions = match if emit == Emit::Phpext {
+        exports::collect_for_php(&ast, &check_result.functions)
+    } else { exports::collect(&ast, &check_result.functions) } {
         Ok(exports) => exports,
         Err(e) => {
             crate::progress::clear();
@@ -899,10 +922,37 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
             process::exit(1);
         }
     };
+    if emit == Emit::Phpext {
+        let names = exported_classes.iter().map(|class| class.name.clone()).collect();
+        for export in exported_functions.values() {
+            if let Err(error) = crate::phpext::classes::validate_signature_classes(
+                &export.name, &export.source_sig, &names, export.span) {
+                crate::progress::clear();
+                errors::report(&error.with_file(filename.to_string()));
+                process::exit(1);
+            }
+        }
+        for method in exported_classes.iter().flat_map(|class| &class.methods) {
+            exported_functions.insert(method.export.name.clone(), method.export.clone());
+        }
+        for helper in exported_classes.iter().flat_map(|class| &class.helpers) {
+            exported_functions.insert(helper.export.name.clone(), helper.export.clone());
+        }
+    }
     timings.record_since("exports-scan", phase_started);
-    if emit == Emit::Phpext && exported_functions.is_empty() {
+    let exported_constants = if emit == Emit::Phpext {
+        match crate::phpext::constants::collect(&ast, &export_constants, target) {
+            Ok(constants) => constants,
+            Err(error) => {
+                crate::progress::clear();
+                errors::report(&error.with_file(filename.to_string()));
+                process::exit(1);
+            }
+        }
+    } else { Vec::new() };
+    if emit == Emit::Phpext && exported_functions.is_empty() && exported_constants.is_empty() && exported_classes.is_empty() {
         crate::progress::clear();
-        eprintln!("--emit phpext requires at least one #[Export] function");
+        eprintln!("--emit phpext requires at least one #[Export] function or class, or an --export-constant selection");
         process::exit(1);
     }
     if matches!(emit, Emit::Executable)
@@ -917,7 +967,7 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
         );
     }
 
-    if check_only && exported_functions.is_empty() {
+    if check_only && exported_functions.is_empty() && exported_classes.is_empty() {
         crate::progress::clear();
         timings.report();
         crate::progress::finish_ok(&format!("Checked '{}'", filename), timings.elapsed());
@@ -966,6 +1016,7 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
     let phase_started = Instant::now();
     let mut exported_function_names: HashSet<String> =
         exported_functions.keys().cloned().collect();
+    exported_function_names.extend(exported_classes.iter().map(|class| format!("{}::", class.name)));
     // The hoisted `opcache.preload` body is a reachability ROOT. Nothing in PHP calls it —
     // the `--web` entry stub does, in assembly, before the request loop — so the declaration
     // pruner sees an unreferenced function and removes it, taking the preload's side effects
@@ -1007,6 +1058,15 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
         eprintln!("{PHPEXT_CORE_RUNTIME_ONLY}");
         process::exit(1);
     }
+    if emit == Emit::Phpext && !exported_classes.is_empty() {
+        if let Err(error) = crate::phpext::constants::validate_native_widening(
+            &check_result.classes, &check_result.interfaces,
+        ) {
+            crate::progress::clear();
+            errors::report(&error.with_file(filename.to_string()));
+            process::exit(1);
+        }
+    }
     codegen::prepare_declared_name_order(
         &ast,
         &check_result.classes,
@@ -1023,6 +1083,7 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
             web,
             ir_opt,
             &exported_functions,
+            &exported_classes,
             &opcache_manifest,
             &mut timings,
         );
@@ -1052,6 +1113,7 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
         }
     };
     ir_module.web_application = web_application;
+    crate::phpext::class_helpers::lower(&mut ir_module, &exported_classes);
     ir_module.included_files = opcache_manifest
         .iter()
         .map(|entry| entry.path.clone())
@@ -1112,6 +1174,8 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
         instrument,
         heap_debug,
         exported_functions: &exported_functions,
+        exported_constants: &exported_constants,
+        exported_classes: &exported_classes,
         regalloc_linear,
         emit_debug_info,
         keep_symbols,

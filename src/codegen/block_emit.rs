@@ -1037,7 +1037,7 @@ fn emit_main_function(
         emitter.entry_symbol()
     };
     emit_fn_marker(emitter, &function.name, entry_symbol, false);
-    let layout = frame::layout_for_function(
+    let mut layout = frame::layout_for_function(
         function,
         emitter.target,
         regalloc_linear,
@@ -1045,6 +1045,9 @@ fn emit_main_function(
         frame::module_uses_backtrace(module),
         web,
     );
+    if web {
+        frame::preserve_host_callee_saved(&mut layout, emitter.target);
+    }
     let mut ctx = FunctionContext::new(
         module, function, emitter, data, shared, layout, true, gc_stats, heap_debug, None,
     );

@@ -20,6 +20,8 @@ use std::collections::{HashMap, HashSet};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod comparison_tests;
 mod placement;
 use crate::ir_passes::numeric_domain as domain;
 
@@ -191,6 +193,7 @@ impl Proof<'_> {
                     Op::Cast | Op::ReturnBoundaryMixedToInt => scalar_observation(user),
                     // Reads the cell's tag and payload in place and keeps no address.
                     Op::ScalarArgumentGuard => user.operands.len() == 1,
+                    _ if domain::comparison(user) && self.numeric_inputs(&user.operands) => true,
                     _ if tagged_producer(user) && self.numeric_inputs(&user.operands) => true,
                     Op::StoreLocal => match user.immediate {
                         Some(Immediate::LocalSlot(slot)) => {

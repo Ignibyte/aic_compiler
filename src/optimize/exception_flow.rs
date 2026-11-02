@@ -36,6 +36,21 @@ use types::{
 };
 pub(super) use types::{CatchReachability, ThrownTypes};
 
+/// Returns whether every argument is a freshly constructed object.
+///
+/// A call whose object-typed arguments are all `new Class()` values cannot fail the
+/// `Class|false`/`Class|null` binding guard: the expression already has the exact object
+/// representation. Variables and call results keep the conservative guard throw.
+fn all_arguments_are_fresh_objects(args: &[Expr]) -> bool {
+    !args.is_empty()
+        && args.iter().all(|arg| {
+            matches!(
+                arg.kind,
+                ExprKind::NewObject { .. } | ExprKind::NewScopedObject { .. }
+            )
+        })
+}
+
 /// Maximum callable-summary rounds before analysis falls back to fully unknown throws.
 const MAX_EXCEPTION_SUMMARY_ITERATIONS: usize = 128;
 
@@ -154,11 +169,10 @@ fn declared_object_reference_can_throw(signature: &FunctionSig) -> bool {
     if signature.params.iter().any(|(_, ty)| ty == &PhpType::False) {
         return true;
     }
-    signature.params.iter().enumerate().any(|(index, (_, ty))| {
-        signature.ref_params.get(index).copied().unwrap_or(false)
-            && signature.declared_params.get(index).copied().unwrap_or(false)
-            && matches!(ty, PhpType::Object(_))
-    })
+    // A by-value object parameter also runs the runtime union guard for a
+    // `Class|false` / `Class|null` argument before entering the body. Treat every
+    // object parameter conservatively so try/catch DCE keeps its handler reachable.
+    signature.params.iter().any(|(_, ty)| matches!(ty.codegen_repr(), PhpType::Object(_)))
 }
 
 /// Installs exception summaries for one optimizer pass and restores the previous analysis.
@@ -931,7 +945,8 @@ impl ExceptionFlowAnalysis {
                 if name.as_str().eq_ignore_ascii_case("unset") {
                     return thrown.combined(self.overwrite_cleanup_throws());
                 }
-                if self.function_object_ref_checks.contains(name.as_str())
+                if (self.function_object_ref_checks.contains(name.as_str())
+                    && !all_arguments_are_fresh_objects(args))
                     || call_may_reject_a_mixed_argument(
                         self.function_boundary_params.get(name.as_str()),
                         args,
@@ -997,11 +1012,12 @@ impl ExceptionFlowAnalysis {
                     ) {
                         thrown = thrown.combined(method_defaults::selected_default_throws(&signature, args, expr.span));
                     }
-                    if self.resolve_method_value(
+                    if (self.resolve_method_value(
                         &class_name,
                         method,
                         &self.static_method_object_ref_checks,
                     ) == Some(true)
+                        && !all_arguments_are_fresh_objects(args))
                         || call_may_reject_a_mixed_argument(
                             self.resolve_method_value(
                                 &class_name,
@@ -1052,11 +1068,12 @@ impl ExceptionFlowAnalysis {
                     ) {
                         thrown = thrown.combined(method_defaults::selected_default_throws(&signature, args, expr.span));
                     }
-                    if self.resolve_method_value(
+                    if (self.resolve_method_value(
                         &class_name,
                         method,
                         &self.instance_method_object_ref_checks,
                     ) == Some(true)
+                        && !all_arguments_are_fresh_objects(args))
                         || call_may_reject_a_mixed_argument(
                             self.resolve_method_value(
                                 &class_name,

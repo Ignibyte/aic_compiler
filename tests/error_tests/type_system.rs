@@ -73,11 +73,33 @@ fn test_nested_spread_literal_merges_type_in_linear_time() {
 #[test]
 fn test_error_by_ref_argument_rejects_direct_property_storage() {
     for source in [
-        "<?php function setv(mixed &$value): void {} class Box { public mixed $value = 1; } $box = new Box(); setv($box->value);",
-        "<?php function setv(mixed &$value): void {} class Box { public static mixed $value = 1; } setv(Box::$value);",
+        "<?php function setv(mixed &$value): void {} class Box { public iterable $value = []; } $box = new Box(); setv($box->value);",
+        "<?php function setv(mixed &$value): void {} class Box { public static iterable $value = []; } setv(Box::$value);",
     ] {
         expect_error(source, "must be passed a variable");
     }
+}
+
+/// Method by-reference parameters reject property storage the rewrite cannot narrow back.
+///
+/// Union and callable properties need a runtime type dispatch the current write-back does not
+/// provide; they keep their pre-existing rejection instead of silently passing a copy.
+#[test]
+fn test_error_method_by_ref_argument_rejects_unsupported_property_storage() {
+    for source in [
+        "<?php class Sink { public function setv(mixed &$value): void {} } class Box { public iterable $value = []; } $sink = new Sink(); $box = new Box(); $sink->setv($box->value);",
+    ] {
+        expect_error(source, "must be passed a variable");
+    }
+}
+
+/// A by-reference variadic cannot bind an array property through the scalar place rewrite.
+#[test]
+fn test_error_variadic_by_ref_argument_rejects_array_property_storage() {
+    expect_error(
+        "<?php function collect(&...$refs): void {} class Box { public array $items = [1]; } $box = new Box(); collect($box->items);",
+        "cannot bind an array property by reference",
+    );
 }
 
 /// Mixed property storage cannot provide the declared array slot needed by nested ref writeback.
@@ -1359,6 +1381,45 @@ fn test_null_coalesce_this_keeps_the_receiver_type() {
     )).expect("this coalesce must type-check");
     assert_eq!(result.classes["SelfRepo"].methods["pick"].return_type,
         PhpType::Object("SelfRepo".to_string()));
+}
+
+/// An uninitialized non-null property can still select the fallback through `??`.
+#[test]
+fn test_null_coalesce_uninitialized_property_keeps_the_fallback_type() {
+    let result = check_source_full(&format!(
+        "<?php {NULL_COALESCE_CLASSES} class PropertyRepo {{ \
+         public Implementation $value; \
+         public function pick() {{ return $this->value ?? new Other(); }} }}"
+    )).expect("uninitialized property coalesce must type-check");
+    assert_eq!(
+        result.classes["PropertyRepo"].methods["pick"].return_type,
+        PhpType::Union(vec![
+            PhpType::Object("Implementation".to_string()),
+            PhpType::Object("Other".to_string()),
+        ]),
+    );
+}
+
+/// Calls on `$this` discard a fallback only when the declared return excludes null.
+#[test]
+fn test_null_coalesce_this_method_uses_the_declared_return_nullability() {
+    let result = check_source_full(&format!(
+        "<?php {NULL_COALESCE_CLASSES} class ThisRepo extends Repo {{ \
+         public function maybeFind(): ?Implementation {{ return null; }} \
+         public function pick() {{ return $this->find() ?? new Other(); }} \
+         public function pickMaybe() {{ return $this->maybeFind() ?? new Other(); }} }}"
+    )).expect("this method coalesces must type-check");
+    assert_eq!(
+        result.classes["ThisRepo"].methods["pick"].return_type,
+        PhpType::Union(vec![PhpType::Object("Implementation".to_string()), PhpType::False]),
+    );
+    assert_eq!(
+        result.classes["ThisRepo"].methods["pickmaybe"].return_type,
+        PhpType::Union(vec![
+            PhpType::Object("Implementation".to_string()),
+            PhpType::Object("Other".to_string()),
+        ]),
+    );
 }
 
 /// All lexical static-call spellings trust the same declared non-null return contract.

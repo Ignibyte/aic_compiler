@@ -135,6 +135,7 @@ mod spread_promotion;
 mod stack_args;
 #[path = "runtime_gc/cow_and_cycles.rs"]
 mod cow_and_cycles;
+mod missing_key_unset;
 #[path = "runtime_gc/core_builtins.rs"]
 mod core_builtins;
 #[path = "runtime_gc/dynamic_property_cycles.rs"]
@@ -255,3 +256,7 @@ mod coroutine_debuginfo;
 mod coroutine_slot_set;
 #[path = "runtime_gc/counter_regions.rs"]
 mod counter_regions;
+#[path = "runtime_gc/static_object_exports.rs"]
+mod static_object_exports;
+#[path = "runtime_gc/gmp_exception_operands.rs"]
+mod gmp_exception_operands;
