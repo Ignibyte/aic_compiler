@@ -1,6 +1,6 @@
 # Fixes not upstream yet
 
-This fork carries 236 fix and feature commits that upstream elephc (`309b0253a0`) does not have.
+This fork carries 236 fix and feature commits that upstream elephc (`9419f7ac8c`) does not have.
 19 of them are in an open pull request on [illegalstudio/elephc](https://github.com/illegalstudio/elephc/pulls); the rest are not sent.
 The list should shrink: a row leaves when upstream merges the fix, or fixes the same bug its own way,
 and the fork drops its copy at the next sync.
