@@ -133,6 +133,8 @@ pub mod tokenizer_prelude;
 pub mod var_export_prelude;
 /// Conditionally-injected key-set prelude (`array_intersect_key`/`array_diff_key` on any array).
 pub mod key_set_prelude;
+/// Rewrites `preg_match()` on a literal pattern with named groups to its prelude helper.
+pub mod preg_named_groups;
 /// Conditionally-injected PHP version-surface prelude (`zend_version`, `php_sapi_name`,
 /// `ini_restore`).
 pub mod version_prelude;
