@@ -13,8 +13,9 @@ use std::collections::HashMap;
 use crate::ir_lower::context::StaticCallableBinding;
 use crate::types::TypeEnv;
 
-/// One reachable arm of an `if` chain together with its deferred merge edge.
-struct IfArmExit {
+/// One reachable arm of an `if` chain, or one fall-through exit of a `try` body or `catch`
+/// clause, together with its deferred merge edge.
+pub(super) struct IfArmExit {
     /// Empty block filled after every sibling arm has been lowered.
     tail: BlockId,
     /// Flow-sensitive local types at the end of this arm.
@@ -146,7 +147,7 @@ fn lower_if_chain(
 }
 
 /// Defers one reachable arm's merge edge so representation conversions can be inserted later.
-fn record_if_arm_exit(ctx: &mut LoweringContext<'_, '_>, arms: &mut Vec<IfArmExit>) {
+pub(super) fn record_if_arm_exit(ctx: &mut LoweringContext<'_, '_>, arms: &mut Vec<IfArmExit>) {
     let tail = ctx.builder.create_named_block("if.arm", Vec::new());
     ctx.builder.terminate(Terminator::Br {
         target: tail,
@@ -161,7 +162,10 @@ fn record_if_arm_exit(ctx: &mut LoweringContext<'_, '_>, arms: &mut Vec<IfArmExi
 }
 
 /// Reconciles flow-sensitive types and indexed-array layouts on all incoming merge edges.
-fn finish_if_type_join(
+///
+/// Shared by `if` chains and by `try`/`catch` (`exceptions::lower_try_catch`), whose post-try
+/// block joins the try body's fall-through with every catch's.
+pub(super) fn finish_if_type_join(
     ctx: &mut LoweringContext<'_, '_>,
     arms: Vec<IfArmExit>,
     merge: BlockId,

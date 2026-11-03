@@ -58,7 +58,7 @@ pub(super) fn lower_try_catch(
         .create_named_block("try.catch_dispatch", Vec::new());
     let after_block = ctx.builder.create_named_block("try.after", Vec::new());
     let handler_token = handler_block.as_raw() as i64;
-    let mut after_reachable = false;
+    let mut exits = Vec::new();
 
     ctx.emit_void(
         Op::TryPushHandler,
@@ -83,14 +83,31 @@ pub(super) fn lower_try_catch(
     pop_finally_frame_if_active(ctx, depth);
     if !ctx.builder.insertion_block_is_terminated() {
         emit_try_pop_handler(ctx, handler_token, span);
-        branch_to(ctx, after_block);
-        after_reachable = true;
+        record_if_arm_exit(ctx, &mut exits);
     }
 
     ctx.builder.position_at_end(handler_block);
     ctx.clear_static_callable_locals();
     emit_try_pop_handler(ctx, handler_token, span);
-    after_reachable |= lower_catch_dispatch(ctx, catches, after_block, span);
+    lower_catch_dispatch(ctx, catches, &mut exits, span);
+    finish_try_type_join(ctx, exits, after_block, span);
+}
+
+/// Joins the local types of every fall-through exit at the post-try block and positions there.
+///
+/// The try body and each catch clause reach `try.after` on different paths, and each leaves its
+/// own facts about the locals it wrote. Lowering the catches after the body used to hand the post-try
+/// code whatever the LAST catch left: `try { $a = f(); } catch (E) { $a = []; }` with a `mixed` `f()`
+/// typed the reads below as `array`, so the try path's boxed value was read as an indexed array.
+/// The same join `if` chains use reconciles them (`conditionals::finish_if_type_join`).
+fn finish_try_type_join(
+    ctx: &mut LoweringContext<'_, '_>,
+    exits: Vec<IfArmExit>,
+    after_block: BlockId,
+    span: Span,
+) {
+    let after_reachable = !exits.is_empty();
+    finish_if_type_join(ctx, exits, after_block, span);
     ctx.builder.position_at_end(after_block);
     if !after_reachable {
         ctx.builder.terminate(Terminator::Unreachable);
@@ -136,7 +153,7 @@ pub(super) fn lower_try_catch_finally(
         .create_named_block("try.catch_dispatch", Vec::new());
     let after_block = ctx.builder.create_named_block("try.after", Vec::new());
     let handler_token = handler_block.as_raw() as i64;
-    let mut after_reachable = false;
+    let mut exits = Vec::new();
 
     ctx.emit_void(
         Op::TryPushHandler,
@@ -155,21 +172,15 @@ pub(super) fn lower_try_catch_finally(
         emit_try_pop_handler(ctx, handler_token, span);
         lower_block(ctx, finally_body);
         if !ctx.builder.insertion_block_is_terminated() {
-            branch_to(ctx, after_block);
-            after_reachable = true;
+            record_if_arm_exit(ctx, &mut exits);
         }
     }
 
     ctx.builder.position_at_end(handler_block);
     ctx.clear_static_callable_locals();
     emit_try_pop_handler(ctx, handler_token, span);
-    after_reachable |=
-        lower_catch_dispatch_with_finally(ctx, catches, after_block, finally_body, span);
-    ctx.builder.position_at_end(after_block);
-    if !after_reachable {
-        ctx.builder.terminate(Terminator::Unreachable);
-    }
-    ctx.clear_static_callable_locals();
+    lower_catch_dispatch_with_finally(ctx, catches, &mut exits, finally_body, span);
+    finish_try_type_join(ctx, exits, after_block, span);
 }
 
 /// Emits the runtime cleanup for a pushed try/catch handler.
@@ -183,14 +194,13 @@ pub(super) fn emit_try_pop_handler(ctx: &mut LoweringContext<'_, '_>, handler_to
     );
 }
 
-/// Lowers ordered catch matching and reports whether any catch reaches the post-try join.
+/// Lowers ordered catch matching and records each catch that falls through to the post-try join.
 pub(super) fn lower_catch_dispatch(
     ctx: &mut LoweringContext<'_, '_>,
     catches: &[CatchClause],
-    after_block: BlockId,
+    exits: &mut Vec<IfArmExit>,
     span: Span,
-) -> bool {
-    let mut after_reachable = false;
+) {
     for catch in catches {
         let catch_body = ctx.builder.create_named_block("try.catch_body", Vec::new());
         let next_catch = ctx.builder.create_named_block("try.catch_next", Vec::new());
@@ -199,8 +209,7 @@ pub(super) fn lower_catch_dispatch(
         lower_catch_bind(ctx, catch, span);
         lower_block(ctx, &catch.body);
         if !ctx.builder.insertion_block_is_terminated() {
-            branch_to(ctx, after_block);
-            after_reachable = true;
+            record_if_arm_exit(ctx, exits);
         }
         ctx.clear_static_callable_locals();
         ctx.builder.position_at_end(next_catch);
@@ -211,18 +220,17 @@ pub(super) fn lower_catch_dispatch(
     // the throw into this handler deliberately did not (issue #690).
     let current = lower_current_exception(ctx, span);
     crate::ir_lower::stmt::control_exit::terminate_throw(ctx, current.value);
-    after_reachable
 }
 
-/// Lowers catch dispatch with finalizers and reports whether any catch reaches the post-try join.
+/// Lowers catch dispatch with finalizers and records each catch that falls through to the
+/// post-try join.
 pub(super) fn lower_catch_dispatch_with_finally(
     ctx: &mut LoweringContext<'_, '_>,
     catches: &[CatchClause],
-    after_block: BlockId,
+    exits: &mut Vec<IfArmExit>,
     finally_body: &[Stmt],
     span: Span,
-) -> bool {
-    let mut after_reachable = false;
+) {
     for catch in catches {
         let catch_body = ctx.builder.create_named_block("try.catch_body", Vec::new());
         let next_catch = ctx.builder.create_named_block("try.catch_next", Vec::new());
@@ -254,8 +262,7 @@ pub(super) fn lower_catch_dispatch_with_finally(
             emit_try_pop_handler(ctx, body_token, span);
             lower_block(ctx, finally_body);
             if !ctx.builder.insertion_block_is_terminated() {
-                branch_to(ctx, after_block);
-                after_reachable = true;
+                record_if_arm_exit(ctx, exits);
             }
         }
         ctx.clear_static_callable_locals();
@@ -268,7 +275,6 @@ pub(super) fn lower_catch_dispatch_with_finally(
 
     // No catch matched: the finalizer runs with the exception pending, then rethrows it.
     lower_finally_with_pending_exception(ctx, finally_body, span);
-    after_reachable
 }
 
 /// Runs a `finally` body while an exception is pending, then rethrows that exception.
