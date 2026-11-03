@@ -674,6 +674,11 @@ pub(crate) struct Checker {
     /// output is deterministic. A decision whose span identifies no node keeps pushing its warning
     /// directly into `warnings`: it files no decision either, so there is nothing to retract it.
     pub binding_decision_warnings: HashMap<(Span, String), crate::errors::CompileWarning>,
+    /// Every `(span, local name)` whose statement-form store `merge_local_assignment_type`
+    /// accepted by widening an array binding it could not re-bind (see
+    /// `widened_branch_array_type`). Kept only so a later walk of the same site can retract the
+    /// warning that decision filed in `binding_decision_warnings` before it decides again.
+    pub branch_array_widening_sites: HashSet<(Span, String)>,
     /// Every `(span, name)` key `run_mixed_storage_scan` ever REMOVED from
     /// `mixed_storage_store_sites`, kept for the checker's whole lifetime.
     ///

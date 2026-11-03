@@ -967,6 +967,16 @@ fn merge_local_assignment_type(
             .binding_decision_warnings
             .remove(&(span, name.to_string()));
     }
+    // The branch array widening below is a decision with a warning as well, and is re-decided
+    // on every walk the same way.
+    if checker
+        .branch_array_widening_sites
+        .remove(&(span, name.to_string()))
+    {
+        checker
+            .binding_decision_warnings
+            .remove(&(span, name.to_string()));
+    }
     // The syntactic pre-scan's mark is AUTHORITATIVE, on every assignment path and not just at the
     // first store: the name's frame slot is boxed `Mixed` for the whole body (see
     // `checker::mixed_storage_scan`), so `Mixed` is the only type the environment may hold for it.
@@ -1127,6 +1137,34 @@ fn merge_local_assignment_type(
                 env.insert(name.to_string(), ty.clone());
                 return Ok(());
             }
+            // An array local that cannot be re-bound here (the store sits in a branch or a loop,
+            // or the binding was made in one) is WIDENED instead: in PHP both values are plain
+            // arrays, and one array binding with boxed element storage holds either. EIR lowering
+            // already joins differing array layouts at a branch merge (`join_arm_types`), and the
+            // final environment's widened type is the storage contract each store is coerced to
+            // (`contextualize_local_assignment`). The retype above stays first, so a straight-line
+            // reassignment keeps its fresh, precisely typed binding.
+            if !checker.strict_locals && stmt_form && local_binding_is_widenable(checker, name) {
+                if let Some(widened) = widened_branch_array_type(existing, ty) {
+                    let message = format!(
+                        "${} is assigned incompatible array types ({} and {}); it is compiled as {} storage (compile with --strict-locals to make this an error)",
+                        name, existing, ty, widened
+                    );
+                    if span.identifies_a_node() {
+                        checker
+                            .branch_array_widening_sites
+                            .insert((span, name.to_string()));
+                        checker.binding_decision_warnings.insert(
+                            (span, name.to_string()),
+                            CompileWarning::new(span, &message),
+                        );
+                    } else {
+                        checker.warnings.push(CompileWarning::new(span, &message));
+                    }
+                    env.insert(name.to_string(), widened);
+                    return Ok(());
+                }
+            }
             return Err(CompileError::new(
                 span,
                 &format!(
@@ -1177,6 +1215,72 @@ fn merge_local_assignment_type(
         env.insert(name.to_string(), ty.clone());
     }
     Ok(())
+}
+
+/// Returns the array type one binding needs to hold both `existing` and `incoming`, when both
+/// are PHP arrays whose element storage differs, or `None` for any other pair.
+///
+/// Either side being the unrestricted `array` contract (a bare `array` return or parameter type)
+/// widens to that contract. Two indexed arrays widen to `array<mixed>`; an indexed and an
+/// associative array, or two associative arrays, widen to an associative array whose key is the
+/// merged key type, with `mixed` values unless both sides hold the same value type. Nullable or
+/// other unions are not arrays here and keep the hard error.
+fn widened_branch_array_type(existing: &PhpType, incoming: &PhpType) -> Option<PhpType> {
+    let element = |left: &PhpType, right: &PhpType| {
+        if left == right {
+            left.clone()
+        } else {
+            PhpType::Mixed
+        }
+    };
+    if existing.is_php_array() || incoming.is_php_array() {
+        let other = if existing.is_php_array() { incoming } else { existing };
+        return (other.is_php_array()
+            || matches!(other, PhpType::Array(_) | PhpType::AssocArray { .. }))
+        .then(PhpType::php_array);
+    }
+    match (existing, incoming) {
+        (PhpType::Array(left), PhpType::Array(right)) => {
+            Some(PhpType::Array(Box::new(element(left, right))))
+        }
+        (PhpType::Array(element_ty), PhpType::AssocArray { key, value })
+        | (PhpType::AssocArray { key, value }, PhpType::Array(element_ty)) => {
+            Some(PhpType::AssocArray {
+                key: Box::new(crate::types::merge_array_key_types(
+                    PhpType::Int,
+                    (**key).clone(),
+                )),
+                value: Box::new(element(element_ty, value)),
+            })
+        }
+        (
+            PhpType::AssocArray { key: left_key, value: left_value },
+            PhpType::AssocArray { key: right_key, value: right_value },
+        ) => Some(PhpType::AssocArray {
+            key: Box::new(crate::types::merge_array_key_types(
+                (**left_key).clone(),
+                (**right_key).clone(),
+            )),
+            value: Box::new(element(left_value, right_value)),
+        }),
+        _ => None,
+    }
+}
+
+/// Returns whether `name`'s binding may be widened in place by `widened_branch_array_type`.
+///
+/// The widening keeps the binding's one frame slot, so unlike a re-bind it needs no conditional
+/// depth. It still needs the slot to be this body's own and reachable by no other name: a
+/// reference alias, a by-reference parameter, a `global` or `static` name, a declared local, a
+/// program-global top-level name, and every name in a body that calls `eval()` keep the error.
+fn local_binding_is_widenable(checker: &Checker, name: &str) -> bool {
+    !checker.body_contains_eval
+        && !checker.active_ref_params.contains(name)
+        && !checker.ref_aliased_locals.contains(name)
+        && !checker.active_globals.contains(name)
+        && !checker.static_local_names.contains(name)
+        && !checker.typed_local_names.contains_key(name)
+        && !checker.top_level_binding_is_program_global(name)
 }
 
 /// Returns whether a type-compatible reassignment should still start a FRESH binding, so two

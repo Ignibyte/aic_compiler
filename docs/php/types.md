@@ -303,7 +303,7 @@ $f(5);         // int(5)
 
 ### Local retyping
 
-A local is monomorphic by default, but three shapes let it change type anyway. `unset($a)` ends the binding, and the next assignment re-binds `$a` at any type with no diagnostic. A plain straight-line reassignment (`$a = 0; $a = "ciao";`) re-binds `$a` to a fresh slot of the new type and warns. A branch-divergent assignment (`if (…) { $a = 0; } else { $a = "ciao"; }`) compiles the local as boxed `mixed` storage for the whole body and warns — a performance signal as much as a correctness one, since every read of it then goes through the box.
+A local is monomorphic by default, but three shapes let it change type anyway. `unset($a)` ends the binding, and the next assignment re-binds `$a` at any type with no diagnostic. A plain straight-line reassignment (`$a = 0; $a = "ciao";`) re-binds `$a` to a fresh slot of the new type and warns. A branch-divergent assignment (`if (…) { $a = 0; } else { $a = "ciao"; }`) compiles the local as boxed `mixed` storage for the whole body and warns — a performance signal as much as a correctness one, since every read of it then goes through the box. An array local reassigned in a branch from an array of another element type (a call result, a spread, a method returning `array`) keeps its slot, widened to boxed elements, and warns as well.
 
 A `for` initializer is straight-line code too: it runs exactly once whenever the loop statement does, so `for ($i = 0; …) { … } $i = "done";` re-binds `$i` with the same warning as `$i = 0; for (; …) { … } $i = "done";`.
 
@@ -330,7 +330,7 @@ constrains the *incoming argument*, not the local afterwards, so
 `function format(float $v): string { $v = (string) $v; return $v; }` compiles with the ordinary
 retype warning. The hint still governs the call boundary; only the local's later type is free.
 
-None of this touches a **declared** type: a typed local (`int $x = 1;`) and a class property stay strict in every mode. `--strict-locals` turns the two warning shapes back into hard errors; see [Strict locals mode](../compiling/cli-reference.md#strict-locals-mode) for the flag and for which names are eligible.
+None of this touches a **declared** type: a typed local (`int $x = 1;`) and a class property stay strict in every mode. `--strict-locals` turns the warning shapes back into hard errors; see [Strict locals mode](../compiling/cli-reference.md#strict-locals-mode) for the flag and for which names are eligible.
 
 ### Parameter type coercion
 

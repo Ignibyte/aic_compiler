@@ -172,6 +172,7 @@ impl Checker {
             mixed_storage_store_sites: HashMap::new(),
             buffer_read_observations: HashMap::new(),
             binding_decision_warnings: HashMap::new(),
+            branch_array_widening_sites: HashSet::new(),
             retired_mixed_storage_store_sites: HashSet::new(),
         }
     }

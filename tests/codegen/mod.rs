@@ -138,6 +138,7 @@ mod spl;
 mod generators;
 mod dead_strip;
 mod locals_retype;
+mod locals_branch_array_widening;
 mod stack_guard;
 mod zval;
 
