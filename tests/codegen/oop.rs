@@ -94,3 +94,5 @@ mod reflection_to_string_fallbacks;
 mod readonly_setter_review;
 #[path = "oop/readonly_store_box_review.rs"]
 mod readonly_store_box_review;
+#[path = "oop/widened_override_params.rs"]
+mod widened_override_params;

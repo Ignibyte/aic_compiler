@@ -809,8 +809,19 @@ pub(super) fn coerce_operands_to_params(
             )
         }))
         .collect::<Vec<_>>();
+    // An override binding a parameter in other storage checks it by the body that runs.
+    let dispatch = callee.is_none().then(|| argument_dispatch(ctx)).flatten();
+    let dispatched = (0..limit)
+        .map(|index| dispatch.as_ref().is_some_and(|dispatch| {
+            !sig.ref_params.get(index).copied().unwrap_or(false)
+                && dispatched_argument_guards::dispatched_argument_needs_check(
+                    dispatch, index, &ctx.builder.value_php_type(operands[index]),
+                )
+        }))
+        .collect::<Vec<_>>();
     let needs_coercion = (0..limit)
         .map(|index| checked[index].is_some()
+            || dispatched[index]
             || operand_needs_param_coercion(ctx, sig, &operands, index))
         .collect::<Vec<_>>();
     if needs_coercion.iter().any(|needs_coercion| *needs_coercion) {
@@ -834,6 +845,12 @@ pub(super) fn coerce_operands_to_params(
             continue;
         };
         let value = operands[index];
+        if let (Some(dispatch), true) = (dispatch.as_ref(), dispatched[index]) {
+            let bound =
+                dispatched_argument_guards::bind_dispatched_argument(ctx, dispatch, index, value);
+            operands[index] = root_evaluated_call_argument(ctx, bound, Span::dummy()).value;
+            continue;
+        }
         if let (Some(callee), Some(declared)) = (callee.as_ref(), checked[index].as_ref()) {
             if let Some(bound) = scalar_argument_guards::bind_scalar_argument(
                 ctx, callee, sig, index, declared, value,

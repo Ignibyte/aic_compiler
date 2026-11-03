@@ -157,7 +157,8 @@ fn lower_method_call_with_binding(
             (method, args)
         };
     let result_type = method_call_result_type(ctx, object.value, dispatch_method, op, expr);
-    let sig = method_signature(ctx, object.value, dispatch_method);
+    let sig = method_signature(ctx, object.value, dispatch_method)
+        .map(|sig| widen_diverging_override_params(ctx, object.value, dispatch_method, sig));
     promote_pdo_binding_ref_argument(ctx, object.value, dispatch_method, args);
     // A by-reference-returning method transfers a lease that must outlive this caller's
     // argument and receiver cleanup, so its staging is published before the arguments.

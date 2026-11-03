@@ -40,6 +40,8 @@ pub(crate) mod pcntl_constants;
 /// PHP type model and type environment for tracking variable types.
 mod model;
 pub(crate) mod object_operators;
+/// Overrides whose parameters bind in other storage than the signature a call binds by.
+mod override_storage;
 /// Return-to-argument storage alias summaries used by ownership lowering.
 mod return_alias;
 /// Type checker result types and the `check` entry point.
@@ -91,6 +93,7 @@ pub(crate) use return_alias::{
     collect_return_alias_summaries, summarize_callable_return_alias, ReturnAliasSummaries,
     ReturnArgAlias,
 };
+pub(crate) use override_storage::{diverging_overrides, DivergingOverride};
 pub(crate) use result::LoopStorageTypes;
 pub use checker::CheckOptions;
 pub(crate) use checker::normalize_union_members;

@@ -24,8 +24,29 @@ pub(super) fn begin_call_argument_evaluation(ctx: &mut LoweringContext<'_, '_>) 
             expression_depth: ctx.expression_depth,
             owners: Vec::new(),
             callee: None,
+            dispatch: None,
         },
     );
+}
+
+/// Records the runtime-class dispatch of the instance call whose argument evaluation just began.
+pub(super) fn name_argument_dispatch(
+    ctx: &mut LoweringContext<'_, '_>,
+    dispatch: crate::ir_lower::context::ArgumentDispatch,
+) {
+    if let Some(scope) = ctx.call_argument_evaluation_scopes.last_mut() {
+        scope.dispatch = Some(dispatch);
+    }
+}
+
+/// Returns the runtime-class dispatch of the call lowered at the current expression depth.
+pub(super) fn argument_dispatch(
+    ctx: &LoweringContext<'_, '_>,
+) -> Option<crate::ir_lower::context::ArgumentDispatch> {
+    ctx.call_argument_evaluation_scopes
+        .last()
+        .filter(|scope| scope.expression_depth == ctx.expression_depth)
+        .and_then(|scope| scope.dispatch.clone())
 }
 
 /// Names the user callee of the call whose argument evaluation just began.
