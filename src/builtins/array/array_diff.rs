@@ -9,9 +9,12 @@
 //!   param plus a variadic `arrays`). The legacy CHECK arm required exactly 2 arguments,
 //!   so `min_args: 2, max_args: 2` reproduce that enforcement in `check_arity` only;
 //!   `function_sig` and the parity gate keep the variadic shape from the golden.
-//! - `check` reproduces the legacy rule: the first argument must be an indexed or
-//!   associative array, and the result preserves that first-operand type. A check hook
-//!   is required because the return type depends on the inferred first-argument type.
+//! - PHP compares the values as `(string) $a === (string) $b` and keeps each survivor's key.
+//!   The native helpers compare raw slots (refusing strings and boxed values) and renumber
+//!   their result, so `check` retargets every call on two array operands, a declared `array`
+//!   included, to the key-set prelude's `__elephc_array_diff()`, which answers a declared
+//!   `array`. Without the prelude (or for a non-array operand) the legacy rule stands: the first
+//!   argument must be an indexed or associative array, and the result preserves its type.
 
 use crate::builtins::spec::BuiltinCheckCtx;
 use crate::errors::CompileError;
@@ -25,13 +28,21 @@ builtin! {
     ),
 }
 
-/// Validates the first argument is an array and returns its (preserved) type.
+/// Retargets a call on two arrays to the prelude, or validates the first argument is an array
+/// and returns its (preserved) type.
 ///
-/// Arity (exactly 2 args) is pre-validated by `check_arity`. The first argument is
-/// re-inferred here to drive the return type; the registry already inferred every
-/// argument once for side effects. The result preserves the first-operand array shape.
+/// Arity (exactly 2 args) is pre-validated by `check_arity`. The arguments are re-inferred
+/// here to drive the return type; the registry already inferred every argument once for side
+/// effects.
 fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     let ty1 = cx.checker.infer_type(&cx.args[0], cx.env)?;
+    let ty2 = cx.checker.infer_type(&cx.args[1], cx.env)?;
+    let array = crate::key_set_prelude::is_array_operand;
+    if array(&ty1) && array(&ty2) {
+        if let Some(ty) = crate::key_set_prelude::retarget(cx, crate::key_set_prelude::VALUE_DIFF) {
+            return Ok(ty);
+        }
+    }
     if !matches!(ty1, PhpType::Array(_) | PhpType::AssocArray { .. }) {
         return Err(CompileError::new(
             cx.span,

@@ -37,19 +37,11 @@ fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     // boxed `array_filter()` result, a list) retargets the call to the key-set prelude, which
     // takes any PHP array and answers a declared `array`.
     let hash = |ty: &PhpType| matches!(ty.codegen_repr(), PhpType::AssocArray { .. });
-    let array = |ty: &PhpType| {
-        ty.is_php_array() || matches!(ty.codegen_repr(), PhpType::Array(_) | PhpType::AssocArray { .. })
-    };
-    if !(hash(&ty1) && hash(&ty2))
-        && array(&ty1)
-        && array(&ty2)
-        && cx.checker.functions.contains_key(crate::key_set_prelude::DIFF)
-    {
-        let site = (cx.checker.current_loop_storage_scope.clone(), cx.span);
-        cx.checker
-            .generic_call_sites
-            .insert(site, crate::key_set_prelude::DIFF.to_string());
-        return Ok(PhpType::php_array());
+    let array = crate::key_set_prelude::is_array_operand;
+    if !(hash(&ty1) && hash(&ty2)) && array(&ty1) && array(&ty2) {
+        if let Some(ty) = crate::key_set_prelude::retarget(cx, crate::key_set_prelude::DIFF) {
+            return Ok(ty);
+        }
     }
     if !matches!(ty1, PhpType::Array(_) | PhpType::AssocArray { .. }) {
         return Err(CompileError::new(

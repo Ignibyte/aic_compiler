@@ -1,6 +1,8 @@
 //! Purpose:
-//! Decides whether a parsed program calls `array_intersect_key()` or `array_diff_key()`, so the
-//! key-set prelude is injected only for programs that can need it.
+//! Decides whether a parsed program calls one of the set builtins the key-set prelude stands in
+//! for (`array_intersect_key()`, `array_diff_key()`, `array_diff()`, `array_intersect()`,
+//! `array_unique()`, `array_diff_assoc()`, `array_intersect_assoc()`), so the prelude is injected
+//! only for programs that can need it.
 //!
 //! Called from:
 //! - `crate::key_set_prelude::inject_if_used`.
@@ -11,7 +13,7 @@
 //!   the unqualified last segment case-insensitively. Only function-call positions count; the
 //!   prelude declares no class.
 //! - Soundness over precision, as there: the `match`es are exhaustive, and a false positive only
-//!   injects two declarations, which reachability drops when no call is retargeted to them.
+//!   injects the declarations, which reachability drops when no call is retargeted to them.
 
 use crate::names::Name;
 use crate::parser::ast::{
@@ -20,8 +22,16 @@ use crate::parser::ast::{
     TypeExpr,
 };
 
-/// The builtins whose boxed or list operands call the key-set prelude.
-const HASH_CONTEXT_FUNCTIONS: &[&str] = &["array_intersect_key", "array_diff_key"];
+/// The builtins whose calls the key-set prelude can stand in for.
+const HASH_CONTEXT_FUNCTIONS: &[&str] = &[
+    "array_intersect_key",
+    "array_diff_key",
+    "array_diff",
+    "array_intersect",
+    "array_unique",
+    "array_diff_assoc",
+    "array_intersect_assoc",
+];
 
 /// Returns whether any top-level statement references the incremental-hashing
 /// surface, so the prelude must be injected ahead of user code.
@@ -553,11 +563,21 @@ mod tests {
         assert!(program_calls_key_set_builtin(&parse(r#"<?php echo count(array_diff_key([1], []));"#)));
     }
 
+    /// The value-set builtins count too.
+    #[test]
+    fn detects_value_set_calls() {
+        assert!(program_calls_key_set_builtin(&parse(
+            r#"<?php echo count(array_intersect([1], [1]));"#
+        )));
+        assert!(program_calls_key_set_builtin(&parse(r#"<?php $u = \Array_Unique(['a']);"#)));
+        assert!(program_calls_key_set_builtin(&parse(r#"<?php $d = array_diff_assoc([], []);"#)));
+    }
+
     /// Other array builtins and a mention inside a string do not.
     #[test]
     fn ignores_other_calls_and_strings() {
         assert!(!program_calls_key_set_builtin(&parse(
-            r#"<?php echo count(array_intersect([1], [1])), "array_diff_key";"#
+            r#"<?php echo count(array_merge([1], [1])), "array_diff_key";"#
         )));
     }
 }
