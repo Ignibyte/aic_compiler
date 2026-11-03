@@ -599,7 +599,7 @@ rejected by the type checker in places where the PHP interpreter would run it.
 | `--strict-locals` | — | off | Make an incompatible local retype (e.g. int then string) a compile error instead of a warning. |
 
 By default (permissive mode) an **untyped** local variable is allowed to
-change type during its lifetime in three shapes that would otherwise be a
+change type during its lifetime in four shapes that would otherwise be a
 compile error:
 
 - **`unset()` kill.** `unset($a)` KILLS the binding when BOTH the binding's
@@ -639,8 +639,20 @@ compile error:
   The warning is a performance signal as much as a correctness one: every read
   of a `Mixed`-storage local goes through boxed dispatch instead of a plain
   register/stack slot for the rest of the body.
+- **Branch array widening.** An array local reassigned, inside a branch or
+  loop, an array of another element type that the pre-scan cannot see — a call
+  result, a spread, a method returning `array` — keeps its one slot and widens
+  it: to `array` when either side is a bare `array`, to `array<mixed>` for two
+  lists, and to a hash with `mixed` values otherwise. `$links = [new Link("d")];
+  if ($m) { $links = [...$links, ...staff()]; }` compiles with a warning:
+  ```text
+  $links is assigned incompatible array types (array<Link> and array<mixed, mixed>); it is compiled as array<mixed, mixed> storage (compile with --strict-locals to make this an error)
+  ```
+  Besides the aliasing rules below, the name must not be a `global` or
+  `static` name, a program-global top-level name, or a local of a body that
+  calls `eval()`.
 
-All three shapes require the name to be **never reference-aliased** — no `=&`
+All four shapes require the name to be **never reference-aliased** — no `=&`
 target or source, no `use (&$x)` capture, no by-reference parameter (including
 a variadic `&...$xs`), and neither name a by-reference `foreach` touches:
 `foreach ($arr as &$v)` permanently aliases **both** `$arr`, the container the
@@ -730,7 +742,7 @@ Beyond those shared exclusions the shapes are gated differently:
   already absorbs every assignment, since the advice to compile with
   `--strict-locals` would be false there.
 
-`--strict-locals` restores the hard error for the two warning shapes above:
+`--strict-locals` restores the hard error for the three warning shapes above:
 
 ```text
 Type error: cannot reassign $a from int to string
