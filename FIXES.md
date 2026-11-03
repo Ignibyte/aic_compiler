@@ -1,6 +1,6 @@
 # Fixes not upstream yet
 
-This fork carries 236 fix and feature commits that upstream elephc (`5fe7b2e22e`) does not have.
+This fork carries 239 fix and feature commits that upstream elephc (`4f4597330b`) does not have.
 18 of them are in an open pull request on [illegalstudio/elephc](https://github.com/illegalstudio/elephc/pulls); the rest are not sent.
 The list should shrink: a row leaves when upstream merges the fix, or fixes the same bug its own way,
 and the fork drops its copy at the next sync.
@@ -245,3 +245,6 @@ Generated from `git log upstream/main..main` and our upstream pull requests. Do 
 | [`bcbc9866fe`](https://github.com/Ignibyte/aic_compiler/commit/bcbc9866fe) | fix | - | take any array operand in array_intersect_key() and array_diff_key() | not sent |
 | [`22b1a150d4`](https://github.com/Ignibyte/aic_compiler/commit/22b1a150d4) | fix | - | store a literal pattern's named groups in preg_match()'s matches | not sent |
 | [`79745bef69`](https://github.com/Ignibyte/aic_compiler/commit/79745bef69) | fix | - | join local types after try/catch | not sent |
+| [`d123c3386b`](https://github.com/Ignibyte/aic_compiler/commit/d123c3386b) | fix | - | widen an array local reassigned in a branch | not sent |
+| [`2da6f91568`](https://github.com/Ignibyte/aic_compiler/commit/2da6f91568) | fix | - | compare array_diff() and array_intersect() values by string and keep keys | not sent |
+| [`f48dd49a3f`](https://github.com/Ignibyte/aic_compiler/commit/f48dd49a3f) | fix | - | return false for malformed UTF-8 under /u and add preg_last_error() | not sent |
