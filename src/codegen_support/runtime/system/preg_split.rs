@@ -52,8 +52,8 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
     let pattern_cstr_off = regex_flags_off + 8;
     let array_ptr_off = pattern_cstr_off + 8;
     let subject_cstr_off = array_ptr_off + 8;
-    let current_cstr_off = subject_cstr_off + 8;
-    let current_elephc_off = current_cstr_off + 8;
+    let subject_cstr_len_off = subject_cstr_off + 8;
+    let current_elephc_off = subject_cstr_len_off + 8;
     let split_count_off = current_elephc_off + 8;
     let piece_ptr_off = split_count_off + 8;
     let piece_len_off = piece_ptr_off + 8;
@@ -122,8 +122,8 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
     emitter.instruction(&format!("str x0, [sp, #{}]", subject_cstr_off));       // save subject C string
 
     // -- initialize positions --
-    emitter.instruction(&format!("ldr x9, [sp, #{}]", subject_cstr_off));       // load the subject C-string start
-    emitter.instruction(&format!("str x9, [sp, #{}]", current_cstr_off));       // initialize the C-string cursor
+    emitter.bl_c("strlen");                                                     // keep the established C-string subject boundary
+    emitter.instruction(&format!("str x0, [sp, #{}]", subject_cstr_len_off));   // save the subject length as the end of every probe's range
     emitter.instruction(&format!("ldr x9, [sp, #{}]", subject_ptr_off));        // load the elephc subject start
     emitter.instruction(&format!("str x9, [sp, #{}]", current_elephc_off));     // initialize the elephc payload cursor
     emitter.instruction(&format!("str xzr, [sp, #{}]", split_count_off));       // initialize the processed separator count
@@ -138,26 +138,28 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
     emitter.instruction("cmp x10, x9");                                         // has the positive split limit already been reached?
     emitter.instruction("b.ge __rt_preg_split_last");                           // emit the unsplit remainder as the final element
     emitter.label("__rt_preg_split_limit_ok");
-    emitter.instruction(&format!("ldr x1, [sp, #{}]", current_cstr_off));       // load current C-string cursor
-    emitter.instruction("ldrb w9, [x1]");                                       // inspect current subject byte
-    emitter.instruction("cbz w9, __rt_preg_split_last");                        // end of string means only the trailing segment remains
-
+    // Every probe runs over the whole subject, so anchors, word boundaries and lookbehind
+    // see the real text; after a match PCRE2 picks the next offset and options, which
+    // retries an empty match without it and steps over a whole character under /u.
     emitter.instruction(&format!("ldr x0, [sp, #{}]", handle_off));             // pass compiled opaque handle
-    emitter.instruction(&format!("ldr x1, [sp, #{}]", current_cstr_off));       // pass current C-string cursor
+    emitter.instruction(&format!("ldr x1, [sp, #{}]", subject_cstr_off));       // pass the whole subject C string
     emitter.instruction(&format!("ldr x2, [sp, #{}]", nmatch_off));             // request one regmatch slot for every compiled capture group
     emitter.instruction(&format!("ldr x3, [sp, #{}]", regmatches_ptr_off));     // pass dynamic fixed offset-pair buffer
-    emitter.instruction("mov x4, #0");                                          // use default execution flags
+    emitter.instruction("str xzr, [x3]");                                       // publish the input range start
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", subject_cstr_len_off));   // load the subject length
+    emitter.instruction("str x9, [x3, #8]");                                    // publish the input range end
+    super::preg_match_all::emit_global_iteration_flags(emitter, split_count_off);
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize every requested offset pair
     emitter.instruction("cbnz x0, __rt_preg_split_miss");                       // no more matches means the trailing segment remains
 
     // -- add segment before match to array --
     emitter.instruction(&format!("ldr x14, [sp, #{}]", regmatches_ptr_off));    // load dynamic full-match pair for the pre-match extent
-    emitter.instruction("ldr x9, [x14]");                                       // load full-match signed-64-bit start
+    emitter.instruction("ldr x9, [x14]");                                       // load the absolute full-match start
     emitter.instruction(&format!("ldr x1, [sp, #{}]", current_elephc_off));     // load pre-match segment start
-    emitter.instruction("mov x2, x9");                                          // use rm_so as the pre-match segment length
-    emitter.instruction(&format!("ldr x3, [sp, #{}]", current_elephc_off));     // reload segment start for offset calculation
     emitter.instruction(&format!("ldr x10, [sp, #{}]", subject_ptr_off));       // load original subject start
-    emitter.instruction("sub x3, x3, x10");                                     // compute absolute byte offset of the segment
+    emitter.instruction("sub x3, x1, x10");                                     // compute absolute byte offset of the segment
+    emitter.instruction("subs x2, x9, x3");                                     // segment length = match start - segment offset
+    emitter.instruction("csel x2, x2, xzr, ge");                                // a \K match that starts before the segment leaves it empty
     emit_preg_split_push_piece_arm64(
         emitter,
         "segment",
@@ -176,7 +178,6 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
         nmatch_off,
         preg_flags_off,
         subject_ptr_off,
-        current_elephc_off,
         array_ptr_off,
         piece_ptr_off,
         piece_len_off,
@@ -191,17 +192,10 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
     emitter.instruction("add x9, x9, #1");                                      // account for the separator just processed
     emitter.instruction(&format!("str x9, [sp, #{}]", split_count_off));        // save updated separator count
     emitter.instruction(&format!("ldr x14, [sp, #{}]", regmatches_ptr_off));    // load dynamic full-match pair for cursor advancement
-    emitter.instruction("ldr x9, [x14, #8]");                                   // load full-match signed-64-bit end
-    emitter.instruction("cmp x9, #0");                                          // detect zero-length separators
-    emitter.instruction("b.gt __rt_preg_split_advance_ok");                     // trust rm_eo when the separator consumed bytes
-    emitter.instruction("mov x9, #1");                                          // force progress for zero-length matches
-    emitter.label("__rt_preg_split_advance_ok");
-    emitter.instruction(&format!("ldr x10, [sp, #{}]", current_cstr_off));      // reload current C-string cursor
-    emitter.instruction("add x10, x10, x9");                                    // advance C-string cursor past separator
-    emitter.instruction(&format!("str x10, [sp, #{}]", current_cstr_off));      // save advanced C-string cursor
-    emitter.instruction(&format!("ldr x10, [sp, #{}]", current_elephc_off));    // reload current elephc payload cursor
-    emitter.instruction("add x10, x10, x9");                                    // advance elephc cursor by the same byte distance
-    emitter.instruction(&format!("str x10, [sp, #{}]", current_elephc_off));    // save advanced elephc cursor
+    emitter.instruction("ldr x9, [x14, #8]");                                   // load the absolute full-match end
+    emitter.instruction(&format!("ldr x10, [sp, #{}]", subject_ptr_off));       // load original subject start
+    emitter.instruction("add x10, x10, x9");                                    // the next segment starts at the match end
+    emitter.instruction(&format!("str x10, [sp, #{}]", current_elephc_off));    // save the next segment start
     emitter.instruction("b __rt_preg_split_loop");                              // continue splitting the remaining subject
 
     // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
@@ -439,7 +433,6 @@ fn emit_preg_split_capture_loop_arm64(
     nmatch_off: usize,
     preg_flags_off: usize,
     subject_ptr_off: usize,
-    current_elephc_off: usize,
     array_ptr_off: usize,
     piece_ptr_off: usize,
     piece_len_off: usize,
@@ -466,12 +459,9 @@ fn emit_preg_split_capture_loop_arm64(
     emitter.instruction("b.lt __rt_preg_split_capture_next");                   // skip unmatched capture groups
     emitter.instruction("ldr x13, [x11, #8]");                                  // load signed-64-bit capture end
     emitter.instruction("sub x2, x13, x12");                                    // compute captured delimiter length
-    emitter.instruction(&format!("ldr x1, [sp, #{}]", current_elephc_off));     // load current elephc cursor
-    emitter.instruction("add x1, x1, x12");                                     // compute captured delimiter pointer
-    emitter.instruction(&format!("ldr x3, [sp, #{}]", current_elephc_off));     // reload current elephc cursor for offset calculation
-    emitter.instruction(&format!("ldr x10, [sp, #{}]", subject_ptr_off));       // load original subject start
-    emitter.instruction("sub x3, x3, x10");                                     // compute current cursor absolute offset
-    emitter.instruction("add x3, x3, x12");                                     // add capture-local rm_so to get capture offset
+    emitter.instruction(&format!("ldr x1, [sp, #{}]", subject_ptr_off));        // load original subject start
+    emitter.instruction("add x1, x1, x12");                                     // captured delimiter pointer = subject + absolute capture start
+    emitter.instruction("mov x3, x12");                                         // the absolute capture start is the capture offset
     emit_preg_split_push_piece_arm64(
         emitter,
         "capture",
@@ -497,8 +487,8 @@ fn emit_preg_split_capture_loop_arm64(
 /// rdx/rcx, limit in r8, flags in r9. The helper strips delimiters, translates
 /// PCRE pattern as a C string, compiles through the opaque shim, then iterates it to
 /// collect pre-match segments, optional delimiter captures, and optional
-/// offset-capture rows. Zero-length matches advance by one byte to avoid
-/// infinite loops. On failure returns a small empty array with the requested
+/// offset-capture rows. PCRE2 continues each probe after the previous match, so
+/// zero-length matches retry in place and then step over one character. On failure returns a small empty array with the requested
 /// result layout.
 fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     let handle_off = 0;
@@ -512,8 +502,8 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     let pattern_cstr_off = regex_flags_off + 8;
     let array_ptr_off = pattern_cstr_off + 8;
     let subject_cstr_off = array_ptr_off + 8;
-    let current_cstr_off = subject_cstr_off + 8;
-    let current_elephc_off = current_cstr_off + 8;
+    let subject_cstr_len_off = subject_cstr_off + 8;
+    let current_elephc_off = subject_cstr_len_off + 8;
     let split_count_off = current_elephc_off + 8;
     let piece_ptr_off = split_count_off + 8;
     let piece_len_off = piece_ptr_off + 8;
@@ -567,7 +557,9 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction(&format!("mov rdx, QWORD PTR [rsp + {}]", subject_len_off)); // reload elephc subject length before C-string conversion
     emitter.instruction("call __rt_cstr2");                                     // materialize a null-terminated subject copy
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rax", subject_cstr_off)); // save subject C string pointer
-    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rax", current_cstr_off)); // initialize C-string cursor
+    emitter.instruction("mov rdi, rax");                                        // pass the subject C string to strlen
+    emitter.bl_c("strlen");                                                     // keep the established C-string subject boundary
+    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rax", subject_cstr_len_off)); // save the subject length as the end of every probe's range
     emitter.instruction(&format!("mov rax, QWORD PTR [rsp + {}]", subject_ptr_off)); // reload original elephc subject pointer
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rax", current_elephc_off)); // initialize elephc payload cursor
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], 0", split_count_off)); // initialize processed separator count
@@ -581,26 +573,30 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("cmp r10, r9");                                         // has the positive split limit already been reached?
     emitter.instruction("jge __rt_preg_split_last_linux_x86_64");               // emit the unsplit remainder as the final element
     emitter.label("__rt_preg_split_limit_ok_linux_x86_64");
-    emitter.instruction(&format!("mov rsi, QWORD PTR [rsp + {}]", current_cstr_off)); // reload current C-string cursor
-    emitter.instruction("movzx r9d, BYTE PTR [rsi]");                           // inspect current subject byte
-    emitter.instruction("test r9d, r9d");                                       // is the current byte the trailing null terminator?
-    emitter.instruction("jz __rt_preg_split_last_linux_x86_64");                // emit the final segment at end of string
+    // Every probe runs over the whole subject, so anchors, word boundaries and lookbehind
+    // see the real text; after a match PCRE2 picks the next offset and options, which
+    // retries an empty match without it and steps over a whole character under /u.
     emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", handle_off)); // pass compiled opaque handle
-    emitter.instruction(&format!("mov rsi, QWORD PTR [rsp + {}]", current_cstr_off)); // pass current C-string cursor to regexec
+    emitter.instruction(&format!("mov rsi, QWORD PTR [rsp + {}]", subject_cstr_off)); // pass the whole subject C string
     emitter.instruction(&format!("mov rdx, QWORD PTR [rsp + {}]", nmatch_off)); // request one regmatch slot for every compiled capture group
     emitter.instruction(&format!("mov rcx, QWORD PTR [rsp + {}]", regmatches_ptr_off)); // pass dynamic fixed offset-pair buffer
-    emitter.instruction("xor r8d, r8d");                                        // use default execution flags
+    emitter.instruction("mov QWORD PTR [rcx], 0");                              // publish the input range start
+    emitter.instruction(&format!("mov r9, QWORD PTR [rsp + {}]", subject_cstr_len_off)); // load the subject length
+    emitter.instruction("mov QWORD PTR [rcx + 8], r9");                         // publish the input range end
+    super::preg_match_all::emit_global_iteration_flags(emitter, split_count_off);
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize every requested offset pair
     emitter.instruction("test eax, eax");                                       // did regexec find another separator?
     emitter.instruction("jnz __rt_preg_split_miss_linux_x86_64");               // no more matches means the trailing segment remains
 
     emitter.instruction(&format!("mov r12, QWORD PTR [rsp + {}]", regmatches_ptr_off)); // load dynamic full-match pair for the pre-match extent
-    emitter.instruction("mov r9, QWORD PTR [r12]");                             // load full-match signed-64-bit start
     emitter.instruction(&format!("mov rsi, QWORD PTR [rsp + {}]", current_elephc_off)); // load pre-match segment start
-    emitter.instruction("mov rdx, r9");                                         // use rm_so as the pre-match segment length
-    emitter.instruction(&format!("mov rcx, QWORD PTR [rsp + {}]", current_elephc_off)); // reload current elephc cursor for offset calculation
-    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", subject_ptr_off)); // load original subject start
-    emitter.instruction("sub rcx, r10");                                        // compute absolute byte offset of the segment
+    emitter.instruction("mov rcx, rsi");                                        // copy the segment start for offset calculation
+    emitter.instruction(&format!("sub rcx, QWORD PTR [rsp + {}]", subject_ptr_off)); // compute absolute byte offset of the segment
+    emitter.instruction("mov rdx, QWORD PTR [r12]");                            // load the absolute full-match start
+    emitter.instruction("sub rdx, rcx");                                        // segment length = match start - segment offset
+    emitter.instruction("jge __rt_preg_split_segment_len_linux_x86_64");        // keep a non-negative segment length
+    emitter.instruction("xor edx, edx");                                        // a \K match that starts before the segment leaves it empty
+    emitter.label("__rt_preg_split_segment_len_linux_x86_64");
     emit_preg_split_push_piece_x86_64(
         emitter,
         "segment",
@@ -619,7 +615,6 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
         nmatch_off,
         preg_flags_off,
         subject_ptr_off,
-        current_elephc_off,
         array_ptr_off,
         piece_ptr_off,
         piece_len_off,
@@ -633,17 +628,9 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("add r9, 1");                                           // account for the separator just processed
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r9", split_count_off)); // save updated separator count
     emitter.instruction(&format!("mov r12, QWORD PTR [rsp + {}]", regmatches_ptr_off)); // load dynamic full-match pair for cursor advancement
-    emitter.instruction("mov r9, QWORD PTR [r12 + 8]");                         // load full-match signed-64-bit end
-    emitter.instruction("cmp r9, 0");                                           // detect zero-length separators
-    emitter.instruction("jg __rt_preg_split_advance_ok_linux_x86_64");          // trust rm_eo when the separator consumed bytes
-    emitter.instruction("mov r9, 1");                                           // force progress for zero-length matches
-    emitter.label("__rt_preg_split_advance_ok_linux_x86_64");
-    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_cstr_off)); // reload current C-string cursor
-    emitter.instruction("add r10, r9");                                         // advance C-string cursor past separator
-    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r10", current_cstr_off)); // save advanced C-string cursor
-    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_elephc_off)); // reload current elephc payload cursor
-    emitter.instruction("add r10, r9");                                         // advance elephc cursor by the same byte distance
-    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r10", current_elephc_off)); // save advanced elephc cursor
+    emitter.instruction("mov r9, QWORD PTR [r12 + 8]");                         // load the absolute full-match end
+    emitter.instruction(&format!("add r9, QWORD PTR [rsp + {}]", subject_ptr_off)); // the next segment starts at the match end
+    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r9", current_elephc_off)); // save the next segment start
     emitter.instruction("jmp __rt_preg_split_loop_linux_x86_64");               // continue splitting the remaining subject
 
     // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
@@ -873,7 +860,6 @@ fn emit_preg_split_capture_loop_x86_64(
     nmatch_off: usize,
     preg_flags_off: usize,
     subject_ptr_off: usize,
-    current_elephc_off: usize,
     array_ptr_off: usize,
     piece_ptr_off: usize,
     piece_len_off: usize,
@@ -900,12 +886,9 @@ fn emit_preg_split_capture_loop_x86_64(
     emitter.instruction("mov r9, QWORD PTR [r10 + 8]");                         // load signed-64-bit capture end
     emitter.instruction("mov rdx, r9");                                         // seed captured delimiter end offset
     emitter.instruction("sub rdx, r11");                                        // compute captured delimiter length
-    emitter.instruction(&format!("mov rsi, QWORD PTR [rsp + {}]", current_elephc_off)); // load current elephc cursor
-    emitter.instruction("add rsi, r11");                                        // compute captured delimiter pointer
-    emitter.instruction(&format!("mov rcx, QWORD PTR [rsp + {}]", current_elephc_off)); // reload current elephc cursor
-    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", subject_ptr_off)); // load original subject start
-    emitter.instruction("sub rcx, r10");                                        // compute current cursor absolute offset
-    emitter.instruction("add rcx, r11");                                        // add capture-local rm_so to get capture offset
+    emitter.instruction(&format!("mov rsi, QWORD PTR [rsp + {}]", subject_ptr_off)); // load original subject start
+    emitter.instruction("add rsi, r11");                                        // captured delimiter pointer = subject + absolute capture start
+    emitter.instruction("mov rcx, r11");                                        // the absolute capture start is the capture offset
     emit_preg_split_push_piece_x86_64(
         emitter,
         "capture",

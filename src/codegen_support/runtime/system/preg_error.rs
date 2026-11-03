@@ -13,9 +13,10 @@
 //! - PCRE2 checks UTF-8 before it matches. `pcre2_regexec()` folds every UTF-8 error code
 //!   into `REG_INVARG`, and so does the shim's `REG_STARTEND` path, so the helpers read
 //!   that status on their first probe of a `/u` pattern as the bad-UTF-8 case.
-//! - Only the first probe of a call sees the whole subject. Later probes of a sliced
-//!   subject can begin inside a character after a one-byte empty-match advance, so they
-//!   keep their previous "no further match" reading.
+//! - Only the first probe of a call reports malformed UTF-8; PCRE2 checks the whole
+//!   subject there. `preg_replace_callback()` still probes a sliced subject, whose later
+//!   probes can begin inside a character after a one-byte empty-match advance, so later
+//!   probes keep their previous "no further match" reading.
 
 use crate::codegen_support::{abi, emit::Emitter, platform::Arch};
 
