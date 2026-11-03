@@ -1,6 +1,6 @@
 # Fixes not upstream yet
 
-This fork carries 239 fix and feature commits that upstream elephc (`4f4597330b`) does not have.
+This fork carries 240 fix and feature commits that upstream elephc (`3e7d12a341`) does not have.
 18 of them are in an open pull request on [illegalstudio/elephc](https://github.com/illegalstudio/elephc/pulls); the rest are not sent.
 The list should shrink: a row leaves when upstream merges the fix, or fixes the same bug its own way,
 and the fork drops its copy at the next sync.
@@ -248,3 +248,4 @@ Generated from `git log upstream/main..main` and our upstream pull requests. Do 
 | [`d123c3386b`](https://github.com/Ignibyte/aic_compiler/commit/d123c3386b) | fix | - | widen an array local reassigned in a branch | not sent |
 | [`2da6f91568`](https://github.com/Ignibyte/aic_compiler/commit/2da6f91568) | fix | - | compare array_diff() and array_intersect() values by string and keep keys | not sent |
 | [`f48dd49a3f`](https://github.com/Ignibyte/aic_compiler/commit/f48dd49a3f) | fix | - | return false for malformed UTF-8 under /u and add preg_last_error() | not sent |
+| [`87c0ee928a`](https://github.com/Ignibyte/aic_compiler/commit/87c0ee928a) | fix | - | bind widened override parameters by the body that runs (#52) | not sent |
