@@ -45,6 +45,7 @@ mod mktime;
 mod pcre_to_posix;
 mod pcntl;
 mod pcntl_data;
+mod preg_error;
 mod preg_match;
 mod preg_match_all;
 mod preg_match_all_capture;
@@ -112,6 +113,7 @@ pub(crate) use pcntl::{
     emit_pcntl_rusage_array, emit_pcntl_siginfo_array, emit_pcntl_signal_dispatch,
 };
 pub(crate) use pcntl_data::emit_pcntl_data;
+pub(crate) use preg_error::{emit_preg_error_data, emit_preg_last_error_msg};
 pub(crate) use preg_match::emit_preg_match;
 pub(crate) use preg_match_all::emit_preg_match_all;
 pub(crate) use preg_replace::emit_preg_replace;

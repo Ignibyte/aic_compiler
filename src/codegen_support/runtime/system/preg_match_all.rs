@@ -10,6 +10,11 @@
 
 use crate::codegen_support::{emit::Emitter, platform::Arch};
 
+use super::preg_error::{
+    emit_branch_unless_bad_utf8, emit_set_preg_last_error, PREG_BAD_UTF8_ERROR,
+    PREG_INTERNAL_ERROR, PREG_NO_ERROR,
+};
+
 /// Every supported target preserves the original subject and absolute capture offsets.
 #[test]
 fn preg_match_all_review_runtime_context_on_all_targets() {
@@ -51,7 +56,7 @@ pub(super) fn emit_global_iteration_flags(emitter: &mut Emitter, match_count_off
 
 /// __rt_preg_match_all: count all non-overlapping matches of regex in subject.
 /// Input:  x1=pattern ptr, x2=pattern len, x3=subject ptr, x4=subject len
-/// Output: x0=match count
+/// Output: x0=match count, or -1 for a rejected pattern or a malformed `/u` subject
 pub(crate) fn emit_preg_match_all(emitter: &mut Emitter) {
     if emitter.target.arch == Arch::X86_64 {
         emit_preg_match_all_linux_x86_64(emitter);
@@ -82,6 +87,7 @@ pub(crate) fn emit_preg_match_all(emitter: &mut Emitter) {
     emitter.instruction(&format!("sub sp, sp, #{}", stack_size));               // allocate preg_match_all stack frame
     emitter.instruction(&format!("stp x29, x30, [sp, #{}]", save_off));         // save frame pointer and return address
     emitter.instruction(&format!("add x29, sp, #{}", save_off));                // set new frame pointer
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
 
     // -- save inputs --
     emitter.instruction(&format!("str x1, [sp, #{}]", pattern_ptr_off));        // save pattern ptr
@@ -135,7 +141,7 @@ pub(crate) fn emit_preg_match_all(emitter: &mut Emitter) {
     emitter.instruction("str x9, [x3, #8]");                                    // publish the input range end
     emit_global_iteration_flags(emitter, match_count_off);
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute without exposing PCRE2-owned layouts
-    emitter.instruction("cbnz x0, __rt_preg_match_all_done");                   // no more matches
+    emitter.instruction("cbnz x0, __rt_preg_match_all_miss");                   // no more matches, or a rejected subject
 
     // -- found a match, increment count --
     emitter.instruction(&format!("ldr x9, [sp, #{}]", match_count_off));        // load count
@@ -145,6 +151,17 @@ pub(crate) fn emit_preg_match_all(emitter: &mut Emitter) {
     // PCRE2 derives continuation offsets/options from its retained match data.
     emitter.instruction("b __rt_preg_match_all_loop");                          // continue
 
+    // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
+    emitter.label("__rt_preg_match_all_miss");
+    emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_match_all_done");
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", match_count_off));        // load the completed match count
+    emitter.instruction("cbnz x9, __rt_preg_match_all_done");                   // a later probe keeps its no-further-match reading
+    emitter.instruction(&format!("ldr x0, [sp, #{}]", handle_off));             // reload compiled opaque handle
+    emitter.bl_c("elephc_pcre2_v1_free");                                       // release compiled regex resources
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction("mov x0, #-1");                                         // malformed UTF-8 subject: PHP false
+    emitter.instruction("b __rt_preg_match_all_ret");                           // return the sentinel
+
     emitter.label("__rt_preg_match_all_done");
     emitter.instruction(&format!("ldr x0, [sp, #{}]", handle_off));             // reload compiled opaque handle
     emitter.bl_c("elephc_pcre2_v1_free");                                       // release compiled regex resources
@@ -152,6 +169,7 @@ pub(crate) fn emit_preg_match_all(emitter: &mut Emitter) {
     emitter.instruction("b __rt_preg_match_all_ret");                           // return
 
     emitter.label("__rt_preg_match_all_fail");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emitter.instruction("mov x0, #-1");                                         // failure sentinel: PHP false
 
     emitter.label("__rt_preg_match_all_ret");
@@ -185,6 +203,7 @@ fn emit_preg_match_all_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer before reserving regex-counting scratch storage
     emitter.instruction("mov rbp, rsp");                                        // establish a stable frame base for the regex object, regmatch buffer, and loop spill slots
     emitter.instruction(&format!("sub rsp, {}", stack_size));                   // reserve aligned local storage for the opaque handle, pair, and match count
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rdx", subject_ptr_off)); // preserve the elephc subject pointer across delimiter stripping and regex compilation helper calls
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rcx", subject_len_off)); // preserve the elephc subject length across delimiter stripping and regex compilation helper calls
     emitter.instruction("mov rax, rdi");                                        // move the elephc pattern pointer into the delimiter-strip helper input register
@@ -235,12 +254,23 @@ fn emit_preg_match_all_linux_x86_64(emitter: &mut Emitter) {
     emit_global_iteration_flags(emitter, match_count_off);
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute without exposing PCRE2-owned layouts
     emitter.instruction("test eax, eax");                                       // did regexec() find another match at or after the current cursor?
-    emitter.instruction("jnz __rt_preg_match_all_done_linux_x86_64");           // stop counting when regexec() reports no further matches
+    emitter.instruction("jnz __rt_preg_match_all_miss_linux_x86_64");           // stop counting when regexec() reports no further matches
     emitter.instruction(&format!("mov r9, QWORD PTR [rsp + {}]", match_count_off)); // reload the running non-overlapping match count before incrementing it
     emitter.instruction("add r9, 1");                                           // count the newly discovered regex match
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r9", match_count_off)); // preserve the updated match count for the next loop iteration
     // PCRE2 derives continuation offsets/options from its retained match data.
     emitter.instruction("jmp __rt_preg_match_all_loop_linux_x86_64");           // continue counting the remaining non-overlapping regex matches
+
+    // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
+    emitter.label("__rt_preg_match_all_miss_linux_x86_64");
+    emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_match_all_done_linux_x86_64");
+    emitter.instruction(&format!("cmp QWORD PTR [rsp + {}], 0", match_count_off)); // has an earlier probe already matched?
+    emitter.instruction("jne __rt_preg_match_all_done_linux_x86_64");           // a later probe keeps its no-further-match reading
+    emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", handle_off)); // reload compiled opaque handle
+    emitter.bl_c("elephc_pcre2_v1_free");                                       // release compiled regex resources
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction("mov rax, -1");                                         // malformed UTF-8 subject: PHP false
+    emitter.instruction("jmp __rt_preg_match_all_ret_linux_x86_64");            // return the sentinel
 
     emitter.label("__rt_preg_match_all_done_linux_x86_64");
     emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", handle_off)); // reload compiled opaque handle
@@ -249,6 +279,7 @@ fn emit_preg_match_all_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("jmp __rt_preg_match_all_ret_linux_x86_64");            // share the common epilogue after the successful match-count path
 
     emitter.label("__rt_preg_match_all_fail_linux_x86_64");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emitter.instruction("mov rax, -1");                                         // failure sentinel: PHP false
 
     emitter.label("__rt_preg_match_all_ret_linux_x86_64");

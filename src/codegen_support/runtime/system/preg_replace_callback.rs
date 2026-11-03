@@ -26,6 +26,11 @@
 
 use crate::codegen_support::{abi, emit::Emitter, platform::Arch};
 
+use super::preg_error::{
+    emit_branch_unless_bad_utf8, emit_set_preg_last_error, PREG_BAD_UTF8_ERROR,
+    PREG_INTERNAL_ERROR, PREG_NO_ERROR,
+};
+
 /// Branches to `next_label` when `reg` is a modifier the pre-scan must not reject.
 ///
 /// Implemented modifiers and valid PHP modifiers this runtime leaves unmapped
@@ -71,7 +76,8 @@ fn emit_preg_replace_callback_null(emitter: &mut Emitter, ptr_reg: &str, len_reg
 /// __rt_preg_replace_callback: replace regex matches with a callback result.
 /// Input:  x1=pattern ptr, x2=pattern len, x3=callback ptr, x4=callback env ptr,
 ///         x5=subject ptr, x6=subject len
-/// Output: x0=boxed Mixed cell (string, or PHP null when the pattern is invalid)
+/// Output: x0=boxed Mixed cell (string, or PHP null when the pattern is invalid or a
+///         `/u` subject is not valid UTF-8)
 pub(crate) fn emit_preg_replace_callback(emitter: &mut Emitter) {
     if emitter.target.arch == Arch::X86_64 {
         emit_preg_replace_callback_linux_x86_64(emitter);
@@ -124,6 +130,7 @@ pub(crate) fn emit_preg_replace_callback(emitter: &mut Emitter) {
     emitter.instruction(&format!("add x9, sp, #{}", save_off));                 // compute save-slot address beyond ARM64 pair-store immediate range
     emitter.instruction("stp x29, x30, [x9]");                                  // save frame pointer and return address
     emitter.instruction(&format!("add x29, sp, #{}", save_off));                // establish the runtime helper frame pointer
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
     emitter.instruction(&format!("str x19, [sp, #{}]", saved_x19_off));         // preserve the caller's output base register
     emitter.instruction(&format!("str x20, [sp, #{}]", saved_x20_off));         // preserve the caller's output write register
     emitter.instruction(&format!("str x21, [sp, #{}]", saved_x21_off));         // preserve the caller's output capacity register
@@ -242,7 +249,7 @@ pub(crate) fn emit_preg_replace_callback(emitter: &mut Emitter) {
     emitter.instruction(&format!("ldr x3, [sp, #{}]", regmatches_ptr_off));     // pass dynamic fixed offset-pair buffer
     emitter.instruction("mov x4, #0");                                          // use default execution flags
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize every requested offset pair
-    emitter.instruction("cbnz x0, __rt_preg_replace_callback_tail");            // copy the remaining subject when there are no more matches
+    emitter.instruction("cbnz x0, __rt_preg_replace_callback_miss");            // copy the remaining subject when there are no more matches
 
     // -- remember unmatched prefix length before this match --
     emitter.instruction(&format!("ldr x14, [sp, #{}]", regmatches_ptr_off));    // load dynamic offset-pair buffer base
@@ -376,6 +383,26 @@ pub(crate) fn emit_preg_replace_callback(emitter: &mut Emitter) {
     emitter.instruction(&format!("str x10, [sp, #{}]", current_pos_off));       // save next regex search cursor
     emitter.instruction("b __rt_preg_replace_callback_loop");                   // continue replacing further matches
 
+    // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
+    emitter.label("__rt_preg_replace_callback_miss");
+    emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_replace_callback_tail");
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", current_pos_off));        // load the current subject cursor
+    emitter.instruction(&format!("ldr x10, [sp, #{}]", subject_cstr_off));      // load the private subject start
+    emitter.instruction("cmp x9, x10");                                         // is this the first probe, before any callback ran?
+    emitter.instruction("b.ne __rt_preg_replace_callback_tail");                // a later probe keeps its no-further-match reading
+    emit_preg_replace_callback_unlink_boundary(emitter, handler_off);
+    emitter.instruction(&format!("ldr x0, [sp, #{}]", subject_cstr_off));       // reload the private subject copy for release
+    emitter.instruction("bl __rt_heap_free_safe");                              // release the subject copy
+    emitter.instruction(&format!("ldr x0, [sp, #{}]", output_start_off));       // reload the unused output block
+    emitter.instruction("bl __rt_heap_free_safe");                              // release the output block a null result never reads
+    emitter.instruction(&format!("ldr x0, [sp, #{}]", handle_off));             // reload compiled opaque handle
+    emitter.bl_c("elephc_pcre2_v1_free");                                       // release compiled regex resources
+    emitter.instruction(&format!("ldr x0, [sp, #{}]", regmatches_ptr_off));     // reload dynamic capture buffer for cleanup
+    emitter.bl_c("free");                                                       // release the reusable offset-pair vector
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emit_preg_replace_callback_null(emitter, "x1", "x2");
+    emitter.instruction("b __rt_preg_replace_callback_ret");                    // PHP returns null for a malformed subject
+
     // -- copy trailing subject after the last match --
     emitter.label("__rt_preg_replace_callback_tail");
     emitter.instruction(&format!("ldr x10, [sp, #{}]", current_pos_off));       // reload current subject cursor for tail copy
@@ -424,12 +451,14 @@ pub(crate) fn emit_preg_replace_callback(emitter: &mut Emitter) {
 
     // -- failure: PHP null for an invalid pattern or the removed /e modifier --
     emitter.label("__rt_preg_replace_callback_fail");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emit_preg_replace_callback_null(emitter, "x1", "x2");
     emitter.instruction("b __rt_preg_replace_callback_ret");                    // box the null sentinel in the common epilogue
 
     emitter.label("__rt_preg_replace_callback_malloc_fail");
     emitter.instruction(&format!("ldr x0, [sp, #{}]", handle_off));             // reload opaque handle after capture-buffer allocation failed
     emitter.bl_c("elephc_pcre2_v1_free");                                       // free compiled regex resources before returning null
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emit_preg_replace_callback_null(emitter, "x1", "x2");
 
     // -- box a string cell, or a real PHP null when the pointer is the null sentinel --
@@ -524,6 +553,7 @@ fn emit_preg_replace_callback_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer before reserving regex callback scratch storage
     emitter.instruction("mov rbp, rsp");                                        // establish a stable frame base for regex callback spill slots
     emitter.instruction(&format!("sub rsp, {}", stack_size));                   // reserve aligned local storage for the handle, offset pairs, and callback state
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r12", saved_r12_off)); // preserve the caller's output base register
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r13", saved_r13_off)); // preserve the caller's output write register
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r14", saved_r14_off)); // preserve the caller's output capacity register
@@ -651,7 +681,7 @@ fn emit_preg_replace_callback_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("xor r8d, r8d");                                        // use default execution flags
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize every requested offset pair
     emitter.instruction("test eax, eax");                                       // did regexec find another match?
-    emitter.instruction("jnz __rt_preg_replace_callback_tail_linux_x86_64");    // copy the remaining subject once no more matches exist
+    emitter.instruction("jnz __rt_preg_replace_callback_miss_linux_x86_64");    // copy the remaining subject once no more matches exist
 
     // -- remember unmatched prefix length before this match --
     emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", regmatches_ptr_off)); // load dynamic offset-pair buffer base
@@ -786,6 +816,25 @@ fn emit_preg_replace_callback_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r10", current_pos_off)); // save next regex search cursor
     emitter.instruction("jmp __rt_preg_replace_callback_loop_linux_x86_64");    // continue replacing further matches
 
+    // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
+    emitter.label("__rt_preg_replace_callback_miss_linux_x86_64");
+    emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_replace_callback_tail_linux_x86_64");
+    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_pos_off)); // load the current subject cursor
+    emitter.instruction(&format!("cmp r10, QWORD PTR [rsp + {}]", subject_cstr_off)); // is this the first probe, before any callback ran?
+    emitter.instruction("jne __rt_preg_replace_callback_tail_linux_x86_64");    // a later probe keeps its no-further-match reading
+    emit_preg_replace_callback_unlink_boundary(emitter, handler_off);
+    emitter.instruction(&format!("mov rax, QWORD PTR [rsp + {}]", subject_cstr_off)); // reload the private subject copy into the runtime free ABI register
+    emitter.instruction("call __rt_heap_free_safe");                            // release the subject copy
+    emitter.instruction(&format!("mov rax, QWORD PTR [rsp + {}]", output_start_off)); // reload the unused output block
+    emitter.instruction("call __rt_heap_free_safe");                            // release the output block a null result never reads
+    emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", handle_off)); // reload compiled opaque handle
+    emitter.bl_c("elephc_pcre2_v1_free");                                       // release compiled regex resources
+    emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", regmatches_ptr_off)); // reload dynamic capture buffer for cleanup
+    emitter.bl_c("free");                                                       // release the reusable offset-pair vector
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emit_preg_replace_callback_null(emitter, "rax", "rdx");
+    emitter.instruction("jmp __rt_preg_replace_callback_ret_linux_x86_64");     // PHP returns null for a malformed subject
+
     // -- copy trailing subject after the last match --
     emitter.label("__rt_preg_replace_callback_tail_linux_x86_64");
     emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_pos_off)); // reload current subject cursor for tail copy
@@ -834,12 +883,14 @@ fn emit_preg_replace_callback_linux_x86_64(emitter: &mut Emitter) {
 
     // -- failure: PHP null for an invalid pattern or the removed /e modifier --
     emitter.label("__rt_preg_replace_callback_fail_linux_x86_64");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emit_preg_replace_callback_null(emitter, "rax", "rdx");
     emitter.instruction("jmp __rt_preg_replace_callback_ret_linux_x86_64");     // box the null sentinel in the common epilogue
 
     emitter.label("__rt_preg_replace_callback_malloc_fail_linux_x86_64");
     emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", handle_off)); // reload opaque handle after capture-buffer allocation failed
     emitter.bl_c("elephc_pcre2_v1_free");                                       // free compiled regex resources before returning null
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emit_preg_replace_callback_null(emitter, "rax", "rdx");
 
     // -- box a string cell, or a real PHP null when the pointer is the null sentinel --

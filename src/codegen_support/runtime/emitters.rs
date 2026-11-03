@@ -208,6 +208,7 @@ pub(crate) fn emit_runtime(emitter: &mut Emitter, features: RuntimeFeatures) {
     system::emit_json_decode(emitter);
     system::emit_json_decode_mixed(emitter);
     system::emit_json_last_error_msg(emitter);
+    system::emit_preg_last_error_msg(emitter);
     system::emit_json_validate(emitter);
     system::emit_serialize(emitter);
     system::emit_unserialize(emitter);

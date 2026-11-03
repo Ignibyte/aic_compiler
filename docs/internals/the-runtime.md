@@ -1342,7 +1342,7 @@ Every parsed hash entry is inserted through `__rt_unser_store_entry` instead of 
 `system/mb_ereg_match.rs`, `system/preg_match.rs`,
 `system/preg_match_all.rs`, `system/preg_match_all_capture.rs`,
 `system/preg_replace.rs`, `system/preg_replace_callback.rs`,
-`system/preg_split.rs`; the embedded shim
+`system/preg_split.rs`, `system/preg_error.rs`; the embedded shim
 source is `src/native_deps/recipes/pcre2_shim.c`.
 
 Generated runtime assembly calls only the versioned
@@ -1364,15 +1364,26 @@ only when static regex detection or `--with-regex` requests the same feature.
 There is no production system-PCRE2 fallback; compilation itself never installs
 a package.
 
+Each regex helper stores PHP's PCRE error code in `_preg_last_error`:
+`PREG_NO_ERROR` on entry, `PREG_INTERNAL_ERROR` when the pattern is rejected,
+and `PREG_BAD_UTF8_ERROR` when a `/u` subject is not valid UTF-8. PCRE2 checks
+UTF-8 before matching, and both the POSIX wrapper and the shim's `REG_STARTEND`
+path report every UTF-8 error as `REG_INVARG`, so a helper reads that status on
+its first probe of a `/u` pattern as the bad-UTF-8 case. Later probes of a sliced
+subject can start inside a character after a one-byte empty-match advance and
+keep their "no further match" reading. `preg_last_error()` loads the slot and
+`__rt_preg_last_error_msg` indexes `_preg_err_msg_table`; both exist in every
+program, and `--web` clears the slot per request.
+
 | Routine | What it does | Input | Output |
 |---|---|---|---|
-| `__rt_preg_match` | Test if a regex matches the subject string. Compiles the pattern, executes once, frees. The removed `/e` modifier and a failed compile return the failure sentinel before a match result is produced | pattern + subject strings | `x0`/`rax` = 1 (match), 0 (no match), or -1 (PHP `false`) |
-| `__rt_preg_match_capture` | Test once and materialize PHP's optional `$matches` array from the shim-reported slot count and fixed offset pairs, omitting trailing unmatched captures while keeping interior unmatched captures as empty strings. `/e` is rejected before compilation. The -1 path still returns a fresh empty array so the caller can release it without storing it | pattern + subject strings | `x0`/`rax` = 1, 0, or -1; `x1`/`rdx` = matches array pointer |
-| `__rt_preg_match_all` | Count all non-overlapping matches by repeatedly executing the regex with advancing offsets | pattern + subject strings | `x0` = match count |
-| `__rt_preg_match_all_capture` | Fill `preg_match_all()`'s by-reference `$matches` for numbered groups. `PREG_PATTERN_ORDER` uses `$matches[group][match]`, `PREG_SET_ORDER` uses `$matches[match][group]`, `PREG_OFFSET_CAPTURE` boxes `[value, offset]`, and `PREG_UNMATCHED_AS_NULL` uses null (offset `-1` with offset capture). Unsupported extra flag bits, or both order bits at once, return count 0 and `[]` | pattern + subject strings + flags | `x0`/`rax` = match count, `x1`/`rdx` = matches array |
-| `__rt_preg_replace` | Replace all regex matches with a replacement string. Builds the result incrementally in the concat buffer and expands `$0`..`$99` / `\0`..`\99` from the PCRE2 capture vector | pattern + replacement + subject | `x1`/`x2` = result string |
-| `__rt_preg_replace_callback` | Replace all regex matches in a dedicated output buffer, building an indexed `$matches` string array and appending the callback result. A successful replacement is a Mixed string and the output buffer is released after that cell copies it. An invalid pattern boxes PHP null: unknown modifiers, a missing ending delimiter, a compile failure, and the removed `/e` modifier (bit 30 from `__rt_preg_strip`). Space, LF, and CR in the modifier suffix are ignored. `/x` sets bit 13 and the PCRE2 shim compiles with `PCRE2_EXTENDED`, so leading `(*UTF)` and `(*ANYCRLF)` verbs stay at the start of the pattern. Other valid modifiers the runtime does not map are not null | pattern + callback + subject | `x0`/`rax` = Mixed cell (string, or null) |
-| `__rt_preg_split` | Split the subject string at regex match boundaries using shim-sized fixed-pair capture storage. Applies limit, no-empty, delimiter-capture, and offset-capture flags; dynamic flags return boxed Mixed slots to preserve layout | pattern + subject strings, limit, flags | `x0` = array pointer |
+| `__rt_preg_match` | Test if a regex matches the subject string. Compiles the pattern, executes once, frees. The removed `/e` modifier and a failed compile return the failure sentinel before a match result is produced | pattern + subject strings | `x0`/`rax` = 1 (match), 0 (no match), or -1 (PHP `false`: a rejected pattern or a malformed `/u` subject) |
+| `__rt_preg_match_capture` | Test once and materialize PHP's optional `$matches` array from the shim-reported slot count and fixed offset pairs, omitting trailing unmatched captures while keeping interior unmatched captures as empty strings. `/e` is rejected before compilation. The -1 path still returns a fresh empty array so the caller can release it without storing it. A malformed `/u` subject returns -2 with an empty array the caller stores, as PHP writes `$matches` there | pattern + subject strings | `x0`/`rax` = 1, 0, -1, or -2; `x1`/`rdx` = matches array pointer |
+| `__rt_preg_match_all` | Count all non-overlapping matches by repeatedly executing the regex with advancing offsets | pattern + subject strings | `x0` = match count, or -1 (PHP `false`) |
+| `__rt_preg_match_all_capture` | Fill `preg_match_all()`'s by-reference `$matches` for numbered groups. `PREG_PATTERN_ORDER` uses `$matches[group][match]`, `PREG_SET_ORDER` uses `$matches[match][group]`, `PREG_OFFSET_CAPTURE` boxes `[value, offset]`, and `PREG_UNMATCHED_AS_NULL` uses null (offset `-1` with offset capture). Unsupported extra flag bits, or both order bits at once, return count 0 and `[]`. A malformed `/u` subject returns -2 with the empty result shape | pattern + subject strings + flags | `x0`/`rax` = match count, -1, or -2; `x1`/`rdx` = matches array |
+| `__rt_preg_replace` | Replace all regex matches with a replacement string. Builds the result incrementally in the concat buffer and expands `$0`..`$99` / `\0`..`\99` from the PCRE2 capture vector | pattern + replacement + subject | boxed Mixed cell: the result string, or null for a rejected pattern or a malformed `/u` subject |
+| `__rt_preg_replace_callback` | Replace all regex matches in a dedicated output buffer, building an indexed `$matches` string array and appending the callback result. A successful replacement is a Mixed string and the output buffer is released after that cell copies it. An invalid pattern boxes PHP null: unknown modifiers, a missing ending delimiter, a compile failure, and the removed `/e` modifier (bit 30 from `__rt_preg_strip`). Space, LF, and CR in the modifier suffix are ignored. `/x` sets bit 13 and the PCRE2 shim compiles with `PCRE2_EXTENDED`, so leading `(*UTF)` and `(*ANYCRLF)` verbs stay at the start of the pattern. Other valid modifiers the runtime does not map are not null | pattern + callback + subject | `x0`/`rax` = Mixed cell (string, or null; a malformed `/u` subject is null before any callback) |
+| `__rt_preg_split` | Split the subject string at regex match boundaries using shim-sized fixed-pair capture storage. Applies limit, no-empty, delimiter-capture, and offset-capture flags; dynamic flags return boxed Mixed slots to preserve layout | pattern + subject strings, limit, flags | `x0` = array pointer, or -1 (PHP `false`) |
 
 ## I/O routines
 

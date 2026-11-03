@@ -17,8 +17,15 @@
 //! - Numbered groups only. Unsupported extra flag bits, or both order bits at
 //!   once, return count `0` and `[]`. A successful compile with zero matches
 //!   still materializes `nmatch` empty PATTERN_ORDER rows.
+//! - A `/u` subject that is not valid UTF-8 returns count `-2` with that same empty
+//!   result: PHP answers `false` and still writes `$matches`.
 
 use crate::codegen_support::{emit::Emitter, platform::Arch};
+
+use super::preg_error::{
+    emit_branch_unless_bad_utf8, emit_set_preg_last_error, PREG_BAD_UTF8_ERROR,
+    PREG_INTERNAL_ERROR, PREG_NO_ERROR,
+};
 
 const PREG_PATTERN_ORDER: i64 = 1;
 const PREG_SET_ORDER: i64 = 2;
@@ -69,6 +76,7 @@ fn emit_preg_match_all_capture_arm64(emitter: &mut Emitter) {
     emitter.instruction(&format!("str x29, [sp, #{}]", save_off));              // save frame pointer in the large capture frame
     emitter.instruction(&format!("str x30, [sp, #{}]", save_off + 8));          // save return address in the large capture frame
     emitter.instruction(&format!("add x29, sp, #{}", save_off));                // set new frame pointer
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
 
     emitter.instruction(&format!("str x3, [sp, #{}]", subject_ptr_off));        // preserve the elephc subject pointer
     emitter.instruction(&format!("str x4, [sp, #{}]", subject_len_off));        // preserve the elephc subject length
@@ -135,7 +143,7 @@ fn emit_preg_match_all_capture_arm64(emitter: &mut Emitter) {
     emitter.instruction("str x9, [x3, #8]");                                    // publish the input range end
     super::preg_match_all::emit_global_iteration_flags(emitter, match_count_off);
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize every requested absolute offset pair
-    emitter.instruction("cbnz x0, __rt_pma_cap_done");                          // stop when the shim reports no further match
+    emitter.instruction("cbnz x0, __rt_pma_cap_miss");                          // stop when the shim reports no further match
 
     emitter.instruction(&format!("ldr x9, [sp, #{}]", match_count_off));        // reload the running match count
     emitter.instruction("add x9, x9, #1");                                      // count this non-overlapping match
@@ -160,6 +168,15 @@ fn emit_preg_match_all_capture_arm64(emitter: &mut Emitter) {
 
     // PCRE2 derives continuation offsets/options from its retained match data.
     emitter.instruction("b __rt_pma_cap_loop");                                 // continue searching
+
+    // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
+    emitter.label("__rt_pma_cap_miss");
+    emit_branch_unless_bad_utf8(emitter, regex_flags_off, "__rt_pma_cap_done");
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", match_count_off));        // load the completed match count
+    emitter.instruction("cbnz x9, __rt_pma_cap_done");                          // a later probe keeps its no-further-match reading
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction("mov x9, #-2");                                         // match-error sentinel: PHP false, $matches written
+    emitter.instruction(&format!("str x9, [sp, #{}]", match_count_off));        // return it in place of the count
 
     emitter.label("__rt_pma_cap_done");
     emit_preg_match_all_capture_finish_pattern_order_arm64(
@@ -187,6 +204,7 @@ fn emit_preg_match_all_capture_arm64(emitter: &mut Emitter) {
     emitter.bl_c("free");                                                       // release the pair vector before returning []
 
     emitter.label("__rt_pma_cap_compile_fail");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emitter.instruction("mov x0, #0");                                          // empty-array capacity
     emitter.instruction("mov x1, #8");                                          // Mixed slots store boxed pointers
     emitter.instruction("bl __rt_array_new");                                   // allocate an empty Mixed matches array
@@ -574,6 +592,7 @@ fn emit_preg_match_all_capture_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer
     emitter.instruction("mov rbp, rsp");                                        // establish a stable frame base
     emitter.instruction(&format!("sub rsp, {}", stack_size));                   // reserve capture helper local storage
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rdx", subject_ptr_off)); // preserve the elephc subject pointer
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rcx", subject_len_off)); // preserve the elephc subject length
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r8", preg_flags_off)); // preserve PHP preg_match_all flags
@@ -656,7 +675,7 @@ fn emit_preg_match_all_capture_linux_x86_64(emitter: &mut Emitter) {
     super::preg_match_all::emit_global_iteration_flags(emitter, match_count_off);
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize every requested absolute offset pair
     emitter.instruction("test eax, eax");                                       // did the shim find another match?
-    emitter.instruction("jnz __rt_pma_cap_done_linux_x86_64");                  // stop when the shim reports no further match
+    emitter.instruction("jnz __rt_pma_cap_miss_linux_x86_64");                  // stop when the shim reports no further match
 
     emitter.instruction(&format!("mov r9, QWORD PTR [rsp + {}]", match_count_off)); // reload the running match count
     emitter.instruction("add r9, 1");                                           // count this non-overlapping match
@@ -681,6 +700,14 @@ fn emit_preg_match_all_capture_linux_x86_64(emitter: &mut Emitter) {
 
     // PCRE2 derives continuation offsets/options from its retained match data.
     emitter.instruction("jmp __rt_pma_cap_loop_linux_x86_64");                  // continue searching
+
+    // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
+    emitter.label("__rt_pma_cap_miss_linux_x86_64");
+    emit_branch_unless_bad_utf8(emitter, regex_flags_off, "__rt_pma_cap_done_linux_x86_64");
+    emitter.instruction(&format!("cmp QWORD PTR [rsp + {}], 0", match_count_off)); // has an earlier probe already matched?
+    emitter.instruction("jne __rt_pma_cap_done_linux_x86_64");                  // a later probe keeps its no-further-match reading
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], -2", match_count_off)); // match-error sentinel in place of the count: PHP false, $matches written
 
     emitter.label("__rt_pma_cap_done_linux_x86_64");
     emit_preg_match_all_capture_finish_pattern_order_linux_x86_64(
@@ -709,6 +736,7 @@ fn emit_preg_match_all_capture_linux_x86_64(emitter: &mut Emitter) {
     emitter.bl_c("free");                                                       // release the pair vector before returning []
 
     emitter.label("__rt_pma_cap_empty_linux_x86_64");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emitter.instruction("xor edi, edi");                                        // empty-array capacity
     emitter.instruction("mov esi, 8");                                          // Mixed slots store boxed pointers
     emitter.instruction("call __rt_array_new");                                 // allocate an empty Mixed matches array
