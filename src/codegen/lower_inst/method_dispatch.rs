@@ -108,7 +108,27 @@ pub(super) fn lower_method_call(ctx: &mut FunctionContext<'_>, inst: &Instructio
     {
         return lower_interface_method_call(ctx, inst, &class_name, &method_name);
     }
-    let target = resolve_method_call_target(ctx, &class_name, &method_name, inst.operands.len())?;
+    let done_label = ctx.next_label("method_call_done");
+    let receiver_reg = abi::nested_call_reg(ctx.emitter);
+    emit_diverging_override_dispatch(
+        ctx, inst, Some(object), receiver_reg, &class_name, &method_name, &done_label,
+    )?;
+    lower_declared_method_call(ctx, inst, object, &class_name, &method_name)?;
+    ctx.emitter.label(&done_label);
+    Ok(())
+}
+
+/// Lowers an instance-method call bound by the receiver class's declared signature, through
+/// the vtable slot unless the class or method is final.
+fn lower_declared_method_call(
+    ctx: &mut FunctionContext<'_>,
+    inst: &Instruction,
+    object: ValueId,
+    class_name: &str,
+    method_name: &str,
+) -> Result<()> {
+    let class_name = class_name.to_string();
+    let target = resolve_method_call_target(ctx, &class_name, method_name, inst.operands.len())?;
     if super::method_resolution::method_requires_runtime_literal_guards(ctx, &class_name, &target) {
         // An override may widen `false` or `null`. The vtable selects that body, so the
         // guard has to read the runtime class rather than the static base signature.
@@ -293,6 +313,100 @@ pub(super) fn lower_mixed_method_candidate_call(
     // Candidate dispatch creates the same caller-owned coercion cells as concrete dispatch.
     emit_call_arg_temp_cleanups(ctx, &call_args, None)?;
     emit_ref_arg_writebacks(ctx, &call_args)
+}
+
+/// Calls each override that binds a parameter in other storage than `receiver_class`'s own
+/// signature through its own signature, chosen by the runtime class of the object in
+/// `receiver_reg`, and jumps to `done_label` after it. `load_receiver` names the receiver
+/// value when the caller has not loaded it into `receiver_reg` yet.
+///
+/// PHP lets an override widen a parameter (`int` to `int|string`), so its body reads that
+/// argument in other storage than the slot's declared signature binds. Every other class falls
+/// through to the code the caller emits next, which binds by the declared signature as before:
+/// a hierarchy whose overrides all agree emits nothing here.
+pub(super) fn emit_diverging_override_dispatch(
+    ctx: &mut FunctionContext<'_>,
+    inst: &Instruction,
+    load_receiver: Option<ValueId>,
+    receiver_reg: &str,
+    receiver_class: &str,
+    method_name: &str,
+    done_label: &str,
+) -> Result<()> {
+    let overrides = crate::types::diverging_overrides(
+        &ctx.module.class_infos,
+        &ctx.module.interface_infos,
+        receiver_class,
+        &php_symbol_key(method_name),
+    );
+    if overrides.is_empty() {
+        return Ok(());
+    }
+    let mut candidates = Vec::with_capacity(overrides.len());
+    for diverging in overrides {
+        if let Some(position) = diverging.params.iter().find(|index| {
+            ctx.module.class_infos[&diverging.class_name].methods[&php_symbol_key(method_name)]
+                .ref_params
+                .get(**index)
+                .copied()
+                .unwrap_or(false)
+        }) {
+            return Err(CodegenIrError::unsupported(format!(
+                "by-reference parameter #{} of {}::{} is bound in other storage than {}::{} declares it; a call through {} cannot pass it",
+                position + 1,
+                diverging.class_name,
+                method_name,
+                receiver_class.trim_start_matches('\\'),
+                method_name,
+                receiver_class.trim_start_matches('\\'),
+            )));
+        }
+        let class_id = ctx.module.class_infos[&diverging.class_name].class_id;
+        let target = resolve_method_call_target(
+            ctx,
+            &diverging.class_name,
+            method_name,
+            inst.operands.len(),
+        )?;
+        candidates.push(MixedMethodCandidate {
+            class_id,
+            class_name: diverging.class_name,
+            target,
+        });
+    }
+    candidates.sort_by_key(|candidate| candidate.class_id);
+    // Classes that inherit one override share its call.
+    let mut bodies: Vec<(String, usize)> = Vec::new();
+    let labels = candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| {
+            if let Some((label, _)) = bodies
+                .iter()
+                .find(|(_, first)| candidates[*first].target.impl_class == candidate.target.impl_class)
+            {
+                return label.clone();
+            }
+            let label = ctx.next_label(&format!(
+                "diverging_override_{}",
+                label_fragment(&candidate.target.impl_class)
+            ));
+            bodies.push((label.clone(), index));
+            label
+        })
+        .collect::<Vec<_>>();
+    if let Some(object) = load_receiver {
+        ctx.load_value_to_reg(object, receiver_reg)?;
+    }
+    let declared_label = ctx.next_label("diverging_override_declared");
+    emit_mixed_method_class_dispatch(ctx, receiver_reg, &candidates, &labels, &declared_label);
+    for (label, index) in bodies {
+        ctx.emitter.label(&label);
+        lower_mixed_method_candidate_call(ctx, inst, receiver_reg, &candidates[index], method_name)?;
+        abi::emit_jump(ctx.emitter, done_label);
+    }
+    ctx.emitter.label(&declared_label);
+    Ok(())
 }
 
 /// Returns true when `class_name` is `ancestor` or reaches it through `parent`.

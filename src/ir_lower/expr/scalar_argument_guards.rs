@@ -13,7 +13,9 @@
 //!   dynamic calls keep their own binding rules.
 //! - The caller's file decides strict or weak binding, as in php-src.
 //! - A method is named only when exactly one implementation can run: an override may widen a
-//!   parameter and php-src names the class whose body runs, which the caller cannot know.
+//!   parameter and php-src names the class whose body runs, which the caller cannot know. When
+//!   an override binds a parameter in other storage, the sibling `dispatched_argument_guards`
+//!   checks that argument by each implementation in turn.
 //! - A refusal throws `TypeError` "f(): Argument #N ($x) must be of type T, U given", without
 //!   php's "called in" clause, like the other argument guards.
 
@@ -167,7 +169,17 @@ pub(super) fn method_callee(
     let [class] = implementations.as_slice() else {
         return None;
     };
-    let info = ctx.classes.get(class.as_str())?;
+    implementation_callee(ctx, class, method)
+}
+
+/// Names the user method `class` implements, or `None` for an internal class.
+pub(super) fn implementation_callee(
+    ctx: &LoweringContext<'_, '_>,
+    class: &str,
+    method: &str,
+) -> Option<ArgumentCallee> {
+    let key = php_symbol_key(method);
+    let info = ctx.classes.get(class)?;
     if info.is_internal {
         return None;
     }
@@ -198,5 +210,9 @@ pub(super) fn name_method_argument_callee(
     }
     if let Some(callee) = method_callee(ctx, class, method, false, true) {
         name_argument_callee(ctx, callee);
+    } else if let Some(dispatch) =
+        super::dispatched_argument_guards::method_argument_dispatch(ctx, object, class, method)
+    {
+        name_argument_dispatch(ctx, dispatch);
     }
 }

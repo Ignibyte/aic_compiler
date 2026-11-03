@@ -289,7 +289,9 @@ pub(super) fn method_call_argument_signature(
     if method_is_fiber_start(ctx, object, method) {
         return crate::ir_lower::fibers::start_sig_for_expr(ctx, object_expr);
     }
-    method_signature(ctx, object, method).or_else(|| narrowed_receiver_argument_signature(ctx, object, method))
+    method_signature(ctx, object, method)
+        .map(|sig| widen_diverging_override_params(ctx, object, method, sig))
+        .or_else(|| narrowed_receiver_argument_signature(ctx, object, method))
 }
 
 /// Returns the signature that normalizes the arguments of a method the receiver's static class

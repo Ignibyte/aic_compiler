@@ -116,6 +116,7 @@ mod enum_interface_calls;
 mod enum_argument_guards;
 mod union_return_guards;
 mod scalar_argument_guards;
+mod dispatched_argument_guards;
 mod enum_method_args;
 mod enum_static_args;
 mod enum_ref_args;

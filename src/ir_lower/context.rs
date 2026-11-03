@@ -150,6 +150,9 @@ pub(crate) struct CallArgumentEvaluationScope {
     /// The user callee whose declared scalar parameters check a `mixed` argument at run time;
     /// `None` for builtin, extern and dynamic calls, which keep their own binding rules.
     pub callee: Option<ArgumentCallee>,
+    /// The implementations an instance call selects between by the receiver's runtime class,
+    /// when some override binds a parameter in other storage than the declared signature.
+    pub dispatch: Option<ArgumentDispatch>,
 }
 
 /// Names a user callee for the run-time scalar argument check.
@@ -157,6 +160,32 @@ pub(crate) struct CallArgumentEvaluationScope {
 pub(crate) struct ArgumentCallee {
     /// The name php-src prints before `(): Argument #N`, such as `f` or `C::m`.
     pub display: String,
+}
+
+/// The implementations of an instance call whose overrides bind some parameters in other
+/// storage than the receiver's declared signature; each checks those arguments by its own.
+#[derive(Debug, Clone)]
+pub(crate) struct ArgumentDispatch {
+    /// The receiver whose runtime class selects the implementation.
+    pub receiver: crate::ir::ValueId,
+    /// The parameter indexes some override binds in other storage.
+    pub params: Vec<usize>,
+    /// One branch per concrete class with such an override, most derived first: the first
+    /// class the receiver is an instance of selects its branch.
+    pub branches: Vec<ArgumentDispatchBranch>,
+    /// The implementation every other class runs, or `None` when there are several.
+    pub fallback: Option<ArgumentDispatchBranch>,
+}
+
+/// One implementation an [`ArgumentDispatch`] selects.
+#[derive(Debug, Clone)]
+pub(crate) struct ArgumentDispatchBranch {
+    /// The class an `instanceof` test selects the branch by.
+    pub class_name: String,
+    /// The implementation php-src names in an argument `TypeError`.
+    pub callee: ArgumentCallee,
+    /// The implementation's signature.
+    pub sig: crate::types::FunctionSig,
 }
 
 /// Staging for one `$target = &call()`, recorded while its source expression is lowered.

@@ -33,6 +33,10 @@ pub(super) fn lower_interface_method_call(
     ref_params.extend(callee_sig.ref_params.iter().copied());
     let receiver_reg = abi::nested_call_reg(ctx.emitter);
     ctx.load_value_to_reg(expect_operand(inst, 0)?, receiver_reg)?;
+    let done_label = ctx.next_label("interface_method_call_done");
+    super::method_dispatch::emit_diverging_override_dispatch(
+        ctx, inst, None, receiver_reg, &normalized, method_name, &done_label,
+    )?;
     if super::super::literal_method_index::has_literal_parameters(&callee_sig.params) {
         emit_interface_literal_parameter_guards(ctx, inst, method_name, receiver_reg)?;
     }
@@ -51,7 +55,9 @@ pub(super) fn lower_interface_method_call(
     abi::emit_release_temporary_stack(ctx.emitter, call_args.overflow_bytes);
     store_call_result(ctx, inst, &return_ty)?;
     emit_call_arg_temp_cleanups(ctx, &call_args, inst.result)?;
-    emit_ref_arg_writebacks(ctx, &call_args)
+    emit_ref_arg_writebacks(ctx, &call_args)?;
+    ctx.emitter.label(&done_label);
+    Ok(())
 }
 
 /// Resolves interface method metadata and validates the EIR ABI operand count.
@@ -121,6 +127,9 @@ pub(super) fn lower_nullable_receiver_method_call(
     let done_label = ctx.next_label("method_receiver_done");
     let receiver_reg = abi::nested_call_reg(ctx.emitter);
     objects::emit_nullable_receiver_object_payload(ctx, object, &null_label, receiver_reg)?;
+    super::method_dispatch::emit_diverging_override_dispatch(
+        ctx, inst, None, receiver_reg, class_name, method_name, &done_label,
+    )?;
     if super::method_resolution::method_requires_runtime_literal_guards(ctx, class_name, &target) {
         emit_hierarchy_literal_parameter_guards(
             ctx, inst, class_name, method_name, receiver_reg,
@@ -217,6 +226,9 @@ pub(super) fn lower_nullable_receiver_interface_method_call(
     let done_label = ctx.next_label("method_receiver_done");
     let receiver_reg = abi::nested_call_reg(ctx.emitter);
     objects::emit_nullable_receiver_object_payload(ctx, object, &null_label, receiver_reg)?;
+    super::method_dispatch::emit_diverging_override_dispatch(
+        ctx, inst, None, receiver_reg, normalized, method_name, &done_label,
+    )?;
     if super::super::literal_method_index::has_literal_parameters(&callee_sig.params) {
         emit_interface_literal_parameter_guards(ctx, inst, method_name, receiver_reg)?;
     }
