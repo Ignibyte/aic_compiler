@@ -324,6 +324,9 @@ const EVAL_IMPLEMENTATION_PENDING: &[&str] = &[
     "hexdec",
     "join",
     "octdec",
+    // Fork (#235): Magician's regex engine keeps no PCRE error state yet.
+    "preg_last_error",
+    "preg_last_error_msg",
     "substr_count",
     "zval_free",
     "zval_pack",
@@ -401,8 +404,8 @@ mod tests {
         assert_eq!(eval_internal, 134);
         // 30 registry builtins awaiting eval homes, plus the 325 PHP-visible prelude-provided
         // and name-resolver-rewritten functions eval does not reach (see `eval_support`).
-        // Fork: +2 the `--web` upload pair.
-        assert_eq!(eval_pending, 361);
+        // Fork: +2 the `--web` upload pair, +2 the `preg_last_error*` pair (#235).
+        assert_eq!(eval_pending, 363);
         // The shared mbstring catalog adds sixty-four registry contracts, including
         // its internal INI helper, to the prior compiler registry surface; the eleven
         // `__elephc_opcache_rt_*` runtime script-cache helpers rolled through above add the rest.
@@ -412,8 +415,8 @@ mod tests {
         // Five native heap metric operations use the ordinary AOT registry, and so do the four
         // internal aliases the extension-hosting prelude calls.
         // The PHP 8.5 array value-edge pair adds two AOT-only registry entries.
-        // Fork: +1 `flush`.
-        assert_eq!(aot_registry, 825);
+        // Fork: +1 `flush`, +2 the `preg_last_error*` pair (#235).
+        assert_eq!(aot_registry, 827);
         // Compiler transforms, constructs, dedicated syntax, preludes, and
         // name-resolver rewrites remain outside the ordinary AOT registry.
         // Fork: +2 the `--web` upload pair.
@@ -474,8 +477,8 @@ mod tests {
         // Includes the eleven `__elephc_opcache_rt_*` helpers: they lower to an eval-bridge
         // call from AOT code and have no eval execution route of their own. So do the four
         // internal aliases the extension-hosting prelude calls.
-        // Fork: +2 the `--web` upload pair.
-        assert_eq!(unsupported, 495);
+        // Fork: +2 the `--web` upload pair, +2 the `preg_last_error*` pair (#235).
+        assert_eq!(unsupported, 497);
         assert_eq!(
             eval_execution(lookup("strval").expect("strval contract")),
             Some(EvalExecution::Adapter {

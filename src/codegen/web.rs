@@ -257,6 +257,7 @@ fn emit_transient_pointer_reset(emitter: &mut Emitter) {
         "_json_error_scan_count",
         "_json_error_scan_bytes",
         "_json_last_error",
+        "_preg_last_error",
         "_ser_value_counter",
         "_ser_legacy_active",
         "_unser_legacy_active",

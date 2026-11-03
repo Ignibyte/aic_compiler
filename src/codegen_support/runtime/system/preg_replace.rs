@@ -10,12 +10,18 @@
 
 use crate::codegen_support::{abi, emit::Emitter, platform::Arch};
 
+use super::preg_error::{
+    emit_branch_unless_bad_utf8, emit_set_preg_last_error, PREG_BAD_UTF8_ERROR,
+    PREG_INTERNAL_ERROR, PREG_NO_ERROR,
+};
+
 const PREG_REPLACE_NMATCH: usize = 100;
 
 /// __rt_preg_replace: replace all regex matches in subject string.
 /// Input:  x1=pattern ptr, x2=pattern len, x3=replacement ptr, x4=replacement len,
 ///         x5=subject ptr, x6=subject len
-/// Output: x1=result ptr, x2=result len
+/// Output: x1=result ptr, x2=result len, boxed; PHP null for a rejected pattern or a
+///         malformed `/u` subject
 pub(crate) fn emit_preg_replace(emitter: &mut Emitter) {
     let cap = emitter.concat_capacity;
     if emitter.target.arch == Arch::X86_64 {
@@ -53,6 +59,7 @@ pub(crate) fn emit_preg_replace(emitter: &mut Emitter) {
     emitter.instruction(&format!("add x9, sp, #{}", save_off));                 // compute save-slot address beyond ARM64 pair-store range
     emitter.instruction("stp x29, x30, [x9]");                                  // save frame pointer and return address
     emitter.instruction(&format!("add x29, sp, #{}", save_off));                // set new frame pointer
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
 
     // -- save all inputs --
     emitter.instruction(&format!("str x1, [sp, #{}]", pattern_ptr_off));        // pattern ptr
@@ -115,7 +122,7 @@ pub(crate) fn emit_preg_replace(emitter: &mut Emitter) {
     emitter.instruction(&format!("add x3, sp, #{}", match_pairs_off));          // receive fixed signed-64-bit offset pairs
     emitter.instruction("mov x4, #0");                                          // use default execution flags
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize all requested pairs
-    emitter.instruction("cbnz x0, __rt_preg_replace_tail");                     // no more matches, copy rest
+    emitter.instruction("cbnz x0, __rt_preg_replace_miss");                     // no more matches, copy rest
 
     // -- copy text before match (rm_so bytes) --
     emitter.instruction(&format!("ldr x9, [sp, #{}]", match_pairs_off));        // load full-match signed-64-bit start
@@ -258,6 +265,18 @@ pub(crate) fn emit_preg_replace(emitter: &mut Emitter) {
     emitter.instruction(&format!("str x10, [sp, #{}]", current_pos_off));       // save new pos
     emitter.instruction("b __rt_preg_replace_loop");                            // continue
 
+    // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
+    emitter.label("__rt_preg_replace_miss");
+    emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_replace_tail");
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", current_pos_off));        // load the current subject cursor
+    emitter.instruction(&format!("ldr x10, [sp, #{}]", subject_cstr_off));      // load the subject start
+    emitter.instruction("cmp x9, x10");                                         // is this the first probe of the subject?
+    emitter.instruction("b.ne __rt_preg_replace_tail");                         // a later probe keeps its no-further-match reading
+    emitter.instruction(&format!("ldr x0, [sp, #{}]", handle_off));             // reload compiled opaque handle
+    emitter.bl_c("elephc_pcre2_v1_free");                                       // release compiled regex resources
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction("b __rt_preg_replace_null");                            // PHP returns null for a malformed subject
+
     // -- copy remaining text after last match --
     emitter.label("__rt_preg_replace_tail");
     emitter.instruction(&format!("ldr x10, [sp, #{}]", current_pos_off));       // current pos
@@ -299,6 +318,8 @@ pub(crate) fn emit_preg_replace(emitter: &mut Emitter) {
     emitter.label("__rt_preg_replace_bad_pattern");
     emitter.instruction("b __rt_preg_replace_fail");                            // the /e modifier is rejected like a failed compile
     emitter.label("__rt_preg_replace_fail");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
+    emitter.label("__rt_preg_replace_null");
     abi::emit_load_int_immediate(emitter, "x1", crate::codegen_support::sentinels::NULL_SENTINEL);
     emitter.instruction("mov x2, #0");                                          // null has no payload bytes
 
@@ -327,7 +348,7 @@ pub(crate) fn emit_preg_replace(emitter: &mut Emitter) {
 ///   rdx=replacement ptr, rcx=replacement len, r8=subject ptr, r9=subject len
 /// Outputs: rax=result ptr, rdx=result len
 ///
-/// On regex compilation failure, returns the original subject unchanged.
+/// On regex compilation failure or a malformed `/u` subject, returns PHP null.
 /// Handles backreference expansion (`$0`..`$99`, `${0}`..`${99}`, `\0`..`\99`) in replacement strings.
 /// Uses the concat scratch buffer for output and updates `_concat_off` accordingly.
 fn emit_preg_replace_linux_x86_64(emitter: &mut Emitter) {
@@ -358,6 +379,7 @@ fn emit_preg_replace_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer before reserving regex-replace scratch storage
     emitter.instruction("mov rbp, rsp");                                        // establish a stable frame base for the regex object, regmatch buffer, and replace spill slots
     emitter.instruction(&format!("sub rsp, {}", stack_size));                   // reserve aligned local storage for the handle, fixed pairs, and replacement state
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rdi", pattern_ptr_off)); // preserve the elephc pattern pointer across regex helper calls
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rsi", pattern_len_off)); // preserve the elephc pattern length across regex helper calls
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rdx", replacement_ptr_off)); // preserve the elephc replacement pointer across regex helper calls
@@ -409,7 +431,7 @@ fn emit_preg_replace_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("xor r8d, r8d");                                        // use default execution flags
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize all requested pairs
     emitter.instruction("test eax, eax");                                       // did regexec() find another match at or after the current cursor?
-    emitter.instruction("jnz __rt_preg_replace_tail_linux_x86_64");             // copy the remaining subject tail once regexec() reports no further matches
+    emitter.instruction("jnz __rt_preg_replace_miss_linux_x86_64");             // copy the remaining subject tail once regexec() reports no further matches
     emitter.instruction(&format!("mov r9, QWORD PTR [rsp + {}]", match_pairs_off)); // load full-match signed-64-bit start
     emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_pos_off)); // reload the current subject cursor before copying the unmatched prefix bytes
     emitter.instruction(&format!("mov r11, QWORD PTR [rsp + {}]", output_write_off)); // reload the current replacement output write cursor before appending bytes
@@ -551,6 +573,17 @@ fn emit_preg_replace_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r10", current_pos_off)); // preserve the advanced subject cursor for the next replacement-loop iteration
     emitter.instruction("jmp __rt_preg_replace_loop_linux_x86_64");             // continue replacing the remaining regex matches in the subject payload
 
+    // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
+    emitter.label("__rt_preg_replace_miss_linux_x86_64");
+    emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_replace_tail_linux_x86_64");
+    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_pos_off)); // load the current subject cursor
+    emitter.instruction(&format!("cmp r10, QWORD PTR [rsp + {}]", subject_cstr_off)); // is this the first probe of the subject?
+    emitter.instruction("jne __rt_preg_replace_tail_linux_x86_64");             // a later probe keeps its no-further-match reading
+    emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", handle_off)); // reload compiled opaque handle
+    emitter.bl_c("elephc_pcre2_v1_free");                                       // release compiled regex resources
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction("jmp __rt_preg_replace_null_linux_x86_64");             // PHP returns null for a malformed subject
+
     emitter.label("__rt_preg_replace_tail_linux_x86_64");
     emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_pos_off)); // reload the current subject cursor before copying the unmatched tail bytes
     emitter.instruction(&format!("mov r11, QWORD PTR [rsp + {}]", output_write_off)); // reload the replacement output write cursor before appending the unmatched tail
@@ -586,6 +619,8 @@ fn emit_preg_replace_linux_x86_64(emitter: &mut Emitter) {
     emitter.label("__rt_preg_replace_bad_pattern_linux_x86_64");
     emitter.instruction("jmp __rt_preg_replace_fail_linux_x86_64");             // the /e modifier is rejected like a failed compile
     emitter.label("__rt_preg_replace_fail_linux_x86_64");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
+    emitter.label("__rt_preg_replace_null_linux_x86_64");
     abi::emit_load_int_immediate(emitter, "rax", crate::codegen_support::sentinels::NULL_SENTINEL);
     emitter.instruction("xor edx, edx");                                        // null has no payload bytes
 

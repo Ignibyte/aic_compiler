@@ -132,6 +132,7 @@ mod static_class_features;
 mod types;
 mod optimizer;
 mod preg_replace_callback_throw;
+mod preg_bad_utf8;
 mod iterators;
 mod dom_html;
 mod spl;

@@ -8,8 +8,14 @@
 //! Key details:
 //! - Regex helpers preserve PHP PCRE-flavored inputs for PCRE2 and must preserve match array construction.
 //! - Dynamic split flags force boxed Mixed result slots so offset-capture arrays never conflict with string-slot layout.
+//! - A rejected pattern or a malformed `/u` subject returns the `-1` sentinel, PHP false.
 
 use crate::codegen_support::{emit::Emitter, platform::Arch};
+
+use super::preg_error::{
+    emit_branch_unless_bad_utf8, emit_set_preg_last_error, PREG_BAD_UTF8_ERROR,
+    PREG_INTERNAL_ERROR, PREG_NO_ERROR,
+};
 
 const PREG_SPLIT_NO_EMPTY: i64 = 1;
 const PREG_SPLIT_DELIM_CAPTURE: i64 = 2;
@@ -67,6 +73,7 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
     emitter.instruction(&format!("str x29, [sp, #{}]", save_off));              // save frame pointer in the large preg_split frame
     emitter.instruction(&format!("str x30, [sp, #{}]", save_off + 8));          // save return address in the large preg_split frame
     emitter.instruction(&format!("add x29, sp, #{}", save_off));                // set new frame pointer
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
 
     // -- save inputs --
     emitter.instruction(&format!("str x1, [sp, #{}]", pattern_ptr_off));        // preserve the source regex pattern pointer
@@ -141,7 +148,7 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
     emitter.instruction(&format!("ldr x3, [sp, #{}]", regmatches_ptr_off));     // pass dynamic fixed offset-pair buffer
     emitter.instruction("mov x4, #0");                                          // use default execution flags
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize every requested offset pair
-    emitter.instruction("cbnz x0, __rt_preg_split_last");                       // no more matches means the trailing segment remains
+    emitter.instruction("cbnz x0, __rt_preg_split_miss");                       // no more matches means the trailing segment remains
 
     // -- add segment before match to array --
     emitter.instruction(&format!("ldr x14, [sp, #{}]", regmatches_ptr_off));    // load dynamic full-match pair for the pre-match extent
@@ -197,6 +204,21 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
     emitter.instruction(&format!("str x10, [sp, #{}]", current_elephc_off));    // save advanced elephc cursor
     emitter.instruction("b __rt_preg_split_loop");                              // continue splitting the remaining subject
 
+    // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
+    emitter.label("__rt_preg_split_miss");
+    emit_branch_unless_bad_utf8(emitter, regex_flags_off, "__rt_preg_split_last");
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", split_count_off));        // load the processed separator count
+    emitter.instruction("cbnz x9, __rt_preg_split_last");                       // a later probe keeps its no-further-match reading
+    emitter.instruction(&format!("ldr x0, [sp, #{}]", array_ptr_off));          // reload the unused result array
+    emitter.instruction("bl __rt_decref_array");                                // release the result array PHP false replaces
+    emitter.instruction(&format!("ldr x0, [sp, #{}]", handle_off));             // reload compiled opaque handle
+    emitter.bl_c("elephc_pcre2_v1_free");                                       // release compiled regex resources
+    emitter.instruction(&format!("ldr x0, [sp, #{}]", regmatches_ptr_off));     // reload dynamic capture buffer for cleanup
+    emitter.bl_c("free");                                                       // release the reusable offset-pair vector
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction("mov x0, #-1");                                         // malformed UTF-8 subject: PHP false
+    emitter.instruction("b __rt_preg_split_ret");                               // return through common epilogue
+
     // -- add last segment --
     emitter.label("__rt_preg_split_last");
     emitter.instruction(&format!("ldr x1, [sp, #{}]", current_elephc_off));     // load trailing segment start
@@ -227,6 +249,7 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
 
     // -- failure: PHP returns false for an invalid pattern --
     emitter.label("__rt_preg_split_fail");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emitter.instruction("mov x0, #-1");                                         // failure sentinel: PHP false
     emitter.instruction("b __rt_preg_split_ret");                               // return through common epilogue
 
@@ -507,6 +530,7 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer before reserving regex-split scratch storage
     emitter.instruction("mov rbp, rsp");                                        // establish a stable frame base for regex object and split bookkeeping
     emitter.instruction(&format!("sub rsp, {}", stack_size));                   // reserve aligned local storage for the handle, offset pairs, and split spills
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rdx", subject_ptr_off)); // preserve the elephc subject pointer across helper calls
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rcx", subject_len_off)); // preserve the elephc subject length across helper calls
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r8", limit_off));   // preserve the PHP split limit
@@ -568,7 +592,7 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("xor r8d, r8d");                                        // use default execution flags
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize every requested offset pair
     emitter.instruction("test eax, eax");                                       // did regexec find another separator?
-    emitter.instruction("jnz __rt_preg_split_last_linux_x86_64");               // no more matches means the trailing segment remains
+    emitter.instruction("jnz __rt_preg_split_miss_linux_x86_64");               // no more matches means the trailing segment remains
 
     emitter.instruction(&format!("mov r12, QWORD PTR [rsp + {}]", regmatches_ptr_off)); // load dynamic full-match pair for the pre-match extent
     emitter.instruction("mov r9, QWORD PTR [r12]");                             // load full-match signed-64-bit start
@@ -622,6 +646,21 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r10", current_elephc_off)); // save advanced elephc cursor
     emitter.instruction("jmp __rt_preg_split_loop_linux_x86_64");               // continue splitting the remaining subject
 
+    // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
+    emitter.label("__rt_preg_split_miss_linux_x86_64");
+    emit_branch_unless_bad_utf8(emitter, regex_flags_off, "__rt_preg_split_last_linux_x86_64");
+    emitter.instruction(&format!("cmp QWORD PTR [rsp + {}], 0", split_count_off)); // has an earlier probe already split the subject?
+    emitter.instruction("jne __rt_preg_split_last_linux_x86_64");               // a later probe keeps its no-further-match reading
+    emitter.instruction(&format!("mov rax, QWORD PTR [rsp + {}]", array_ptr_off)); // reload the unused result array
+    emitter.instruction("call __rt_decref_array");                              // release the result array PHP false replaces
+    emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", handle_off)); // reload compiled opaque handle
+    emitter.bl_c("elephc_pcre2_v1_free");                                       // release compiled regex resources
+    emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", regmatches_ptr_off)); // reload dynamic capture buffer for cleanup
+    emitter.bl_c("free");                                                       // release the reusable offset-pair vector
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction("mov rax, -1");                                         // malformed UTF-8 subject: PHP false
+    emitter.instruction("jmp __rt_preg_split_ret_linux_x86_64");                // return through common epilogue
+
     emitter.label("__rt_preg_split_last_linux_x86_64");
     emitter.instruction(&format!("mov rsi, QWORD PTR [rsp + {}]", current_elephc_off)); // load trailing segment start
     emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", subject_ptr_off)); // load original subject start
@@ -650,6 +689,7 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("jmp __rt_preg_split_ret_linux_x86_64");                // share common epilogue
 
     emitter.label("__rt_preg_split_fail_linux_x86_64");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emitter.instruction("mov rax, -1");                                         // failure sentinel: PHP false
     emitter.instruction("jmp __rt_preg_split_ret_linux_x86_64");                // return through common epilogue
 

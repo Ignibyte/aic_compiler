@@ -797,6 +797,8 @@ pub enum RuntimeFnId {
     Passthru,
     PhpUname,
     Phpversion,
+    PregLastError,
+    PregLastErrorMsg,
     PregMatch,
     PregMatchAll,
     PregReplace,
@@ -1438,6 +1440,8 @@ impl RuntimeFnId {
             | RuntimeFnId::Defined
             | RuntimeFnId::JsonLastError
             | RuntimeFnId::JsonLastErrorMsg
+            | RuntimeFnId::PregLastError
+            | RuntimeFnId::PregLastErrorMsg
             | RuntimeFnId::DateDefaultTimezoneGet
             | RuntimeFnId::ObGetLevel => crate::ir::Effects::READS_GLOBAL,
             RuntimeFnId::SplAutoloadExtensions => crate::ir::Effects::from_bits_retain(
@@ -3495,6 +3499,8 @@ impl RuntimeFnId {
             RuntimeFnId::Passthru => "passthru",
             RuntimeFnId::PhpUname => "php_uname",
             RuntimeFnId::Phpversion => "phpversion",
+            RuntimeFnId::PregLastError => "preg_last_error",
+            RuntimeFnId::PregLastErrorMsg => "preg_last_error_msg",
             RuntimeFnId::PregMatch => "preg_match",
             RuntimeFnId::PregMatchAll => "preg_match_all",
             RuntimeFnId::PregReplace => "preg_replace",

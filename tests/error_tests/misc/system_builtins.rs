@@ -637,6 +637,24 @@ fn test_error_json_last_error_msg_with_args() {
 
 // -- Regex error tests --
 
+/// Verifies that `preg_last_error()` with arguments yields a no-args diagnostic.
+#[test]
+fn test_error_preg_last_error_with_args() {
+    expect_error(
+        "<?php preg_last_error(1);",
+        "preg_last_error() takes no arguments",
+    );
+}
+
+/// Verifies that `preg_last_error_msg()` with arguments yields a no-args diagnostic.
+#[test]
+fn test_error_preg_last_error_msg_with_args() {
+    expect_error(
+        "<?php preg_last_error_msg(1);",
+        "preg_last_error_msg() takes no arguments",
+    );
+}
+
 /// Verifies that `preg_match()` with no arguments yields a wrong-args diagnostic.
 #[test]
 fn test_error_preg_match_no_args() {

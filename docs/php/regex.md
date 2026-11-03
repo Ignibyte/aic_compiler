@@ -95,6 +95,8 @@ for a complete project.
 | `preg_replace()` | `preg_replace($pattern, $replacement, $subject): string\|array\|null` | PHP returns the replaced value, or `null` on failure. elephc's type checker currently types the result as `mixed`. `$0`..`$99` and `\0`..`\99` replacement backreferences expand captured groups |
 | `preg_replace_callback()` | `preg_replace_callback($pattern, $callback, $subject): mixed` | Replace all regex matches with the callback return value; callback receives `array<string>` matches. The static return is `mixed`, so a `string` function may return the call. An invalid pattern, including an unknown modifier or a missing delimiter, returns `null` |
 | `preg_split()` | `preg_split($pattern, $subject, $limit = -1, $flags = 0): array\|false` | PHP returns the pieces, or `false` for an invalid pattern or the removed `/e` modifier. The checker types this result as `array\|false`. Supports no-empty, delimiter-capture, offset-capture, and positive limits |
+| `preg_last_error()` | `preg_last_error(): int` | The `PREG_*_ERROR` code of the last `preg_*` call: `PREG_NO_ERROR`, `PREG_INTERNAL_ERROR` for a rejected pattern, or `PREG_BAD_UTF8_ERROR` for a malformed `/u` subject |
+| `preg_last_error_msg()` | `preg_last_error_msg(): string` | PHP's message for that code, such as `"No error"` or `"Malformed UTF-8 characters, possibly incorrectly encoded"` |
 | `mb_ereg_match()` | `mb_ereg_match($pattern, $string, $options = null): bool` | Test a bare multibyte regex at the start of the string through Oniguruma, using the current `mb_regex_encoding()` and `mb_regex_set_options()` settings. An explicit options argument overrides the current options for this call |
 
 ## Pattern syntax
@@ -112,6 +114,16 @@ to PCRE2 wrapper flags:
 | `u` | UTF-8 and Unicode-property matching |
 | `U` | Ungreedy matching |
 | `x` | Extended mode: unescaped whitespace and `#` comments in the pattern are ignored; whitespace inside a character class still matches |
+
+With `u`, a subject that is not valid UTF-8 fails the call as it does in PHP:
+`preg_match()`, `preg_match_all()` and `preg_split()` return `false`,
+`preg_replace()` and `preg_replace_callback()` return `null` without calling the
+callback, and `preg_last_error()` returns `PREG_BAD_UTF8_ERROR`. `preg_match()`
+writes an empty `$matches`, and `preg_match_all()` writes its empty result shape.
+Without `u` the same bytes are matched as bytes. Every `preg_*` call resets
+`preg_last_error()` to `PREG_NO_ERROR` on entry. These functions take no
+`$offset` argument, so `PREG_BAD_UTF8_OFFSET_ERROR` is never reported.
+`preg_last_error()` and `preg_last_error_msg()` are not available in `eval()` yet.
 
 Space, newline, and carriage return in the modifier suffix are ignored. Other trailing modifiers are currently not mapped to PCRE2 flags. Every `preg_*` function rejects the removed `/e` modifier before compilation.
 

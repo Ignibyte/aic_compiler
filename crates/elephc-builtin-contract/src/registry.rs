@@ -166,8 +166,9 @@ mod tests {
         // +4: the internal `__elephc_ptr_get` and `__elephc_zval_{pack,free,unpack}` aliases
         // the extension-hosting prelude calls.
         // +2: PHP 8.5 array value-edge functions.
-        // Fork: +1 `flush`, +2 the `--web` prelude's `is_uploaded_file` and `move_uploaded_file`.
-        assert_eq!(contracts().len(), 1251 + curl_surface);
+        // Fork: +1 `flush`, +2 the `--web` prelude's `is_uploaded_file` and `move_uploaded_file`,
+        // +2 `preg_last_error` and `preg_last_error_msg` (#235).
+        assert_eq!(contracts().len(), 1253 + curl_surface);
         assert_eq!(lookup("STRLEN").map(|contract| contract.name), Some("strlen"));
         assert_eq!(lookup("\\parse_url").map(|contract| contract.name), Some("parse_url"));
     }
