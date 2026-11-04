@@ -32,7 +32,10 @@ pub(super) fn method_argument_dispatch(
 ) -> Option<ArgumentDispatch> {
     let class = class.trim_start_matches('\\');
     let key = php_symbol_key(method);
-    let overrides = crate::types::diverging_overrides(ctx.classes, ctx.interfaces, class, &key);
+    let overrides = crate::types::diverging_overrides(ctx.classes, ctx.interfaces, class, &key)
+        .into_iter()
+        .filter(|diverging| !diverging.params.is_empty())
+        .collect::<Vec<_>>();
     if overrides.is_empty() {
         return None;
     }
@@ -69,6 +72,90 @@ pub(super) fn method_argument_dispatch(
     let fallback = fallback.filter(|_| !ctx.has_eval_barrier());
     branches.sort_by_key(|branch| std::cmp::Reverse(class_depth(ctx, &branch.class_name)));
     Some(ArgumentDispatch { receiver, params, branches, fallback })
+}
+
+/// Returns the runtime-class dispatch of an instance call of `method` on a receiver whose class
+/// is not known at compile time (`mixed`, `object`), or `None` behind an eval barrier or when no
+/// user class declares the method.
+///
+/// Every concrete user class declaring the method is one branch, most derived first, so the
+/// body the receiver runs checks the argument by its own declaration. A receiver of any other
+/// class takes no branch: codegen reports the undefined method or binds by an internal body.
+pub(super) fn mixed_receiver_argument_dispatch(
+    ctx: &LoweringContext<'_, '_>,
+    receiver: crate::ir::ValueId,
+    method: &str,
+) -> Option<ArgumentDispatch> {
+    if ctx.has_eval_barrier() {
+        return None;
+    }
+    let key = php_symbol_key(method);
+    let mut names = ctx
+        .classes
+        .iter()
+        .filter(|(name, info)| {
+            !info.is_abstract
+                && !info.is_internal
+                && !ctx.enums.contains_key(name.as_str())
+                && info.methods.contains_key(&key)
+        })
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    names.sort();
+    let mut branches = names
+        .iter()
+        .filter_map(|name| implementation_branch(ctx, name, method))
+        .collect::<Vec<_>>();
+    if branches.is_empty() {
+        return None;
+    }
+    let params = (0..branches.iter().map(|branch| branch.sig.params.len()).max().unwrap_or(0))
+        .collect::<Vec<_>>();
+    branches.sort_by_key(|branch| std::cmp::Reverse(class_depth(ctx, &branch.class_name)));
+    Some(ArgumentDispatch { receiver, params, branches, fallback: None })
+}
+
+/// Returns `operands`, lowered without a signature, with each argument the call's runtime-class
+/// dispatch checks bound by the implementation the receiver runs.
+///
+/// A call on a receiver of unknown class whose candidates disagree has no common signature, so
+/// its arguments reach codegen as written and each candidate binds them. Spread and named
+/// arguments have no fixed position and stay unchecked.
+pub(super) fn bind_unsigned_dispatched_operands(
+    ctx: &mut LoweringContext<'_, '_>,
+    args: &[Expr],
+    mut operands: Vec<crate::ir::ValueId>,
+) -> Vec<crate::ir::ValueId> {
+    let Some(dispatch) = super::call_operand_owners::argument_dispatch(ctx) else {
+        return operands;
+    };
+    if operands.len() != args.len()
+        || args.iter().any(|arg| matches!(arg.kind, ExprKind::Spread(_) | ExprKind::NamedArg { .. }))
+    {
+        return operands;
+    }
+    let dispatched = operands
+        .iter()
+        .enumerate()
+        .map(|(index, operand)| {
+            dispatched_argument_needs_check(&dispatch, index, &ctx.builder.value_php_type(*operand))
+        })
+        .collect::<Vec<_>>();
+    if !dispatched.iter().any(|dispatched| *dispatched) {
+        return operands;
+    }
+    // A check can throw, so every evaluated argument is published before the first one runs.
+    for operand in &mut operands {
+        let lowered = lowered_value_from_id(ctx, *operand);
+        *operand = root_evaluated_call_argument(ctx, lowered, Span::dummy()).value;
+    }
+    for (index, dispatched) in dispatched.into_iter().enumerate() {
+        if dispatched {
+            let bound = bind_dispatched_argument(ctx, &dispatch, index, operands[index]);
+            operands[index] = root_evaluated_call_argument(ctx, bound, Span::dummy()).value;
+        }
+    }
+    operands
 }
 
 /// Returns argument `index` checked and bound by the implementation the receiver's runtime

@@ -93,7 +93,7 @@ pub(crate) use return_alias::{
     collect_return_alias_summaries, summarize_callable_return_alias, ReturnAliasSummaries,
     ReturnArgAlias,
 };
-pub(crate) use override_storage::{diverging_overrides, DivergingOverride};
+pub(crate) use override_storage::{diverging_overrides, diverging_static_overrides, DivergingOverride};
 pub(crate) use result::LoopStorageTypes;
 pub use checker::CheckOptions;
 pub(crate) use checker::normalize_union_members;

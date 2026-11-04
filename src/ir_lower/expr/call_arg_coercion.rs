@@ -1166,7 +1166,8 @@ pub(super) fn lower_args_with_signature_options_for_capture(
     capture_output_index: Option<(usize, PhpType)>,
 ) -> Vec<crate::ir::ValueId> {
     let Some(sig) = sig else {
-        return lower_args(ctx, args);
+        let operands = lower_args(ctx, args);
+        return dispatched_argument_guards::bind_unsigned_dispatched_operands(ctx, args, operands);
     };
     let literal_bound = rewrite_literal_param_bindings(sig, args);
     let args = literal_bound.as_deref().unwrap_or(args);
