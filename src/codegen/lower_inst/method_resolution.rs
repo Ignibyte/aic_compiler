@@ -281,6 +281,36 @@ pub(super) fn store_call_result(
     Ok(())
 }
 
+/// Stores a user method's result like `store_call_result`, and releases a returned string the
+/// box copied.
+///
+/// A user body hands its caller an owned string (or persistent data, which the validating
+/// heap release skips), and EIR releases such a result after boxing it itself. When the call's
+/// slot is `mixed` because an override returns in other storage, or the receiver dispatches
+/// on its runtime class, codegen boxes the string here and EIR never sees the original.
+pub(super) fn store_user_call_result(
+    ctx: &mut FunctionContext<'_>,
+    inst: &Instruction,
+    return_ty: &PhpType,
+) -> Result<()> {
+    let Some(result) = inst.result else {
+        return Ok(());
+    };
+    let result_ty = ctx.value_php_type(result)?;
+    if !matches!(result_ty, PhpType::Mixed | PhpType::Union(_))
+        || return_ty.codegen_repr() != PhpType::Str
+    {
+        return store_call_result(ctx, inst, return_ty);
+    }
+    let (string_reg, _) = abi::string_result_regs(ctx.emitter);
+    abi::emit_push_reg(ctx.emitter, string_reg); // keep the returned string until the box holds its copy
+    emit_box_call_result_as_mixed(ctx.emitter, return_ty);
+    ctx.store_result_value(result)?;
+    abi::emit_pop_reg(ctx.emitter, abi::int_result_reg(ctx.emitter)); // pass the returned string to validated heap release
+    abi::emit_call_label(ctx.emitter, "__rt_heap_free_safe");
+    Ok(())
+}
+
 /// Boxes a call's concrete result for a generic EIR slot.
 ///
 /// The callee hands its caller an owned reference to a heap result, so the box takes that
@@ -316,7 +346,7 @@ pub(super) fn store_method_call_result(
         }
         return Ok(());
     }
-    store_call_result(ctx, inst, &target.return_ty)
+    store_user_call_result(ctx, inst, &target.return_ty)
 }
 
 /// Resolves an instruction data immediate as a method name.

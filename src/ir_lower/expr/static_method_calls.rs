@@ -56,9 +56,11 @@ pub(super) fn lower_static_method_call(
             }
         }
     }
+    let late_static_overrides = late_static_diverging_overrides(ctx, receiver, dispatch_method);
     let sig = static_method_implementation_signature(ctx, receiver, dispatch_method)
         .or_else(|| lexical_instance_static_call_signature(ctx, receiver, dispatch_method))
-        .cloned();
+        .cloned()
+        .map(|sig| widen_late_static_override_params(sig, &late_static_overrides));
     // The result type and the alias summary are decided by the receiver and the method alone, so
     // they are resolved up front: the reference lease and the ordinary owned result both need
     // their staging published BEFORE any argument expression runs, and the result staging has to
@@ -82,6 +84,12 @@ pub(super) fn lower_static_method_call(
             late_static_return_type_for_ir(ctx, &return_type, receiver_type)
         }
         _ => result_type,
+    };
+    // An override returning in other storage hands its result back boxed, as codegen calls it.
+    let result_type = if late_static_overrides.iter().any(|diverging| diverging.returns) {
+        PhpType::Mixed
+    } else {
+        result_type
     };
     let return_alias = static_method_return_arg_alias(ctx, receiver, dispatch_method);
     // A by-reference-returning static method transfers a lease that must outlive this caller's
@@ -155,6 +163,43 @@ pub(super) fn lower_static_method_call(
     }
     let call = take_prepublished_call_result(ctx, result_staging, call, expr.span);
     finish_reference_return_value(ctx, call, reference_staging, expr.span)
+}
+
+/// Returns the static overrides a `static::` call can run that bind a parameter or return in
+/// other storage than the lexical class's own signature; none for any other receiver.
+///
+/// Codegen calls each such override by the late-bound called class with the arguments bound by
+/// its own signature (`emit_diverging_static_override_dispatch`).
+pub(in crate::ir_lower) fn late_static_diverging_overrides(
+    ctx: &LoweringContext<'_, '_>,
+    receiver: &StaticReceiver,
+    method: &str,
+) -> Vec<crate::types::DivergingOverride> {
+    if !matches!(receiver, StaticReceiver::Static) {
+        return Vec::new();
+    }
+    let Some(class_name) = ctx.current_class.as_deref() else {
+        return Vec::new();
+    };
+    crate::types::diverging_static_overrides(ctx.classes, class_name, &php_symbol_key(method))
+}
+
+/// Returns `sig` with every by-value parameter one of `overrides` binds in other storage widened
+/// to `mixed`, so the argument reaches codegen in its source form and each body binds it by its
+/// own signature.
+fn widen_late_static_override_params(
+    mut sig: FunctionSig,
+    overrides: &[crate::types::DivergingOverride],
+) -> FunctionSig {
+    for index in overrides.iter().flat_map(|diverging| diverging.params.iter().copied()) {
+        if sig.ref_params.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        if let Some((_, param_ty)) = sig.params.get_mut(index) {
+            *param_ty = PhpType::Mixed;
+        }
+    }
+    sig
 }
 
 /// Returns preserved late-static return syntax for EIR static dispatch.
@@ -453,6 +498,9 @@ pub(in crate::ir_lower) fn static_method_call_expr_type_for_ir(
     receiver: &StaticReceiver,
     method: &str,
 ) -> Option<PhpType> {
+    if late_static_diverging_overrides(ctx, receiver, method).iter().any(|diverging| diverging.returns) {
+        return Some(PhpType::Mixed);
+    }
     let nominal = static_method_implementation_signature(ctx, receiver, method)
         .or_else(|| lexical_instance_static_call_signature(ctx, receiver, method))
         .map(|signature| normalize_value_php_type(crate::types::eir_value_php_type(&signature.return_type)))?;

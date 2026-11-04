@@ -96,3 +96,5 @@ mod readonly_setter_review;
 mod readonly_store_box_review;
 #[path = "oop/widened_override_params.rs"]
 mod widened_override_params;
+#[path = "oop/override_variance.rs"]
+mod override_variance;

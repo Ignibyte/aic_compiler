@@ -202,7 +202,17 @@ pub(super) fn name_method_argument_callee(
         return;
     }
     let object_ty = ctx.builder.value_php_type(object);
-    let Some((class, _)) = singular_object_class(&object_ty) else {
+    let Some((class, _)) = singular_object_class(&object_ty)
+        .filter(|(class, _)| !class.trim_start_matches('\\').is_empty())
+    else {
+        // No class is known: each class declaring the method checks by its own declaration.
+        if dynamic_method_receiver_needs_mixed_fallback(&object_ty) {
+            if let Some(dispatch) =
+                super::dispatched_argument_guards::mixed_receiver_argument_dispatch(ctx, object, method)
+            {
+                name_argument_dispatch(ctx, dispatch);
+            }
+        }
         return;
     };
     if ctx.enums.contains_key(class.trim_start_matches('\\')) {

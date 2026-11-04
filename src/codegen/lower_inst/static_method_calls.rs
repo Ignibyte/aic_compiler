@@ -135,6 +135,17 @@ pub(super) fn lower_static_method_call(ctx: &mut FunctionContext<'_>, inst: &Ins
     } else {
         None
     };
+    let late_static_done_label = ctx.next_label("late_static_call_done");
+    if overridable_late_static {
+        emit_diverging_static_override_dispatch(
+            ctx,
+            inst,
+            receiver.as_str(),
+            &method_key,
+            &called_class_id,
+            &late_static_done_label,
+        )?;
+    }
     let call_args = materialize_static_method_call_args_with_refs(
         ctx,
         &called_class_id,
@@ -157,13 +168,126 @@ pub(super) fn lower_static_method_call(ctx: &mut FunctionContext<'_>, inst: &Ins
     }
     abi::emit_release_temporary_stack(ctx.emitter, caller_stack_pad_bytes);
     abi::emit_release_temporary_stack(ctx.emitter, call_args.overflow_bytes);
-    store_call_result(ctx, inst, &callee_sig.return_type)?;
+    if overridable_late_static && !callee_sig.by_ref_return {
+        store_user_call_result(ctx, inst, &callee_sig.return_type)?;
+    } else {
+        store_call_result(ctx, inst, &callee_sig.return_type)?;
+    }
     // User callees return an owner independent of the caller's materialized Mixed arguments.
     emit_call_arg_temp_cleanups(ctx, &call_args, None)?;
     emit_ref_arg_writebacks(ctx, &call_args)?;
+    ctx.emitter.label(&late_static_done_label);
     if let Some(done_label) = eval_done_label {
         ctx.emitter.label(&done_label);
     }
+    Ok(())
+}
+
+/// Calls each static override a `static::` call written in `receiver` can run that binds a
+/// parameter or returns in other storage than `receiver`'s own signature, through its own
+/// signature, chosen by the late-bound called class, and jumps to `done_label` after it.
+///
+/// PHP lets an override widen a parameter (`int` to `int|string`) and narrow its return, so its
+/// body reads an argument or hands back its result in other storage than the static vtable
+/// slot's signature. Every other called class falls through to the static vtable call the
+/// caller emits next.
+fn emit_diverging_static_override_dispatch(
+    ctx: &mut FunctionContext<'_>,
+    inst: &Instruction,
+    receiver: &str,
+    method_key: &str,
+    called_class_id: &CalledClassIdArg,
+    done_label: &str,
+) -> Result<()> {
+    let overrides =
+        crate::types::diverging_static_overrides(&ctx.module.class_infos, receiver, method_key);
+    if overrides.is_empty() {
+        return Ok(());
+    }
+    // Each body runs for every called class that inherits it, so classes group by body.
+    let mut bodies: Vec<(String, String)> = Vec::new();
+    let mut classes: Vec<(u64, String)> = Vec::with_capacity(overrides.len());
+    for diverging in &overrides {
+        let info = &ctx.module.class_infos[&diverging.class_name];
+        let impl_class = info.static_method_impl_classes[method_key].clone();
+        let signature = &ctx.module.class_infos[&impl_class].static_methods[method_key];
+        if let Some(position) = diverging
+            .params
+            .iter()
+            .find(|index| signature.ref_params.get(**index).copied().unwrap_or(false))
+        {
+            return Err(CodegenIrError::unsupported(format!(
+                "by-reference parameter #{} of {}::{} is bound in other storage than {}::{} declares it; a static:: call cannot pass it",
+                position + 1,
+                impl_class,
+                method_key,
+                receiver.trim_start_matches('\\'),
+                method_key,
+            )));
+        }
+        let label = match bodies.iter().find(|(_, body)| body == &impl_class) {
+            Some((label, _)) => label.clone(),
+            None => {
+                let label = ctx.next_label(&format!(
+                    "diverging_static_override_{}",
+                    super::method_dispatch::label_fragment(&impl_class)
+                ));
+                bodies.push((label.clone(), impl_class));
+                label
+            }
+        };
+        classes.push((info.class_id, label));
+    }
+    classes.sort();
+    let declared_label = ctx.next_label("diverging_static_override_declared");
+    super::direct_calls::materialize_called_class_id(ctx, called_class_id)?;
+    let class_id_reg = abi::int_result_reg(ctx.emitter);
+    let compare_reg = abi::secondary_scratch_reg(ctx.emitter);
+    // -- select the body the late-bound called class runs --
+    for (class_id, label) in &classes {
+        abi::emit_load_int_immediate(ctx.emitter, compare_reg, *class_id as i64);
+        match ctx.emitter.target.arch {
+            Arch::AArch64 => {
+                ctx.emitter.instruction(&format!("cmp {}, {}", class_id_reg, compare_reg)); // compare the late-bound called-class id with this override's class
+                ctx.emitter.instruction(&format!("b.eq {}", label));            // call the override whose storage differs
+            }
+            Arch::X86_64 => {
+                ctx.emitter.instruction(&format!("cmp {}, {}", class_id_reg, compare_reg)); // compare the late-bound called-class id with this override's class
+                ctx.emitter.instruction(&format!("je {}", label));              // call the override whose storage differs
+            }
+        }
+    }
+    abi::emit_jump(ctx.emitter, &declared_label);
+    for (label, impl_class) in bodies {
+        ctx.emitter.label(&label);
+        let signature = ctx.module.class_infos[&impl_class].static_methods[method_key].clone();
+        let param_types = signature
+            .params
+            .iter()
+            .map(|(_, ty)| ty.codegen_repr())
+            .collect::<Vec<_>>();
+        let call_args = materialize_static_method_call_args_with_refs(
+            ctx,
+            called_class_id,
+            &inst.operands,
+            &param_types,
+            &signature.ref_params,
+        )?;
+        let caller_stack_pad_bytes = direct_call_stack_pad_bytes(ctx, call_args.overflow_bytes);
+        abi::emit_reserve_temporary_stack(ctx.emitter, caller_stack_pad_bytes);
+        abi::emit_call_label(ctx.emitter, &static_method_symbol(&impl_class, method_key));
+        abi::emit_release_temporary_stack(ctx.emitter, caller_stack_pad_bytes);
+        abi::emit_release_temporary_stack(ctx.emitter, call_args.overflow_bytes);
+        if signature.by_ref_return {
+            store_call_result(ctx, inst, &signature.return_type)?;
+        } else {
+            store_user_call_result(ctx, inst, &signature.return_type)?;
+        }
+        emit_call_arg_temp_cleanups(ctx, &call_args, None)?;
+        emit_ref_arg_writebacks(ctx, &call_args)?;
+        abi::emit_jump(ctx.emitter, done_label);
+    }
+    ctx.emitter.label(&declared_label);
     Ok(())
 }
 
