@@ -152,8 +152,8 @@ A successful compile with zero matches still materializes one empty row per
 compiled numbered group under `PREG_PATTERN_ORDER`. Named capture keys are not
 populated.
 
-Global matching in `preg_match_all()`, `preg_replace()` and `preg_split()`
-includes empty matches at the end of the subject and on an empty subject. After an empty match, PCRE2 retries nonempty alternatives at that
+Global matching in `preg_match_all()`, `preg_replace()`,
+`preg_replace_callback()` and `preg_split()` includes empty matches at the end of the subject and on an empty subject. After an empty match, PCRE2 retries nonempty alternatives at that
 position before advancing with the pattern's UTF-8 and newline rules. Offsets
 remain byte offsets in the original subject, including with the `/u` modifier.
 
@@ -184,7 +184,9 @@ runtime strings select them.
 | `PREG_SPLIT_DELIM_CAPTURE` | Include delimiter capture groups in the result |
 | `PREG_SPLIT_OFFSET_CAPTURE` | Return value/offset pairs |
 
-Positive limits are supported.
+Positive limits are supported. As in PHP, only the pieces kept count toward the
+limit: an empty piece that `PREG_SPLIT_NO_EMPTY` drops and a captured delimiter
+do not.
 
 ## SPL regex iterators
 

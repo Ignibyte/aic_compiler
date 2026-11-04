@@ -9,6 +9,8 @@
 //! - Regex helpers preserve PHP PCRE-flavored inputs for PCRE2 and must preserve match array construction.
 //! - Dynamic split flags force boxed Mixed result slots so offset-capture arrays never conflict with string-slot layout.
 //! - A rejected pattern or a malformed `/u` subject returns the `-1` sentinel, PHP false.
+//! - A positive limit counts the pieces kept before each separator, as PHP does, so an
+//!   empty piece `PREG_SPLIT_NO_EMPTY` drops and a delimiter capture never count.
 
 use crate::codegen_support::{emit::Emitter, platform::Arch};
 
@@ -61,7 +63,8 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
     let pair_ptr_off = piece_offset_off + 8;
     let mixed_ptr_off = pair_ptr_off + 8;
     let capture_idx_off = mixed_ptr_off + 8;
-    let stack_size = (capture_idx_off + 32 + 15) & !15;
+    let kept_count_off = capture_idx_off + 8;
+    let stack_size = (kept_count_off + 32 + 15) & !15;
     let save_off = stack_size - 16;
 
     emitter.blank();
@@ -127,14 +130,15 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
     emitter.instruction(&format!("ldr x9, [sp, #{}]", subject_ptr_off));        // load the elephc subject start
     emitter.instruction(&format!("str x9, [sp, #{}]", current_elephc_off));     // initialize the elephc payload cursor
     emitter.instruction(&format!("str xzr, [sp, #{}]", split_count_off));       // initialize the processed separator count
+    emitter.instruction(&format!("str xzr, [sp, #{}]", kept_count_off));        // no piece before a separator has been kept yet
 
     // -- split loop --
     emitter.label("__rt_preg_split_loop");
     emitter.instruction(&format!("ldr x9, [sp, #{}]", limit_off));              // reload PHP split limit
     emitter.instruction("cmp x9, #0");                                          // non-positive limits mean unlimited splitting
     emitter.instruction("b.le __rt_preg_split_limit_ok");                       // skip the split-count check for unlimited splitting
-    emitter.instruction("sub x9, x9, #1");                                      // compute max separators to process for the requested limit
-    emitter.instruction(&format!("ldr x10, [sp, #{}]", split_count_off));       // reload processed separator count
+    emitter.instruction("sub x9, x9, #1");                                      // the last piece of the limit is the unsplit remainder
+    emitter.instruction(&format!("ldr x10, [sp, #{}]", kept_count_off));        // reload the count of kept pieces; PHP counts only those
     emitter.instruction("cmp x10, x9");                                         // has the positive split limit already been reached?
     emitter.instruction("b.ge __rt_preg_split_last");                           // emit the unsplit remainder as the final element
     emitter.label("__rt_preg_split_limit_ok");
@@ -160,6 +164,15 @@ pub(crate) fn emit_preg_split(emitter: &mut Emitter) {
     emitter.instruction("sub x3, x1, x10");                                     // compute absolute byte offset of the segment
     emitter.instruction("subs x2, x9, x3");                                     // segment length = match start - segment offset
     emitter.instruction("csel x2, x2, xzr, ge");                                // a \K match that starts before the segment leaves it empty
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", preg_flags_off));         // reload preg_split flags for the limit count
+    emitter.instruction(&format!("tst x9, #{}", PREG_SPLIT_NO_EMPTY));          // is PREG_SPLIT_NO_EMPTY enabled?
+    emitter.instruction("b.eq __rt_preg_split_segment_kept");                   // every segment is kept without no-empty filtering
+    emitter.instruction("cbz x2, __rt_preg_split_segment_counted");             // a dropped empty segment does not count toward the limit
+    emitter.label("__rt_preg_split_segment_kept");
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", kept_count_off));         // reload the count of kept pieces
+    emitter.instruction("add x9, x9, #1");                                      // this segment will be kept
+    emitter.instruction(&format!("str x9, [sp, #{}]", kept_count_off));         // save the count of kept pieces
+    emitter.label("__rt_preg_split_segment_counted");
     emit_preg_split_push_piece_arm64(
         emitter,
         "segment",
@@ -511,7 +524,8 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     let pair_ptr_off = piece_offset_off + 8;
     let mixed_ptr_off = pair_ptr_off + 8;
     let capture_idx_off = mixed_ptr_off + 8;
-    let stack_size = (capture_idx_off + 16 + 15) & !15;
+    let kept_count_off = capture_idx_off + 8;
+    let stack_size = (kept_count_off + 16 + 15) & !15;
 
     emitter.blank();
     emitter.comment("--- runtime: preg_split ---");
@@ -563,13 +577,14 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction(&format!("mov rax, QWORD PTR [rsp + {}]", subject_ptr_off)); // reload original elephc subject pointer
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rax", current_elephc_off)); // initialize elephc payload cursor
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], 0", split_count_off)); // initialize processed separator count
+    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], 0", kept_count_off)); // no piece before a separator has been kept yet
 
     emitter.label("__rt_preg_split_loop_linux_x86_64");
     emitter.instruction(&format!("mov r9, QWORD PTR [rsp + {}]", limit_off));   // reload PHP split limit
     emitter.instruction("cmp r9, 0");                                           // non-positive limits mean unlimited splitting
     emitter.instruction("jle __rt_preg_split_limit_ok_linux_x86_64");           // skip the split-count check for unlimited splitting
-    emitter.instruction("sub r9, 1");                                           // compute max separators to process for the requested limit
-    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", split_count_off)); // reload processed separator count
+    emitter.instruction("sub r9, 1");                                           // the last piece of the limit is the unsplit remainder
+    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", kept_count_off)); // reload the count of kept pieces; PHP counts only those
     emitter.instruction("cmp r10, r9");                                         // has the positive split limit already been reached?
     emitter.instruction("jge __rt_preg_split_last_linux_x86_64");               // emit the unsplit remainder as the final element
     emitter.label("__rt_preg_split_limit_ok_linux_x86_64");
@@ -597,6 +612,13 @@ fn emit_preg_split_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("jge __rt_preg_split_segment_len_linux_x86_64");        // keep a non-negative segment length
     emitter.instruction("xor edx, edx");                                        // a \K match that starts before the segment leaves it empty
     emitter.label("__rt_preg_split_segment_len_linux_x86_64");
+    emitter.instruction(&format!("test QWORD PTR [rsp + {}], {}", preg_flags_off, PREG_SPLIT_NO_EMPTY)); // is PREG_SPLIT_NO_EMPTY enabled?
+    emitter.instruction("jz __rt_preg_split_segment_kept_linux_x86_64");        // every segment is kept without no-empty filtering
+    emitter.instruction("test rdx, rdx");                                       // is this segment empty?
+    emitter.instruction("jz __rt_preg_split_segment_counted_linux_x86_64");     // a dropped empty segment does not count toward the limit
+    emitter.label("__rt_preg_split_segment_kept_linux_x86_64");
+    emitter.instruction(&format!("add QWORD PTR [rsp + {}], 1", kept_count_off)); // this segment will be kept
+    emitter.label("__rt_preg_split_segment_counted_linux_x86_64");
     emit_preg_split_push_piece_x86_64(
         emitter,
         "segment",
