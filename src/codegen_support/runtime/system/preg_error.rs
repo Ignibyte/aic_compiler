@@ -14,9 +14,7 @@
 //!   into `REG_INVARG`, and so does the shim's `REG_STARTEND` path, so the helpers read
 //!   that status on their first probe of a `/u` pattern as the bad-UTF-8 case.
 //! - Only the first probe of a call reports malformed UTF-8; PCRE2 checks the whole
-//!   subject there. `preg_replace_callback()` still probes a sliced subject, whose later
-//!   probes can begin inside a character after a one-byte empty-match advance, so later
-//!   probes keep their previous "no further match" reading.
+//!   subject there, so a later probe keeps its "no further match" reading.
 
 use crate::codegen_support::{abi, emit::Emitter, platform::Arch};
 
