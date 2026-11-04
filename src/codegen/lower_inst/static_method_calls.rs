@@ -554,8 +554,17 @@ pub(super) fn is_lexical_instance_static_receiver(receiver: &str) -> bool {
     matches!(receiver.trim_start_matches('\\'), "self" | "parent")
 }
 
-/// Returns the class name encoded in the current EIR class-method function name.
+/// Returns the class `self`, `parent` and `static` resolve against at the current instruction.
+///
+/// PHP binds them lexically, so a closure or arrow function declared in a method resolves them
+/// against that method's class: its EIR function is named `__eir_closure_*`, not `Class::method`,
+/// and carries the class as its lexical scope instead. A method body the inliner spliced in keeps
+/// its own class through the same scope. The `Class::` prefix of the function name stays the
+/// fallback for a function that records no lexical scope.
 pub(super) fn current_method_class<'a>(ctx: &'a FunctionContext<'_>) -> Result<&'a str> {
+    if let Some(class_name) = ctx.lexical_class() {
+        return Ok(class_name);
+    }
     ctx.function
         .name
         .rsplit_once("::")
