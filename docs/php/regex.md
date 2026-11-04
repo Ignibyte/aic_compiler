@@ -152,8 +152,8 @@ A successful compile with zero matches still materializes one empty row per
 compiled numbered group under `PREG_PATTERN_ORDER`. Named capture keys are not
 populated.
 
-Global matching includes empty matches at the end of the subject and on an
-empty subject. After an empty match, PCRE2 retries nonempty alternatives at that
+Global matching in `preg_match_all()`, `preg_replace()` and `preg_split()`
+includes empty matches at the end of the subject and on an empty subject. After an empty match, PCRE2 retries nonempty alternatives at that
 position before advancing with the pattern's UTF-8 and newline rules. Offsets
 remain byte offsets in the original subject, including with the `/u` modifier.
 

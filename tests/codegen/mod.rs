@@ -133,6 +133,7 @@ mod types;
 mod optimizer;
 mod preg_replace_callback_throw;
 mod preg_bad_utf8;
+mod preg_empty_matches;
 mod iterators;
 mod dom_html;
 mod spl;

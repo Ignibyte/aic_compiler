@@ -47,7 +47,9 @@ pub(crate) fn emit_preg_replace(emitter: &mut Emitter) {
     let current_pos_off = output_write_off + 8;
     let backref_consume_off = current_pos_off + 8;
     let output_end_off = backref_consume_off + 8;
-    let stack_size = (output_end_off + 96 + 15) & !15;
+    let subject_cstr_len_off = output_end_off + 8;
+    let match_count_off = subject_cstr_len_off + 8;
+    let stack_size = (match_count_off + 96 + 15) & !15;
     let save_off = stack_size - 16;
 
     emitter.blank();
@@ -107,26 +109,39 @@ pub(crate) fn emit_preg_replace(emitter: &mut Emitter) {
     emitter.instruction("add x12, x12, x13");                                   // compute the one-past-end arena address
     emitter.instruction(&format!("str x12, [sp, #{}]", output_end_off));        // save the output guard for every copy loop
 
-    // -- initialize current position --
-    emitter.instruction(&format!("ldr x9, [sp, #{}]", subject_cstr_off));       // subject C string start
-    emitter.instruction(&format!("str x9, [sp, #{}]", current_pos_off));        // save current pos
+    // -- initialize the copy offset, the match count and the probe range end --
+    emitter.instruction(&format!("str xzr, [sp, #{}]", current_pos_off));       // nothing of the subject has been copied yet
+    emitter.instruction(&format!("str xzr, [sp, #{}]", match_count_off));       // no match yet, so the first probe starts a fresh search
+    emitter.instruction(&format!("ldr x0, [sp, #{}]", subject_cstr_off));       // pass the subject C string to strlen
+    emitter.bl_c("strlen");                                                     // keep the established C-string subject boundary
+    emitter.instruction(&format!("str x0, [sp, #{}]", subject_cstr_len_off));   // save the subject length as the end of every probe's range
 
     // -- replacement loop --
+    // Every probe runs over the whole subject, so anchors, word boundaries and lookbehind
+    // see the real text; after a match PCRE2 picks the next offset and options, which
+    // retries an empty match without it and steps over a whole character under /u.
     emitter.label("__rt_preg_replace_loop");
-    emitter.instruction(&format!("ldr x1, [sp, #{}]", current_pos_off));        // current pos
-    emitter.instruction("ldrb w9, [x1]");                                       // check for end
-    emitter.instruction("cbz w9, __rt_preg_replace_done");                      // end of string
-
     emitter.instruction(&format!("ldr x0, [sp, #{}]", handle_off));             // pass compiled opaque handle
+    emitter.instruction(&format!("ldr x1, [sp, #{}]", subject_cstr_off));       // pass the whole subject C string
     emitter.instruction(&format!("mov x2, #{}", PREG_REPLACE_NMATCH));          // capture full match plus replacement backreference groups
     emitter.instruction(&format!("add x3, sp, #{}", match_pairs_off));          // receive fixed signed-64-bit offset pairs
-    emitter.instruction("mov x4, #0");                                          // use default execution flags
+    emitter.instruction("str xzr, [x3]");                                       // publish the input range start
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", subject_cstr_len_off));   // load the subject length
+    emitter.instruction("str x9, [x3, #8]");                                    // publish the input range end
+    super::preg_match_all::emit_global_iteration_flags(emitter, match_count_off);
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize all requested pairs
     emitter.instruction("cbnz x0, __rt_preg_replace_miss");                     // no more matches, copy rest
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", match_count_off));        // load the match count
+    emitter.instruction("add x9, x9, #1");                                      // later probes continue from this match
+    emitter.instruction(&format!("str x9, [sp, #{}]", match_count_off));        // save the match count
 
-    // -- copy text before match (rm_so bytes) --
-    emitter.instruction(&format!("ldr x9, [sp, #{}]", match_pairs_off));        // load full-match signed-64-bit start
-    emitter.instruction(&format!("ldr x10, [sp, #{}]", current_pos_off));       // current C string pos
+    // -- copy text between the copy offset and the match start --
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", match_pairs_off));        // load the absolute full-match start
+    emitter.instruction(&format!("ldr x10, [sp, #{}]", current_pos_off));       // load the copy offset
+    emitter.instruction("subs x9, x9, x10");                                    // unmatched prefix length = match start - copy offset
+    emitter.instruction("csel x9, x9, xzr, ge");                                // a \K match that starts before the copy offset has no prefix
+    emitter.instruction(&format!("ldr x11, [sp, #{}]", subject_cstr_off));      // load the subject start
+    emitter.instruction("add x10, x11, x10");                                   // the unmatched prefix starts at the copy offset
     emitter.instruction(&format!("ldr x11, [sp, #{}]", output_write_off));      // output write pos
     emitter.instruction(&format!("ldr x13, [sp, #{}]", output_end_off));        // reload the output guard
     emitter.instruction("cmp x11, x13");                                        // is the write cursor already outside the arena?
@@ -232,8 +247,8 @@ pub(crate) fn emit_preg_replace(emitter: &mut Emitter) {
     emitter.instruction("cmp x15, #0");                                         // capture was matched ?
     emitter.instruction("b.lt __rt_preg_replace_backref_consume");              // unmatched captures expand to an empty string
     emitter.instruction("sub x16, x16, x15");                                   // capture length = rm_eo - rm_so
-    emitter.instruction(&format!("ldr x17, [sp, #{}]", current_pos_off));       // reload current subject cursor
-    emitter.instruction("add x17, x17, x15");                                   // capture source pointer = current + rm_so
+    emitter.instruction(&format!("ldr x17, [sp, #{}]", subject_cstr_off));      // load the subject start
+    emitter.instruction("add x17, x17, x15");                                   // capture source pointer = subject + absolute capture start
     emitter.instruction("mov x9, #0");                                          // capture copy index
     emitter.instruction(&format!("ldr x14, [sp, #{}]", output_end_off));        // reload the output guard
     emitter.instruction("sub x14, x14, x11");                                   // remaining bytes before the arena end
@@ -255,23 +270,15 @@ pub(crate) fn emit_preg_replace(emitter: &mut Emitter) {
     // -- advance past match --
     emitter.label("__rt_preg_replace_advance");
     emitter.instruction(&format!("str x11, [sp, #{}]", output_write_off));      // save output write pos
-    emitter.instruction(&format!("ldr x9, [sp, #{}]", match_pairs_off + 8));    // load full-match signed-64-bit end
-    emitter.instruction("cmp x9, #0");                                          // zero-length match ?
-    emitter.instruction("b.gt __rt_preg_replace_advance_ok");                   // non-empty match advances by rm_eo
-    emitter.instruction("mov x9, #1");                                          // force progress after zero-length matches
-    emitter.label("__rt_preg_replace_advance_ok");
-    emitter.instruction(&format!("ldr x10, [sp, #{}]", current_pos_off));       // current pos
-    emitter.instruction("add x10, x10, x9");                                    // advance past match
-    emitter.instruction(&format!("str x10, [sp, #{}]", current_pos_off));       // save new pos
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", match_pairs_off + 8));    // load the absolute full-match end
+    emitter.instruction(&format!("str x9, [sp, #{}]", current_pos_off));        // the subject is copied up to the match end
     emitter.instruction("b __rt_preg_replace_loop");                            // continue
 
     // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
     emitter.label("__rt_preg_replace_miss");
     emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_replace_tail");
-    emitter.instruction(&format!("ldr x9, [sp, #{}]", current_pos_off));        // load the current subject cursor
-    emitter.instruction(&format!("ldr x10, [sp, #{}]", subject_cstr_off));      // load the subject start
-    emitter.instruction("cmp x9, x10");                                         // is this the first probe of the subject?
-    emitter.instruction("b.ne __rt_preg_replace_tail");                         // a later probe keeps its no-further-match reading
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", match_count_off));        // load the match count
+    emitter.instruction("cbnz x9, __rt_preg_replace_tail");                     // a later probe keeps its no-further-match reading
     emitter.instruction(&format!("ldr x0, [sp, #{}]", handle_off));             // reload compiled opaque handle
     emitter.bl_c("elephc_pcre2_v1_free");                                       // release compiled regex resources
     emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
@@ -279,7 +286,9 @@ pub(crate) fn emit_preg_replace(emitter: &mut Emitter) {
 
     // -- copy remaining text after last match --
     emitter.label("__rt_preg_replace_tail");
-    emitter.instruction(&format!("ldr x10, [sp, #{}]", current_pos_off));       // current pos
+    emitter.instruction(&format!("ldr x10, [sp, #{}]", subject_cstr_off));      // load the subject start
+    emitter.instruction(&format!("ldr x9, [sp, #{}]", current_pos_off));        // load the copy offset
+    emitter.instruction("add x10, x10, x9");                                    // the unmatched tail starts at the copy offset
     emitter.instruction(&format!("ldr x11, [sp, #{}]", output_write_off));      // output write pos
     emitter.label("__rt_preg_replace_tail_loop");
     emitter.instruction(&format!("ldr x13, [sp, #{}]", output_end_off));        // reload the output guard
@@ -371,7 +380,9 @@ fn emit_preg_replace_linux_x86_64(emitter: &mut Emitter) {
     let current_pos_off = output_write_off + 8;
     let backref_consume_off = current_pos_off + 8;
     let output_end_off = backref_consume_off + 8;
-    let stack_size = (output_end_off + 16 + 15) & !15;
+    let subject_cstr_len_off = output_end_off + 8;
+    let match_count_off = subject_cstr_len_off + 8;
+    let stack_size = (match_count_off + 16 + 15) & !15;
     emitter.blank();
     emitter.comment("--- runtime: preg_replace ---");
     emitter.label_global("__rt_preg_replace");
@@ -416,24 +427,35 @@ fn emit_preg_replace_linux_x86_64(emitter: &mut Emitter) {
     abi::emit_load_int_immediate(emitter, "r10", cap as i64);                   // load the shared scratch capacity
     emitter.instruction("add rax, r10");                                        // compute the one-past-end arena address
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rax", output_end_off)); // save the output guard for every copy loop
-    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], 0", current_pos_off)); // reserve the current position slot before storing the initial subject cursor
-    emitter.instruction(&format!("mov rax, QWORD PTR [rsp + {}]", subject_cstr_off)); // reload the subject C string pointer as the initial regex execution cursor
-    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rax", current_pos_off)); // initialize the current subject cursor from the start of the null-terminated subject string
+    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], 0", current_pos_off)); // nothing of the subject has been copied yet: the copy offset starts at zero
+    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], 0", match_count_off)); // no match yet, so the first probe starts a fresh search
+    emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", subject_cstr_off)); // pass the subject C string to strlen
+    emitter.bl_c("strlen");                                                     // keep the established C-string subject boundary
+    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rax", subject_cstr_len_off)); // save the subject length as the end of every probe's range
 
+    // Every probe runs over the whole subject, so anchors, word boundaries and lookbehind
+    // see the real text; after a match PCRE2 picks the next offset and options, which
+    // retries an empty match without it and steps over a whole character under /u.
     emitter.label("__rt_preg_replace_loop_linux_x86_64");
-    emitter.instruction(&format!("mov rsi, QWORD PTR [rsp + {}]", current_pos_off)); // reload the current subject C-string cursor before the next regexec() probe
-    emitter.instruction("movzx r9d, BYTE PTR [rsi]");                           // stop the replacement loop once the current subject cursor reaches the trailing null terminator
-    emitter.instruction("test r9d, r9d");                                       // treat the terminating null byte as the end-of-subject condition
-    emitter.instruction("jz __rt_preg_replace_done_linux_x86_64");              // finish replacement when the full subject payload has been consumed
     emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", handle_off)); // pass compiled opaque handle
+    emitter.instruction(&format!("mov rsi, QWORD PTR [rsp + {}]", subject_cstr_off)); // pass the whole subject C string
     emitter.instruction(&format!("mov edx, {}", PREG_REPLACE_NMATCH));          // capture full match plus replacement backreference groups
     emitter.instruction(&format!("lea rcx, [rsp + {}]", match_pairs_off));      // receive fixed signed-64-bit offset pairs
-    emitter.instruction("xor r8d, r8d");                                        // use default execution flags
+    emitter.instruction("mov QWORD PTR [rcx], 0");                              // publish the input range start
+    emitter.instruction(&format!("mov r9, QWORD PTR [rsp + {}]", subject_cstr_len_off)); // load the subject length
+    emitter.instruction("mov QWORD PTR [rcx + 8], r9");                         // publish the input range end
+    super::preg_match_all::emit_global_iteration_flags(emitter, match_count_off);
     emitter.bl_c("elephc_pcre2_v1_exec");                                       // execute and initialize all requested pairs
-    emitter.instruction("test eax, eax");                                       // did regexec() find another match at or after the current cursor?
-    emitter.instruction("jnz __rt_preg_replace_miss_linux_x86_64");             // copy the remaining subject tail once regexec() reports no further matches
-    emitter.instruction(&format!("mov r9, QWORD PTR [rsp + {}]", match_pairs_off)); // load full-match signed-64-bit start
-    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_pos_off)); // reload the current subject cursor before copying the unmatched prefix bytes
+    emitter.instruction("test eax, eax");                                       // did the probe find another match?
+    emitter.instruction("jnz __rt_preg_replace_miss_linux_x86_64");             // copy the remaining subject tail once there is no further match
+    emitter.instruction(&format!("add QWORD PTR [rsp + {}], 1", match_count_off)); // later probes continue from this match
+    emitter.instruction(&format!("mov r9, QWORD PTR [rsp + {}]", match_pairs_off)); // load the absolute full-match start
+    emitter.instruction(&format!("sub r9, QWORD PTR [rsp + {}]", current_pos_off)); // unmatched prefix length = match start - copy offset
+    emitter.instruction("jge __rt_preg_replace_prefix_len_linux_x86_64");       // keep a non-negative prefix length
+    emitter.instruction("xor r9d, r9d");                                        // a \K match that starts before the copy offset has no prefix
+    emitter.label("__rt_preg_replace_prefix_len_linux_x86_64");
+    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", subject_cstr_off)); // load the subject start
+    emitter.instruction(&format!("add r10, QWORD PTR [rsp + {}]", current_pos_off)); // the unmatched prefix starts at the copy offset
     emitter.instruction(&format!("mov r11, QWORD PTR [rsp + {}]", output_write_off)); // reload the current replacement output write cursor before appending bytes
     emitter.instruction(&format!("mov rax, QWORD PTR [rsp + {}]", output_end_off)); // reload the output guard
     emitter.instruction("cmp r11, rax");                                        // is the write cursor already outside the arena?
@@ -541,8 +563,8 @@ fn emit_preg_replace_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov rdi, QWORD PTR [rsp + r10 + 8]");                  // load signed-64-bit capture end
     emitter.instruction("cmp rsi, 0");                                          // capture was matched ?
     emitter.instruction("jl __rt_preg_replace_backref_consume_linux_x86_64");   // unmatched captures expand to an empty string
-    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_pos_off)); // reload current subject cursor
-    emitter.instruction("add r10, rsi");                                        // capture source pointer = current + rm_so
+    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", subject_cstr_off)); // load the subject start
+    emitter.instruction("add r10, rsi");                                        // capture source pointer = subject + absolute capture start
     emitter.instruction("sub rdi, rsi");                                        // capture length = rm_eo - rm_so
     emitter.instruction("xor esi, esi");                                        // capture copy index = 0
     emitter.instruction(&format!("mov r9, QWORD PTR [rsp + {}]", output_end_off)); // reload the output guard
@@ -563,21 +585,14 @@ fn emit_preg_replace_linux_x86_64(emitter: &mut Emitter) {
 
     emitter.label("__rt_preg_replace_advance_linux_x86_64");
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r11", output_write_off)); // preserve the updated replacement output write cursor before advancing the subject cursor
-    emitter.instruction(&format!("mov r9, QWORD PTR [rsp + {}]", match_pairs_off + 8)); // load full-match signed-64-bit end
-    emitter.instruction("cmp r9, 0");                                           // detect zero-length regex matches so the replacement loop still makes forward progress
-    emitter.instruction("jg __rt_preg_replace_advance_ok_linux_x86_64");        // trust rm_eo directly when the regex consumed at least one byte
-    emitter.instruction("mov r9, 1");                                           // force zero-length matches to advance by one byte and avoid infinite replacement loops
-    emitter.label("__rt_preg_replace_advance_ok_linux_x86_64");
-    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_pos_off)); // reload the current subject cursor before advancing it past the latest regex match
-    emitter.instruction("add r10, r9");                                         // advance the current subject cursor by rm_eo bytes or the forced one-byte fallback
-    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r10", current_pos_off)); // preserve the advanced subject cursor for the next replacement-loop iteration
+    emitter.instruction(&format!("mov r9, QWORD PTR [rsp + {}]", match_pairs_off + 8)); // load the absolute full-match end
+    emitter.instruction(&format!("mov QWORD PTR [rsp + {}], r9", current_pos_off)); // the subject is copied up to the match end
     emitter.instruction("jmp __rt_preg_replace_loop_linux_x86_64");             // continue replacing the remaining regex matches in the subject payload
 
     // -- only the first probe sees the whole subject, so only it reports malformed UTF-8 --
     emitter.label("__rt_preg_replace_miss_linux_x86_64");
     emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_replace_tail_linux_x86_64");
-    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_pos_off)); // load the current subject cursor
-    emitter.instruction(&format!("cmp r10, QWORD PTR [rsp + {}]", subject_cstr_off)); // is this the first probe of the subject?
+    emitter.instruction(&format!("cmp QWORD PTR [rsp + {}], 0", match_count_off)); // is this the first probe of the subject?
     emitter.instruction("jne __rt_preg_replace_tail_linux_x86_64");             // a later probe keeps its no-further-match reading
     emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", handle_off)); // reload compiled opaque handle
     emitter.bl_c("elephc_pcre2_v1_free");                                       // release compiled regex resources
@@ -585,7 +600,8 @@ fn emit_preg_replace_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("jmp __rt_preg_replace_null_linux_x86_64");             // PHP returns null for a malformed subject
 
     emitter.label("__rt_preg_replace_tail_linux_x86_64");
-    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", current_pos_off)); // reload the current subject cursor before copying the unmatched tail bytes
+    emitter.instruction(&format!("mov r10, QWORD PTR [rsp + {}]", subject_cstr_off)); // load the subject start
+    emitter.instruction(&format!("add r10, QWORD PTR [rsp + {}]", current_pos_off)); // the unmatched tail starts at the copy offset
     emitter.instruction(&format!("mov r11, QWORD PTR [rsp + {}]", output_write_off)); // reload the replacement output write cursor before appending the unmatched tail
 
     emitter.label("__rt_preg_replace_tail_loop_linux_x86_64");
