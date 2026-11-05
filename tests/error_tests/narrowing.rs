@@ -325,3 +325,13 @@ final class Copy extends Holder { public function __clone() {} }",
         expect_error(&format!("{READONLY_PLUGIN_CLASSES}{classes}"), "Undefined method: Plugin::count");
     }
 }
+
+/// A call that takes the guarded local by reference may rebind it, so `$x === null || f($x)`
+/// keeps no non-null type past the early return.
+#[test]
+fn test_error_or_guard_drops_past_a_by_reference_call() {
+    expect_error(
+        "<?php function reset_it(?string &$x): bool { $x = null; return true; } function need(string $x): void {} function run(?string $x): void { if ($x === null || !reset_it($x)) { return; } need($x); }",
+        "expects string",
+    );
+}

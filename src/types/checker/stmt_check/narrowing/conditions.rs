@@ -237,7 +237,23 @@ impl Checker {
     fn right_operand_keeps_local_guard(&self, right: &Expr, var: &str) -> bool {
         !Self::narrowed_place_key_is_property(var)
             && self.local_binding_is_unaliased(var)
-            && expr_cannot_rebind_local(right, var)
+            && expr_cannot_rebind_local(right, var, &|name, index| {
+                self.function_param_is_by_value(name, index)
+            })
+    }
+
+    /// Returns whether the declared parameter at `index` of the user function or builtin
+    /// `name` takes its argument by value. An unknown callee, a by-reference parameter and a
+    /// position past the declared ones (a variadic tail) all answer no.
+    fn function_param_is_by_value(&self, name: &str, index: usize) -> bool {
+        let ref_params = match self.functions.get(name) {
+            Some(signature) => &signature.ref_params,
+            None => match crate::builtins::registry::lookup(name) {
+                Some(def) => &def.ref_params,
+                None => return false,
+            },
+        };
+        ref_params.get(index).is_some_and(|by_ref| !by_ref)
     }
 
     /// Proves a later operand cannot overwrite an earlier guard's binding or run user code.
@@ -282,13 +298,16 @@ impl Checker {
 
 /// Returns whether evaluating `expr` cannot rebind the unaliased local `var`: it is built only
 /// from literals, reads, comparisons and arithmetic, property reads, and calls that are not
-/// handed `var` itself (a by-reference parameter could rebind it) and are not `extract()`.
+/// `extract()` and hand `var` itself only to a parameter `by_value(function, position)` proves
+/// takes it by value (a by-reference parameter could rebind it; a method's is never proved).
 /// Anything else, an assignment or an increment included, counts as a possible write.
-fn expr_cannot_rebind_local(expr: &Expr, var: &str) -> bool {
-    let arguments_keep = |args: &[Expr]| {
-        args.iter().all(|arg| {
-            !matches!(&arg.kind, ExprKind::Variable(name) if name == var)
-                && expr_cannot_rebind_local(arg, var)
+fn expr_cannot_rebind_local(expr: &Expr, var: &str, by_value: &dyn Fn(&str, usize) -> bool) -> bool {
+    let arguments_keep = |callee: Option<&str>, args: &[Expr]| {
+        args.iter().enumerate().all(|(index, arg)| match &arg.kind {
+            ExprKind::Variable(name) if name == var => {
+                callee.is_some_and(|callee| by_value(callee, index))
+            }
+            _ => expr_cannot_rebind_local(arg, var, by_value),
         })
     };
     match &expr.kind {
@@ -296,20 +315,20 @@ fn expr_cannot_rebind_local(expr: &Expr, var: &str) -> bool {
         | ExprKind::IntLiteral(_) | ExprKind::FloatLiteral(_) | ExprKind::StringLiteral(_)
         | ExprKind::ConstRef(_) | ExprKind::ClassConstant { .. } => true,
         ExprKind::BinaryOp { left, right, .. } => {
-            expr_cannot_rebind_local(left, var) && expr_cannot_rebind_local(right, var)
+            expr_cannot_rebind_local(left, var, by_value) && expr_cannot_rebind_local(right, var, by_value)
         }
         ExprKind::Not(inner) | ExprKind::Negate(inner) | ExprKind::ErrorSuppress(inner) => {
-            expr_cannot_rebind_local(inner, var)
+            expr_cannot_rebind_local(inner, var, by_value)
         }
-        ExprKind::InstanceOf { value, .. } => expr_cannot_rebind_local(value, var),
+        ExprKind::InstanceOf { value, .. } => expr_cannot_rebind_local(value, var, by_value),
         ExprKind::PropertyAccess { object, .. } | ExprKind::NullsafePropertyAccess { object, .. } => {
-            expr_cannot_rebind_local(object, var)
+            expr_cannot_rebind_local(object, var, by_value)
         }
         ExprKind::MethodCall { object, args, .. } | ExprKind::NullsafeMethodCall { object, args, .. } => {
-            expr_cannot_rebind_local(object, var) && arguments_keep(args)
+            expr_cannot_rebind_local(object, var, by_value) && arguments_keep(None, args)
         }
         ExprKind::FunctionCall { name, args } => {
-            crate::names::php_symbol_key(name.as_str()) != "extract" && arguments_keep(args)
+            crate::names::php_symbol_key(name.as_str()) != "extract" && arguments_keep(Some(name.as_str()), args)
         }
         _ => false,
     }

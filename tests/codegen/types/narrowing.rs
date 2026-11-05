@@ -1260,3 +1260,58 @@ echo (new Report(new Sold()))->line(), "|", (new Report(new Other()))->line(), "
     );
     assert_eq!(out, "sold 7|other\n");
 }
+
+/// Verifies `$x === null || !f($x)` keeps the left guard's non-null type past an early return
+/// when `f` takes `$x` by value: the call cannot rebind the caller's local.
+#[test]
+fn test_or_guard_survives_a_by_value_call_on_the_guarded_local() {
+    let out = compile_and_run(
+        r#"<?php
+final class Files {
+    public function path(int $n): ?string { return $n > 0 ? "a/" . $n . ".txt" : null; }
+    public function name(int $n): string {
+        $path = $this->path($n);
+        if ($path === null || !str_ends_with($path, '.txt')) {
+            return "none";
+        }
+        return $this->base($path);
+    }
+    private function base(string $path): string { return basename($path); }
+}
+$files = new Files();
+echo $files->name(3), "|", $files->name(0), "\n";
+"#,
+    );
+    assert_eq!(out, "3.txt|none\n");
+}
+
+/// Verifies a declared non-null method result on a property receiver replaces the nullable view
+/// a returning branch's binding of the same local left behind.
+#[test]
+fn test_property_receiver_method_result_replaces_a_returned_branch_binding() {
+    let out = compile_and_run(
+        r#"<?php
+final class Item {}
+final class Items {
+    /** @return list<Item> */
+    public function all(int $n): array { return array_fill(0, $n, new Item()); }
+}
+final class Page {
+    public function __construct(private Items $items) {}
+    public function count(string $path): int {
+        if ($path === '/') {
+            $content = $this->items->all(1);
+            return $this->size($content);
+        }
+        $content = $this->items->all(3);
+        return $this->size($content);
+    }
+    /** @param list<Item> $content */
+    private function size(array $content): int { return count($content); }
+}
+$page = new Page(new Items());
+echo $page->count('/'), "|", $page->count('/x'), "\n";
+"#,
+    );
+    assert_eq!(out, "1|3\n");
+}
