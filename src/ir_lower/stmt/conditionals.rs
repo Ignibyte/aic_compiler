@@ -3,6 +3,7 @@
 //!
 //! Called from:
 //! - `crate::ir_lower::stmt`.
+//! - Nullsafe expression joins reuse the pointer-storage merge.
 //!
 //! Key details:
 //! - Preserves statement ordering, CFG shape, EIR effects, and ownership contracts.
@@ -161,6 +162,20 @@ pub(super) fn record_if_arm_exit(ctx: &mut LoweringContext<'_, '_>, arms: &mut V
     });
 }
 
+/// Branches each arm's tail to `merge` and leaves the current local types as they are.
+///
+/// For a `try` whose body is the only fall-through while a catch leaves through `break` or
+/// `continue` (`exceptions::finish_try_type_join`).
+pub(super) fn branch_arm_tails(ctx: &mut LoweringContext<'_, '_>, arms: &[IfArmExit], merge: BlockId) {
+    for arm in arms {
+        ctx.builder.position_at_end(arm.tail);
+        ctx.builder.terminate(Terminator::Br {
+            target: merge,
+            args: Vec::new(),
+        });
+    }
+}
+
 /// Reconciles flow-sensitive types and indexed-array layouts on all incoming merge edges.
 ///
 /// Shared by `if` chains and by `try`/`catch` (`exceptions::lower_try_catch`), whose post-try
@@ -315,7 +330,7 @@ fn join_arm_types(ctx: &LoweringContext<'_, '_>, arms: &[IfArmExit]) -> TypeEnv 
 /// `merge_local_pointer_targets`), as `?ptr<T>` when any arm can be `null`, so `=== null` after
 /// the merge tests the address instead of trusting the last arm's fact. Returns `None` when the
 /// arms already agree, when no arm holds a pointer, or when any arm holds something else.
-fn join_pointer_arm_types(arm_types: &[PhpType]) -> Option<PhpType> {
+pub(in crate::ir_lower) fn join_pointer_arm_types(arm_types: &[PhpType]) -> Option<PhpType> {
     if arm_types.windows(2).all(|pair| pair[0] == pair[1]) {
         return None;
     }

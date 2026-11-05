@@ -66,8 +66,15 @@ const _: () = assert!(std::mem::size_of::<Instruction>() <= 112);
 /// Optimization pass recorded as an instruction's provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PassOrigin {
+    ArrayFillLoop,
+    ArrayGetBounds,
+    ArraySumLoop,
+    SqrtSumLoop,
+    JsonDecodeCountHoist,
     BufferAccess,
     ConstFold,
+    CountHoist,
+    ConcatResetHoist,
     IntegerRange,
     Licm,
     LoopOptimize,
@@ -77,8 +84,15 @@ impl PassOrigin {
     /// Returns the lower-case spelling used by source maps and the EIR printer.
     pub fn name(self) -> &'static str {
         match self {
+            PassOrigin::ArrayFillLoop => "array_fill_loop",
+            PassOrigin::ArrayGetBounds => "array_get_bounds",
+            PassOrigin::ArraySumLoop => "array_sum_loop",
+            PassOrigin::SqrtSumLoop => "sqrt_sum_loop",
+            PassOrigin::JsonDecodeCountHoist => "json_decode_count_hoist",
             PassOrigin::BufferAccess => "buffer_access",
             PassOrigin::ConstFold => "const_fold",
+            PassOrigin::CountHoist => "count_hoist",
+            PassOrigin::ConcatResetHoist => "concat_reset_hoist",
             PassOrigin::IntegerRange => "integer_range",
             PassOrigin::Licm => "licm",
             PassOrigin::LoopOptimize => "loop_optimize",
@@ -1004,6 +1018,26 @@ pub enum Op {
     ArrayLen,
     HashLen,
     ArrayGet,
+    /// Appends one raw int into a private, preallocated, int-shaped indexed array.
+    ///
+    /// Operands: array, value. No immediate. The producer proved the array is unique, non-null,
+    /// int-shaped and has spare capacity for this append, so codegen stores the payload and
+    /// advances the header length without COW, shape, growth or writeback work.
+    ArrayPushReserved,
+    /// Sums a dense int-shaped indexed array range into a fresh Mixed int/float cell.
+    ///
+    /// Operands: array, inclusive start, exclusive end, borrowed seed Mixed cell. No immediate.
+    /// The producer proved the receiver is a private, non-null, int-shaped packed array and that
+    /// the range is in bounds. The helper reproduces PHP's left-to-right `+` sequence, promoting
+    /// to float at the first integer overflow, and returns an owned Mixed cell.
+    ArraySumInt,
+    /// Reads one element of a private, int-shaped indexed array at a proven in-bounds index.
+    ///
+    /// Operands: array, index. No immediate. The producing pass proved the receiver is non-null,
+    /// not hash-promoted, not widened to boxed slots, and that `0 <= index < length` holds on
+    /// every path reaching the read. Codegen emits one direct payload load; unlike [`Op::ArrayGet`]
+    /// the op cannot warn, throw, allocate, or yield PHP null.
+    ArrayGetUnchecked,
     ArrayGetSilent,
     /// Prepares an indexed element for mutation: boxed Mixed reads retain the owning cell, while
     /// typed container reads copy-on-write separate and republish the child in its parent slot.
@@ -1240,6 +1274,13 @@ pub enum Op {
     /// follows. Operand: the value (boxed Mixed, or a raw scalar after folding or counter
     /// scalarization). Immediate: `ScalarArgumentCheck`. No result.
     ScalarArgumentGuard,
+    /// Narrows a checked integer add/sub/mul result stored into a DECLARED `int` property.
+    /// The operand can only hold an int or the float promoted by overflow (boxed Mixed, or a
+    /// raw I64/F64 after constant folding): an int forwards, a float inside `[-2^63, 2^63)`
+    /// truncates exactly (every such float is integral), and any other float throws the
+    /// catchable `TypeError` whose complete text is the immediate's data id
+    /// (`"Cannot assign float to property C::$p of type int"`). Result: `I64`.
+    PropertyBoundaryCheckedToInt,
     ClassConstant,
     ScopedConstantGet,
     ClassAttrNames,
@@ -1268,6 +1309,8 @@ pub enum Op {
     ClosureCall,
     ExprCall,
     FirstClassCallableNew,
+    /// Materializes an implicit string/array callable descriptor without PHP object identity.
+    CallableValueNew,
     CallableArrayNew,
     /// Invokes a descriptor with callback, argument container, and optional source-strict Bool.
     CallableDescriptorInvoke,
@@ -1459,8 +1502,13 @@ impl Op {
             ArrayToPointerWords => {
                 E::READS_HEAP | E::WRITES_HEAP | E::ALLOC_HEAP | E::REFCOUNT_OP
             }
+            // Reads the array range and the seed cell, retains the seed for an empty range,
+            // and allocates the boxed result. No PHP callback or warning runs inside.
+            ArraySumInt => E::READS_HEAP | E::ALLOC_HEAP | E::REFCOUNT_OP | E::MAY_FATAL,
+            // Stores one raw int into preallocated spare capacity and advances the header length.
+            ArrayPushReserved => E::WRITES_HEAP,
             MixedBox | MixedClone | ArrayToMixed | HashToMixed | ArrayNew | HashNew | ObjectNew
-            | FirstClassCallableNew | CallableArrayNew | NormalizeCallable | BufferNew
+            | FirstClassCallableNew | CallableValueNew | CallableArrayNew | NormalizeCallable | BufferNew
             | GeneratorNew => {
                 E::ALLOC_HEAP
             }
@@ -1477,9 +1525,12 @@ impl Op {
             // Scalar stores and whole POD record copies never replace refcounted elements.
             BufferSetResolved => E::READS_HEAP | E::WRITES_HEAP | E::MAY_FATAL,
             BufferSet => E::READS_HEAP | E::WRITES_HEAP | E::MAY_FATAL | E::REFCOUNT_OP,
-            ArrayGetSilent | HashGetSilent | ArrayIsset | HashIsset | DescriptorArgKeyExists => {
-                E::READS_HEAP
-            }
+            ArrayGetUnchecked
+            | ArrayGetSilent
+            | HashGetSilent
+            | ArrayIsset
+            | HashIsset
+            | DescriptorArgKeyExists => E::READS_HEAP,
             ArrayGet | HashGet => E::READS_HEAP | E::MAY_WARN,
             // Not a pure read despite the name: the copy-on-write split rewrites the receiver's
             // element slot (and the receiver's own local slot), so it must never be treated as
@@ -1601,10 +1652,12 @@ impl Op {
             }
             SplRuntimeCall | DynamicObjectNew | DynamicObjectNewMixed
             | DynamicObjectNewWithoutConstructorMixed | MethodLookup | StaticMethodCall
-            | InstanceOfDynamic | MixedNumericBinop | LooseEq | LooseNotEq | PhpRelCmp
+            | InstanceOfDynamic | MixedNumericBinop | PhpRelCmp
             | Spaceship => {
                 E::READS_HEAP | E::MAY_DEOPT
             }
+            // Object/number conversion can invoke an arbitrary PHP warning handler.
+            LooseEq | LooseNotEq => E::READS_HEAP | E::MAY_DEOPT | E::MAY_WARN | E::MAY_THROW,
             // `++`/`--` on a string reads the operand's payload, may write the shared
             // concat scratch while building the carried result, and always allocates the
             // boxed Mixed cell the new value is returned in.
@@ -1616,7 +1669,7 @@ impl Op {
             StrEq | StrCmp | StrLooseEq | StrictEq | StrictNotEq | InstanceOf => E::READS_HEAP,
             EnumBackingStringToInt | EnumBackingMixedToInt | PackedFieldMixedToInt
             | PackedFieldMixedToFloat | PackedFieldMixedToBool | ReturnBoundaryMixedToInt
-            | ReturnBoundaryMixedGuard | ScalarArgumentGuard => {
+            | ReturnBoundaryMixedGuard | ScalarArgumentGuard | PropertyBoundaryCheckedToInt => {
                 E::READS_HEAP | E::ALLOC_HEAP | E::MAY_THROW
             }
             EvalFunctionExists | EvalClassExists | EvalConstantExists => E::READS_GLOBAL,
@@ -1710,6 +1763,8 @@ impl Op {
     /// `ir_lower::expr::arithmetic_effects()` drops that bit when the right operand is a literal
     /// that rules the error out, so `$x << 3` and `$x / 2` stay removable, hoistable, and
     /// CSE-able exactly as they were before the guards existed.
+    /// Runtime-selected callable, function-variant and eval targets keep their defaults:
+    /// whole-module refinement has no proof of every implementation they may invoke.
     pub fn allows_effect_refinement(self) -> bool {
         matches!(
             self,
@@ -1720,14 +1775,8 @@ impl Op {
                 | Op::IShl
                 | Op::IShrA
                 | Op::Call
-                | Op::FunctionVariantCall
                 | Op::ClosureBind
                 | Op::LanguageConstructCall
-                | Op::EvalLiteralCall
-                | Op::EvalFunctionCall
-                | Op::EvalFunctionCallArray
-                | Op::EvalObjectNew
-                | Op::EvalStaticMethodCall
                 | Op::RuntimeCall
                 | Op::ExternCall
                 | Op::MethodCall
@@ -1735,10 +1784,6 @@ impl Op {
                 | Op::PropGet
                 | Op::NullsafePropGet
                 | Op::DynamicPropGet
-                | Op::ClosureCall
-                | Op::ExprCall
-                | Op::CallableDescriptorInvoke
-                | Op::PipeCall
                 | Op::IteratorMethodCall
                 | Op::SplRuntimeCall
                 | Op::FiberRuntimeCall
@@ -1867,6 +1912,9 @@ impl Op {
             ArrayLen => "array_len",
             HashLen => "hash_len",
             ArrayGet => "array_get",
+            ArrayPushReserved => "array_push_reserved",
+            ArraySumInt => "array_sum_int",
+            ArrayGetUnchecked => "array_get_unchecked",
             ArrayGetSilent => "array_get_silent",
             ArrayGetForWrite => "array_get_for_write",
             HashGet => "hash_get",
@@ -1956,6 +2004,7 @@ impl Op {
             ReturnBoundaryMixedToInt => "return_boundary_mixed_to_int",
             ReturnBoundaryMixedGuard => "return_boundary_mixed_guard",
             ScalarArgumentGuard => "scalar_argument_guard",
+            PropertyBoundaryCheckedToInt => "property_boundary_checked_to_int",
             ClassConstant => "class_constant",
             ScopedConstantGet => "scoped_constant_get",
             ClassAttrNames => "class_attr_names",
@@ -1983,6 +2032,7 @@ impl Op {
             ClosureCall => "closure_call",
             ExprCall => "expr_call",
             FirstClassCallableNew => "first_class_callable_new",
+            CallableValueNew => "callable_value_new",
             CallableArrayNew => "callable_array_new",
             CallableDescriptorInvoke => "callable_descriptor_invoke",
             PipeCall => "pipe_call",

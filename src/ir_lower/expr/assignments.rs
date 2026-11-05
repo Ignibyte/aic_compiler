@@ -137,7 +137,9 @@ pub(super) fn lower_assignment_expr(
         );
         let is_ref_bound = ctx.is_ref_bound_local(name);
         let existing_type = ctx.local_types.get(name).cloned();
-        let php_type = if is_static || is_ref_bound {
+        let php_type = if let Some(storage) = crate::ir_lower::stmt::union_local_storage_type(ctx, name, value, &value_php_type) {
+            storage
+        } else if is_static || is_ref_bound {
             existing_type.unwrap_or(value_php_type)
         } else {
             value_php_type
@@ -607,6 +609,29 @@ fn runtime_name_value_needs_boxing(
     })
 }
 
+/// Emits PHP's warning for a decrement that leaves a null local unchanged.
+fn emit_null_decrement_warning(ctx: &mut LoweringContext<'_, '_>, span: Span) {
+    let message = lower_expr(
+        ctx,
+        &Expr::new(
+            ExprKind::StringLiteral(
+                "Warning: Decrement on type null has no effect, this will change in the next major version of PHP\n"
+                    .into(),
+            ),
+            span,
+        ),
+    );
+    ctx.emit_void(
+        Op::RuntimeCall,
+        vec![message.value],
+        Some(Immediate::RuntimeCall(
+            crate::ir::RuntimeCallTarget::WriteDiagnostic,
+        )),
+        effects_lookup::runtime_effects(),
+        Some(span),
+    );
+}
+
 /// Lowers pre/post increment and decrement expressions.
 ///
 /// Three paths, all of which can retype the local, so all of them store a boxed Mixed:
@@ -618,7 +643,7 @@ fn runtime_name_value_needs_boxing(
 ///   (`PHP_INT_MAX + 1` becomes float).
 ///
 /// The post-forms return the value the local held before the store; the pre-forms re-read
-/// the local afterwards.
+/// the local afterwards. A null decrement warns and leaves the local unchanged.
 pub(super) fn lower_inc_dec(
     ctx: &mut LoweringContext<'_, '_>,
     name: &str,
@@ -639,6 +664,15 @@ pub(super) fn lower_inc_dec(
             ctx.store_local(name, new, existing_type, Some(expr.span));
             return if post { return_old } else { ctx.load_local(name, Some(expr.span)) };
         }
+    }
+    if matches!(existing_type.codegen_repr(), PhpType::Void) {
+        if increment {
+            let one = lower_int_literal(ctx, 1, expr);
+            ctx.store_local(name, one, PhpType::Int, Some(expr.span));
+            return if post { old } else { ctx.load_local(name, Some(expr.span)) };
+        }
+        emit_null_decrement_warning(ctx, expr.span);
+        return old;
     }
     if matches!(existing_type.codegen_repr(), PhpType::Mixed | PhpType::Str) {
         let return_old = if post {
@@ -663,15 +697,26 @@ pub(super) fn lower_inc_dec(
     }
     let one = lower_int_literal(ctx, 1, expr);
     let operand = coerce_to_int(ctx, old, expr);
-    let checked_int_local = matches!(existing_type.codegen_repr(), PhpType::Int);
-    let iop = match (increment, checked_int_local) {
-        (true, true) => Op::ICheckedAdd,
-        (false, true) => Op::ICheckedSub,
-        (true, false) => Op::IAdd,
-        (false, false) => Op::ISub,
+    // Guards and coalescing can prove an int read while its slot stays nullable.
+    // Accepted updates still need checked arithmetic and a boxed result at overflow.
+    let nullable_int = matches!(&existing_type, PhpType::Union(members)
+        if members.iter().any(|ty| *ty == PhpType::Int)
+            && members.iter().all(|ty| matches!(ty, PhpType::Int | PhpType::Void)));
+    let checked_int_local = matches!(existing_type.codegen_repr(), PhpType::Int) || nullable_int;
+    // An incoming typed reference addresses the caller's tagged cell, which cannot hold a
+    // float. Use the existing checked scalar-storage diagnostic instead of writing float bits.
+    let fixed_tagged_reference = nullable_int && ctx.is_ref_bound_local(name);
+    let iop = match (increment, checked_int_local, fixed_tagged_reference) {
+        (true, _, true) => Op::ICheckedAddToInt,
+        (false, _, true) => Op::ICheckedSubToInt,
+        (true, true, false) => Op::ICheckedAdd,
+        (false, true, false) => Op::ICheckedSub,
+        (true, false, false) => Op::IAdd,
+        (false, false, false) => Op::ISub,
     };
-    let result_php_type = if checked_int_local { PhpType::Mixed } else { PhpType::Int };
-    let result_ir_type = if checked_int_local {
+    let boxed_result = checked_int_local && !fixed_tagged_reference;
+    let result_php_type = if boxed_result { PhpType::Mixed } else { PhpType::Int };
+    let result_ir_type = if boxed_result {
         IrType::Heap(IrHeapKind::Mixed)
     } else {
         IrType::I64

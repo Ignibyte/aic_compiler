@@ -8,7 +8,8 @@
 //! - Retains constructor, visibility, eval-barrier, callable, and late-static-binding checks.
 
 use super::null_coalesce::{
-    null_coalesce_buffer_merge_type, null_coalesce_result_type, operand_is_never_null,
+    coalesce_default_type, null_coalesce_buffer_merge_type, null_coalesce_result_type,
+    operand_is_never_null,
 };
 use super::{body_must_not_use_this, Checker};
 use crate::errors::CompileError;
@@ -104,7 +105,7 @@ impl Checker {
                 let operand_env = probed_env.as_ref().unwrap_or(env);
                 let vt = self.infer_null_probe_operand(value, operand_env)?;
                 let value_is_never_null = operand_is_never_null(self, value, &vt, operand_env);
-                let dt = self.infer_type(default, env)?;
+                let dt = coalesce_default_type(default, self.infer_type(default, env)?);
                 if let Some(buffer) = null_coalesce_buffer_merge_type(
                     self,
                     value,
@@ -129,14 +130,14 @@ impl Checker {
                 ..
             } => {
                 let mut scoped_env = env.clone();
-                self.check_assignment_expression(
+                self.with_preserved_binding_flow(|checker| checker.check_assignment_expression(
                     target,
                     value,
                     result_target.as_deref(),
                     prelude,
                     expr.span,
                     &mut scoped_env,
-                )
+                ))
             }
             ExprKind::ConstRef(name) => {
                 let constant_name = name.as_str().trim_start_matches('\\');

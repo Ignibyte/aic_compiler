@@ -250,7 +250,41 @@ pub(super) fn short_ternary_merge_result_type(
     {
         return nullable_aware_branch_merge_type(value_ty, default_ty);
     }
+    // `$n ?: null` with `int $n`: only the default can store null, and an int temp cannot hold it.
+    if let Some(nullable) =
+        scalar_beside_null_merge_type(value_ty, default, &default_ty.codegen_repr())
+    {
+        return nullable;
+    }
     materialized_merge_type(&value_ty.codegen_repr(), &default_ty.codegen_repr())
+}
+
+/// Returns the storage of a lazy merge whose value arm is an unboxed scalar and whose default
+/// arm may store null, or `None` when the ordinary merge applies.
+///
+/// `$n ?? null` with `?int $n`, `$b ?: null` with `bool $b`, `$a[$k] ?? null` over an
+/// `array<float>`: the value arm never stores null (`??` runs it behind `IsNull`, `?:` behind
+/// the truthiness test), but the default does, and an unboxed int, bool, float or string temp
+/// has no null of its own. The in-band sentinel it would carry is the integer
+/// 9223372036854775806, `true`, `0.0` or `""` to every consumer that does not probe for it, and
+/// the tagged null representation never probes an int, so `?int ?? null` answered the sentinel
+/// where PHP answers null (#1944, #1835). The merge keeps the null member, as the checker types
+/// it, and so takes the nullable storage: the inline tagged scalar for an int, a boxed cell
+/// otherwise. A default that never yields (`throw`, `exit`) stores nothing and keeps the value
+/// arm's own storage, as the checker keeps its type. `default_ty` is the default's codegen
+/// representation, so a `Mixed` default keeps the boxed merge it already had.
+pub(super) fn scalar_beside_null_merge_type(
+    value_ty: &PhpType,
+    default: &Expr,
+    default_ty: &PhpType,
+) -> Option<PhpType> {
+    if crate::termination::expr_guarantees_function_exit(default)
+        || !crate::types::is_unboxed_scalar_type(&value_ty.codegen_repr())
+        || !php_type_allows_null(default_ty)
+    {
+        return None;
+    }
+    Some(nullable_aware_branch_merge_type(value_ty, default_ty))
 }
 
 /// Chooses a ternary branch merge type without erasing PHP null branches.
@@ -365,7 +399,15 @@ pub(super) fn materialized_expr_type_for_merge(ctx: &LoweringContext<'_, '_>, ex
     }
     match &expr.kind {
         ExprKind::Variable(name) => {
-            normalize_value_php_type(crate::types::eir_value_php_type(&ctx.local_type(name)))
+            let storage = local_values::projected_local_value_type(ctx, name, expr.span)
+                .unwrap_or_else(|| ctx.local_type(name));
+            // A tagged local still has int/null alternatives. Keep them for the branch
+            // join instead of merging the representation marker with an integer as Mixed.
+            if storage.codegen_repr() == PhpType::TaggedScalar {
+                storage
+            } else {
+                normalize_value_php_type(crate::types::eir_value_php_type(&storage))
+            }
         }
         ExprKind::ErrorSuppress(inner) => materialized_expr_type_for_merge(ctx, inner),
         ExprKind::BinaryOp { left, op, right } if mixed_numeric_op(op).is_some() => {

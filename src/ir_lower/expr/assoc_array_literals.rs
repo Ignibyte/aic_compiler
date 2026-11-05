@@ -212,16 +212,20 @@ fn assoc_hash_storage_type(ty: PhpType) -> PhpType {
 }
 
 /// Returns the best EIR storage value type for one associative-array literal value.
+///
+/// A value whose own storage is the inline tagged scalar (`int|null`) is boxed: a hash entry has
+/// no tagged representation (see `box_tagged_scalar_element`).
 pub(super) fn assoc_array_literal_value_type_for_ir(
     ctx: &LoweringContext<'_, '_>,
     value: &Expr,
 ) -> PhpType {
-    assoc_hash_storage_type(assoc_array_literal_value_type_for_ir_inner(ctx, value))
+    super::indexed_array_literals::box_tagged_scalar_element(
+        assoc_array_literal_value_type_for_ir_unboxed(ctx, value),
+    )
 }
 
-/// Returns the declared value type for one associative-array literal value, before the hash's
-/// storage mapping.
-fn assoc_array_literal_value_type_for_ir_inner(
+/// Types one associative literal value by its own storage, before boxing a tagged scalar.
+fn assoc_array_literal_value_type_for_ir_unboxed(
     ctx: &LoweringContext<'_, '_>,
     value: &Expr,
 ) -> PhpType {
@@ -267,9 +271,9 @@ fn assoc_array_literal_value_type_for_ir_inner(
             assoc_array_literal_type_for_ir(ctx, inner_pairs, value)
         }
         ExprKind::Variable(name) => ir_array_storage_type(
-            ctx.local_types
+            local_values::projected_local_value_type(ctx, name, value.span).or_else(|| ctx.local_types
                 .get(name)
-                .cloned()
+                .cloned())
                 .unwrap_or_else(|| infer_expr_type_syntactic(value)),
         ),
         ExprKind::FunctionCall { name, .. } => {

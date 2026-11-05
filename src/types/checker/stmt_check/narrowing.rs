@@ -40,6 +40,8 @@ use crate::types::{PhpType, TypeEnv};
 
 use super::super::Checker;
 
+mod conditions;
+
 /// A detected type-guard narrowing: the guarded binding's env key and the types it takes in the
 /// then-branch (guard true) and else-branch (guard false).
 pub(crate) struct GuardNarrowing {
@@ -80,6 +82,41 @@ impl GuardTarget {
 }
 
 impl Checker {
+    /// Checks a branch under its guarded read views while retaining the original storage types.
+    pub(crate) fn with_flow_narrowings<T>(
+        &mut self,
+        guards: &[GuardNarrowing],
+        then_branch: bool,
+        env: &mut TypeEnv,
+        body: impl FnOnce(&mut Self, &mut TypeEnv) -> Result<T, CompileError>,
+    ) -> Result<T, CompileError> {
+        let storage_entry = self.guarded_union_types.clone();
+        let mut saved = Vec::with_capacity(guards.len());
+        for guard in guards {
+            let view = if then_branch { &guard.then_ty } else { &guard.else_ty };
+            let previous = env.get(&guard.var).cloned();
+            saved.push((self.enter_flow_narrowing(&guard.var, previous.as_ref(), view), previous));
+            env.insert(guard.var.clone(), view.clone());
+        }
+        let result = body(self, env);
+        for (origin, previous) in saved.into_iter().rev() {
+            // A guard-only view refines the existing value without rebinding its storage.
+            // Close an unrepresentable view before the arm's exit is joined.
+            let guard_only = self.narrowed_local_origins.get(&origin.name).is_some_and(|entry|
+                !entry.stored_in_region && entry.view.as_ref() == env.get(&origin.name));
+            if let Some(previous) = previous {
+                if guard_only && env.get(&origin.name).is_some_and(|view|
+                    !self.type_contains_values(&previous, view))
+                {
+                    env.insert(origin.name.clone(), previous);
+                }
+            }
+            self.exit_flow_narrowing(origin);
+        }
+        self.restore_guarded_storage_provenance(&storage_entry);
+        result
+    }
+
     /// Detects a type-predicate guard in an `if`/ternary condition and computes the then/else
     /// narrowing for the guarded binding against the current environment. Handles the scalar
     /// `is_*` predicates, `is_null`, `instanceof Class`, and `=== false` / `=== null`, each with an
@@ -194,76 +231,6 @@ impl Checker {
         let mut right_env = env.clone();
         right_env.insert(guard.var, narrowed);
         Ok(Some(right_env))
-    }
-
-    /// Undoes the narrowings kept by `if`s inside a body that has just been checked, newest
-    /// first: each local still holding the kept type gets back the type it had before that
-    /// `if`'s guard. A local reassigned since keeps its new type. `mark` is the log length
-    /// taken before the body.
-    pub(crate) fn undo_kept_narrowings_since(&mut self, mark: usize, env: &mut TypeEnv) {
-        if mark >= self.kept_narrowings.len() {
-            return;
-        }
-        let undone = self.kept_narrowings.split_off(mark);
-        for kept in undone.into_iter().rev() {
-            if env.get(&kept.var) != Some(&kept.narrowed) {
-                continue;
-            }
-            match kept.original {
-                Some(ty) => {
-                    env.insert(kept.var, ty);
-                }
-                None => {
-                    env.remove(&kept.var);
-                }
-            }
-        }
-    }
-
-    /// Like `undo_kept_narrowings_since`, but returns the facts it undid that still held, each
-    /// local with the type the body left it, so a construct can keep the ones every path shares.
-    /// A chain of guards on one local (`null` excluded, then `string`) is one fact: the last
-    /// guard's type with the type from before the first, which is what undoing it must restore.
-    pub(crate) fn take_kept_narrowings_since(
-        &mut self,
-        mark: usize,
-        env: &mut TypeEnv,
-    ) -> Vec<crate::types::checker::KeptNarrowing> {
-        let mut held: Vec<crate::types::checker::KeptNarrowing> = Vec::new();
-        for kept in self.kept_narrowings.get(mark..).unwrap_or_default() {
-            match held.iter_mut().find(|fact| fact.var == kept.var) {
-                Some(fact) if kept.original.as_ref() == Some(&fact.narrowed) => {
-                    fact.narrowed = kept.narrowed.clone();
-                }
-                Some(fact) => *fact = kept.clone(),
-                None => held.push(kept.clone()),
-            }
-        }
-        held.retain(|fact| env.get(&fact.var) == Some(&fact.narrowed));
-        self.undo_kept_narrowings_since(mark, env);
-        held
-    }
-
-    /// Re-applies the facts that every path reaching the end of a construct kept, and logs them
-    /// as kept by that construct, so an enclosing body can still undo them.
-    pub(crate) fn keep_facts_every_path_shares(
-        &mut self,
-        paths: &[Vec<crate::types::checker::KeptNarrowing>],
-        env: &mut TypeEnv,
-    ) {
-        let Some((first, rest)) = paths.split_first() else {
-            return;
-        };
-        for fact in first {
-            let shared = rest.iter().all(|path| {
-                path.iter()
-                    .any(|other| other.var == fact.var && other.narrowed == fact.narrowed)
-            });
-            if shared && env.get(&fact.var) != Some(&fact.narrowed) {
-                env.insert(fact.var.clone(), fact.narrowed.clone());
-                self.kept_narrowings.push(fact.clone());
-            }
-        }
     }
 
     /// Synthetic `TypeEnv` key for a narrowed simple property access `$var->prop` (`None` for a
@@ -485,14 +452,14 @@ impl Checker {
         match current {
             PhpType::Union(members) => {
                 let kept: Vec<PhpType> =
-                    members.iter().filter(|m| guard_matches(m, target)).cloned().collect();
+                    members.iter().filter(|m| guard_matches(self, m, target)).cloned().collect();
                 if kept.is_empty() {
                     target.fallback_type()
                 } else {
                     self.normalize_union_type(kept)
                 }
             }
-            _ if guard_matches(current, target) => current.clone(),
+            _ if guard_matches(self, current, target) => current.clone(),
             // An array guard on a value of unknown shape (`is_array($mixed)`) gives the type a
             // bare `array` declaration has. On a concrete non-array type the branch is dead, and
             // the conservative fallback keeps a reassignment there legal.
@@ -508,7 +475,7 @@ impl Checker {
         match current {
             PhpType::Union(members) => {
                 let kept: Vec<PhpType> =
-                    members.iter().filter(|m| !guard_matches(m, target)).cloned().collect();
+                    members.iter().filter(|m| !guard_matches(self, m, target)).cloned().collect();
                 if kept.is_empty() {
                     current.clone()
                 } else {
@@ -674,9 +641,9 @@ fn guard_receiver_and_target(cond: &Expr) -> Option<(&Expr, GuardTarget, bool)> 
 ///
 /// `Mixed` and `Never` are treated as possibly-null because neither carries enough information
 /// to prove otherwise; a union is non-null only when every member is.
-fn type_is_definitely_non_null(ty: &PhpType) -> bool {
+pub(in crate::types::checker) fn type_is_definitely_non_null(ty: &PhpType) -> bool {
     match ty {
-        PhpType::Void | PhpType::Never | PhpType::Mixed => false,
+        PhpType::Void | PhpType::Never | PhpType::Mixed | PhpType::TaggedScalar => false,
         PhpType::Union(members) => members.iter().all(type_is_definitely_non_null),
         _ => true,
     }
@@ -684,13 +651,13 @@ fn type_is_definitely_non_null(ty: &PhpType) -> bool {
 
 /// Returns true when a union member is compatible with a guard target, used to keep (then) or drop
 /// (else) members. Exact targets require a matching variant; an `Object` target matches an object
-/// member with the same class name (inheritance-aware narrowing is left for the future), and
+/// member compatible with the target class or interface, and
 /// `AnyArray` matches either array shape.
-fn guard_matches(member: &PhpType, target: &GuardTarget) -> bool {
+fn guard_matches(checker: &Checker, member: &PhpType, target: &GuardTarget) -> bool {
     match target {
         GuardTarget::AnyArray => matches!(member, PhpType::Array(_) | PhpType::AssocArray { .. }),
-        GuardTarget::Exact(PhpType::Object(target_class)) => {
-            matches!(member, PhpType::Object(member_class) if member_class == target_class)
+        GuardTarget::Exact(target @ PhpType::Object(_)) => {
+            matches!(member, PhpType::Object(_)) && checker.type_accepts(target, member)
         }
         GuardTarget::Exact(PhpType::Bool) => matches!(member, PhpType::Bool | PhpType::False),
         GuardTarget::Exact(target) => member == target,

@@ -236,7 +236,8 @@ pub(super) fn lower_closure_with_context(
                 // Keep a local cell owner independent of the descriptor's capture lease.
                 ctx.promote_local_ref_cell(capture, Some(expr.span));
             }
-            let captured = ctx.load_local(capture, Some(expr.span));
+            let captured = if by_ref { ctx.load_local(capture, Some(expr.span)) }
+                else { lower_local_value(ctx, capture, expr.span) };
             let php_type = php_type_override
                 .unwrap_or_else(|| ctx.builder.value_php_type(captured.value));
             (captured, php_type)
@@ -303,6 +304,14 @@ pub(super) fn lower_closure_with_context(
         crate::types::nested_loop_storage_scope(&ctx.loop_storage_scope, expr.span);
     let by_ref_return = matches!(&expr.kind, ExprKind::Closure { by_ref_return: true, .. });
     let source_is_generator = ctx.closure_generator_spans.contains(&expr.span);
+    let hinted_param_types = if contextual_arg_types.is_empty() {
+        crate::ir_lower::closure_param_hints::param_hints(expr.span)
+    } else {
+        None
+    };
+    let contextual_arg_types = hinted_param_types
+        .as_deref()
+        .unwrap_or(contextual_arg_types);
     let signature = if contextual_arg_types.is_empty() && bound_this_context.is_none() {
         function::lower_closure_function(
             ctx,

@@ -543,6 +543,21 @@ pub const fn runtime_fn_semantics(target: RuntimeFnId) -> BuiltinSemantics {
     }
 }
 
+/// Builds EIR-graph semantics that forward raw operands to one typed runtime target.
+///
+/// The target keeps its argument ABI, effects, result ownership, requirements and dynamic
+/// callable policy. Only the lowering route changes: no PHP builtin-call operand pins or
+/// copies are materialized around a helper that only reads its arguments.
+pub const fn eir_runtime_semantics(
+    target: RuntimeFnId,
+    lower: BuiltinLowerFn,
+) -> BuiltinSemantics {
+    let mut semantics = runtime_fn_semantics(target);
+    semantics.target_strategy = BuiltinTargetStrategy::EirGraph;
+    semantics.lowering = BuiltinLowering::Eir(lower);
+    semantics
+}
+
 /// Builds runtime-call semantics for a builtin that is explicitly unavailable on iOS.
 pub const fn host_only_runtime_fn_semantics(target: RuntimeFnId) -> BuiltinSemantics {
     let mut semantics = runtime_fn_semantics(target);
@@ -863,4 +878,23 @@ fn lower_test_probe(
         "test-only builtin {} cannot be lowered",
         call.name,
     )))
+}
+
+impl BuiltinSemantics {
+    /// Identifies reference operands whose successful runtime operation leaves an array.
+    pub const fn preserves_array_reference(self, index: usize) -> bool {
+        match self.lowering {
+            BuiltinLowering::Runtime(RuntimeCallTarget::Function(target)) => match target {
+                RuntimeFnId::ArrayMultisort => index < 2,
+                RuntimeFnId::ArrayPop | RuntimeFnId::ArrayPush | RuntimeFnId::ArrayShift
+                | RuntimeFnId::ArraySplice | RuntimeFnId::ArrayUnshift | RuntimeFnId::ArrayPtrSeek
+                | RuntimeFnId::Arsort | RuntimeFnId::Asort | RuntimeFnId::Krsort
+                | RuntimeFnId::Ksort | RuntimeFnId::Natcasesort | RuntimeFnId::Natsort
+                | RuntimeFnId::Rsort | RuntimeFnId::Shuffle | RuntimeFnId::Sort
+                | RuntimeFnId::Uasort | RuntimeFnId::Uksort | RuntimeFnId::Usort => index == 0,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
 }
