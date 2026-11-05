@@ -140,7 +140,7 @@ pub(super) fn intrinsic_non_null_value(checker: &Checker, value: &Expr, env: &Ty
             function_call_declares_non_null_return(checker, value, name.as_str())
         }
         ExprKind::MethodCall { object, method, .. } => {
-            method_call_declares_non_null_return(checker, object, method, env)
+            method_call_declares_non_null_return(checker, value, object, method, env)
         }
         ExprKind::StaticMethodCall {
             receiver, method, ..
@@ -188,14 +188,20 @@ fn function_call_declares_non_null_return(checker: &Checker, call: &Expr, name: 
 /// override must keep a covariant declared return, so the static receiver class decides.
 fn method_call_declares_non_null_return(
     checker: &Checker,
+    call: &Expr,
     object: &Expr,
     method: &str,
     env: &TypeEnv,
 ) -> bool {
+    // Any other receiver (`$this->items->first()`) takes the type the checker recorded for this
+    // call's receiver, which every agreeing visit must have produced.
     let receiver = match &object.kind {
         ExprKind::This => checker.current_class.clone().map(PhpType::Object),
         ExprKind::Variable(name) => env.get(name).cloned(),
-        _ => None,
+        _ => checker
+            .member_receiver_types
+            .get(&(checker.current_loop_storage_scope.clone(), call.span))
+            .and_then(Clone::clone),
     };
     let Some(receiver) = receiver else {
         return false;
