@@ -71,6 +71,7 @@ mod type_builtins;
 mod casts_and_constants;
 mod include_paths;
 mod magic_constants;
+mod stdlib_builtins;
 mod strings;
 mod curl;
 pub(crate) mod io;

@@ -793,6 +793,22 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
     };
     timings.record_since("object-cast-prelude", phase_started);
 
+    // Inject the PHP-written stdlib functions (`pack`, `unpack`) the program references. Runs
+    // AFTER `autoload::run` for the same reason as the object-cast prelude: vendor and PSR-4
+    // class files only join the AST there. The declarations are name-resolved on the way in
+    // because this position is past the pipeline's resolution pass.
+    crate::progress::phase("stdlib-prelude");
+    let phase_started = Instant::now();
+    let ast = match crate::stdlib_prelude::inject_if_used(ast, &mut prelude_inventory) {
+        Ok(injected) => injected,
+        Err(e) => {
+            crate::progress::clear();
+            errors::report(&e);
+            process::exit(1);
+        }
+    };
+    timings.record_since("stdlib-prelude", phase_started);
+
     // Desugar PHP's argument-introspection constructs (`func_num_args`, `func_get_args`,
     // `func_get_arg`) into plain PHP: every function scope that uses one gains the hidden
     // `mixed ...$__elephc_func_args` parameter, so the surplus positional arguments PHP
