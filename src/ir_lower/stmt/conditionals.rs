@@ -210,9 +210,11 @@ pub(super) fn finish_if_type_join(
         ctx.restore_local_types(arm.types.clone());
         let hash_conversions = arm_hash_conversions(arm, &joined);
         let conversions = arm_conversions(arm, &joined);
+        let boxings = arm_mixed_boxings(ctx, arm, &joined);
         ctx.builder.position_at_end(arm.tail);
         widen_arm_containers_to_hash(ctx, &hash_conversions, span);
         widen_indexed_arrays_to_mixed(ctx, &conversions, span);
+        box_arm_values_to_mixed(ctx, &boxings, span);
         ctx.builder.terminate(Terminator::Br {
             target: merge,
             args: Vec::new(),
@@ -380,6 +382,45 @@ fn arm_conversions(arm: &IfArmExit, joined: &TypeEnv) -> Vec<String> {
         .collect::<Vec<_>>();
     names.sort();
     names
+}
+
+/// Returns the locals joined to `Mixed` whose value on this arm is an unboxed object, so the arm
+/// edge must box it before the merge.
+///
+/// A sibling arm that already holds `Mixed` makes the join `Mixed`, and every load below the
+/// merge reads a boxed cell. An arm that bound an object there (a `catch` variable, a `new`)
+/// still holds the bare pointer: global storage keeps the representation it was given, so the
+/// merge would read that pointer as a cell.
+fn arm_mixed_boxings(
+    ctx: &LoweringContext<'_, '_>,
+    arm: &IfArmExit,
+    joined: &TypeEnv,
+) -> Vec<String> {
+    let mut names = joined
+        .iter()
+        .filter(|(name, joined_ty)| {
+            **joined_ty == PhpType::Mixed
+                && matches!(
+                    arm.types.get(name.as_str()).map(PhpType::codegen_repr),
+                    Some(PhpType::Object(_))
+                )
+                && local_slot_is_convertible(ctx, name, &arm.initialized)
+        })
+        .map(|(name, _)| name.clone())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+/// Boxes each named object local into a `Mixed` cell on an arm edge so all paths agree at the
+/// merge.
+fn box_arm_values_to_mixed(ctx: &mut LoweringContext<'_, '_>, names: &[String], span: Span) {
+    for name in names {
+        // The box retains the object; the store releases the bare pointer it replaces.
+        let value = ctx.load_local(name, Some(span));
+        let boxed = ctx.box_value_as_mixed(value, PhpType::Mixed, Some(span));
+        ctx.store_local(name, boxed, PhpType::Mixed, Some(span));
+    }
 }
 
 /// Returns array-like locals whose arm edge must adopt the joined associative representation.
