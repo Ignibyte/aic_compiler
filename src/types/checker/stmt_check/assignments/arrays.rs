@@ -13,10 +13,11 @@ use crate::parser::ast::{BinOp, Expr, ExprKind, NESTED_APPEND_TEMP_PREFIX};
 use crate::span::Span;
 use crate::types::{
     array_key_contiguity_is_unproven, merge_array_key_types, normalized_array_key_type,
-    static_array_key_forces_hash_storage, PhpType, TypeEnv,
+    nonempty_array_key_forces_hash_storage, static_array_key_forces_hash_storage, PhpType,
+    TypeEnv,
 };
 
-use super::super::super::Checker;
+use super::super::super::{Checker, GuardedLocalStorage};
 
 /// Validates and updates the type environment for `$array[$index] = $value` assignments.
 ///
@@ -40,7 +41,7 @@ pub(super) fn check_array_assign(
     // PHP auto-vivifies an undefined variable on `$a[$k] = ...`: the write creates an
     // array (associative for a string key, indexed for an integer key). Mirror that
     // instead of rejecting the target, exactly as the append form already does.
-    let Some(arr_ty) = env.get(array).cloned() else {
+    if !env.contains_key(array) {
         let idx_ty = checker.infer_type_with_assignment_effects(index, env)?;
         let val_ty = checker.infer_type_with_assignment_effects(value, env)?;
         let key_ty = normalized_array_key_type(index, idx_ty);
@@ -54,10 +55,18 @@ pub(super) fn check_array_assign(
         };
         env.insert(array.to_string(), created);
         return Ok(());
-    };
+    }
     let idx_ty = checker.infer_type_with_assignment_effects(index, env)?;
     let val_ty = checker.infer_type_with_assignment_effects(value, env)?;
     super::locals::update_callable_assignment_metadata(checker, array, value, &val_ty, env)?;
+    // The write selects its container after index/RHS effects, which may rebind it.
+    let storage = checker.guarded_local_storage_type(&Expr::var(array), env).cloned()
+        .or_else(|| env.get(array).cloned());
+    let current = env.get(array).cloned().unwrap_or(PhpType::Mixed);
+    let nullable = nullable_array_write_view(&current);
+    let had_nullable_read = nullable.is_some();
+    let arr_ty = nullable.unwrap_or(current);
+    if matches!(arr_ty, PhpType::Array(_) | PhpType::AssocArray { .. }) || arr_ty.is_php_array() { env.insert(array.to_string(), arr_ty.clone()); }
     if arr_ty == PhpType::Str {
         return check_string_offset_assign(array, index, &idx_ty, value, span);
     }
@@ -87,6 +96,12 @@ pub(super) fn check_array_assign(
         // slot per iteration — so `for ($i = 0; …; $i++) { $a[$i] = … }` keeps packed storage.
         let forces_hash = matches!(normalized_idx_ty, PhpType::Str)
             || (matches!(idx_ty, PhpType::Str) && !index_is_foreach_key)
+            || (!matches!(elem_ty.as_ref(), PhpType::Never)
+                && (nonempty_array_key_forces_hash_storage(index)
+                    || (matches!(normalized_idx_ty, PhpType::Int)
+                        && !index_is_foreach_key
+                        && !checker.index_is_packed_loop_counter(array, index)
+                        && array_key_contiguity_is_unproven(index))))
             || (matches!(elem_ty.as_ref(), PhpType::Never)
                 && (static_array_key_forces_hash_storage(index)
                     || (matches!(normalized_idx_ty, PhpType::Int)
@@ -177,6 +192,7 @@ pub(super) fn check_array_assign(
             ));
         }
     }
+    finish_array_write_view(checker, array, &arr_ty, had_nullable_read, storage.as_ref(), env);
     Ok(())
 }
 
@@ -472,13 +488,21 @@ pub(super) fn check_array_push(
     // PHP 8 auto-vivifies an undefined variable on `$a[] = ...`: the append creates an
     // empty array and stores the value. Mirror that here instead of rejecting the write;
     // the generic Mixed element keeps subsequent pushes of other types representable.
-    let Some(arr_ty) = env.get(array).cloned() else {
+    if !env.contains_key(array) {
         let _ = checker.infer_type_with_assignment_effects(value, env)?;
         env.insert(array.to_string(), PhpType::Array(Box::new(PhpType::Mixed)));
         return Ok(());
-    };
+    }
     let val_ty = checker.infer_type_with_assignment_effects(value, env)?;
     super::locals::update_callable_assignment_metadata(checker, array, value, &val_ty, env)?;
+    // The write selects its container after index/RHS effects, which may rebind it.
+    let storage = checker.guarded_local_storage_type(&Expr::var(array), env).cloned()
+        .or_else(|| env.get(array).cloned());
+    let current = env.get(array).cloned().unwrap_or(PhpType::Mixed);
+    let nullable = nullable_array_write_view(&current);
+    let had_nullable_read = nullable.is_some();
+    let arr_ty = nullable.unwrap_or(current);
+    if matches!(arr_ty, PhpType::Array(_) | PhpType::AssocArray { .. }) || arr_ty.is_php_array() { env.insert(array.to_string(), arr_ty.clone()); }
     // Nested appends retain their catchable runtime Error through the generated temporary.
     if arr_ty == PhpType::Str && !array.starts_with(NESTED_APPEND_TEMP_PREFIX) {
         return Err(CompileError::new(span, "[] operator not supported for strings"));
@@ -522,6 +546,7 @@ pub(super) fn check_array_push(
             ));
         }
     }
+    finish_array_write_view(checker, array, &arr_ty, had_nullable_read, storage.as_ref(), env);
     Ok(())
 }
 
@@ -557,4 +582,36 @@ fn reject_declared_element_widening(
             val_ty, array, declared
         ),
     ))
+}
+
+/// Removes only null from a concrete array or the shared PHP array contract before a write.
+fn nullable_array_write_view(ty: &PhpType) -> Option<PhpType> {
+    let PhpType::Union(members) = ty else { return None; };
+    if !members.contains(&PhpType::Void) { return None; }
+    let mut arrays: Vec<_> = members.iter().filter(|member| **member != PhpType::Void)
+        .cloned().collect();
+    let array = if arrays.len() == 1 { arrays.pop()? } else { PhpType::Union(arrays) };
+    (matches!(array, PhpType::Array(_) | PhpType::AssocArray { .. }) || array.is_php_array())
+        .then_some(array)
+}
+
+/// Publishes the updated element view while preserving the nullable container's boxed slot.
+fn finish_array_write_view(
+    checker: &mut Checker, array: &str, target: &PhpType, had_nullable_read: bool,
+    previous_storage: Option<&PhpType>, env: &mut TypeEnv,
+) {
+    if !matches!(target, PhpType::Array(_) | PhpType::AssocArray { .. })
+        && !target.is_php_array() { return; }
+    let Some(view) = env.get(array).cloned() else { return; };
+    let nullable_storage = previous_storage.is_some_and(|ty| nullable_array_write_view(ty).is_some());
+    checker.record_local_storage_effect(array, &view);
+    if nullable_storage {
+        let storage = checker.normalize_union_type(vec![view.clone(), PhpType::Void]);
+        checker.guarded_union_types.insert(array.to_string(),
+            GuardedLocalStorage { ty: storage.clone(), coalesced: false });
+        // A mutation has not introduced an EIR unbox for a formerly nullable read.
+        if had_nullable_read || !checker.local_flow_read_is_stable(array) {
+            env.insert(array.to_string(), storage);
+        }
+    }
 }

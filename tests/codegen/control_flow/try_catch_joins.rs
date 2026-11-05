@@ -113,3 +113,32 @@ echo twoCatches(false), "|", twoCatches(true), "\n";
     );
     assert_eq!(out, "f:q=string,sort=string|f:\nq=string,sort=string|\n");
 }
+
+/// A top-level catch variable bound in a loop and rebound by a later catch keeps its object.
+///
+/// The loop leaves `$e` boxed on the try path and bare on the catch path, and the join types it
+/// `mixed`. Global storage keeps whatever an arm stored, so the catch arm boxes its object
+/// before the merge; reading the bare pointer as a cell lost the later `catch`'s exception
+/// (`get_class()` printed nothing) and crashed under heap debugging. An `if` arm that binds an
+/// object beside a `mixed` one joins the same way.
+#[test]
+fn test_top_level_catch_variable_rebound_after_a_loop_keeps_its_object() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+class Foo {}
+$f = new SplFixedArray(3);
+foreach (["x", new Foo()] as $k) { try { $v = $f[$k]; } catch (TypeError $e) { echo "t\n"; } }
+try { $f["-1"] = 0; } catch (OutOfBoundsException $e) { echo get_class($e), ": ", $e->getMessage(), "\n"; }
+foreach (["x", new Foo()] as $k) { if (is_string($k)) { $o = new TypeError("a"); } }
+try { $f["-1"] = 0; } catch (OutOfBoundsException $o) { echo get_class($o), "\n"; }
+"#,
+    );
+    assert!(out.success, "{}", out.stderr);
+    assert_eq!(
+        out.stdout,
+        "t\nt\nOutOfBoundsException: Index invalid or out of range\nOutOfBoundsException\n",
+        "{}",
+        out.stderr
+    );
+    assert!(out.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", out.stderr);
+}

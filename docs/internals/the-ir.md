@@ -534,6 +534,14 @@ leak the nested receiver whenever the source destructor throws; retaining the
 source pin during its release would instead expose the same source to cleanup
 twice.
 
+A write routed to an accessor (`__set` through `DynamicPropSet`, or a set hook
+through its `__propset_<p>` method call) pins the owning source the same way
+for the call, because the accessor can throw: an explicit `throw`, or the
+typed-property guard on the hook's own raw backing write. The pin is detached
+after the call returns and before the source's normal release. The receiver
+lease stays with `PropertyWriteReceiver`, so the accessor call publishes no
+second record for it.
+
 Borrowed receivers and sources keep their existing owners. A source whose
 reference moves into a known slot follows that slot's transfer discipline rather
 than receiving an additional post-store release. These rules live in
@@ -619,15 +627,37 @@ When `php_return_status` is set, `restore_concat_offset_after_nested_call` calls
 Each instruction and terminator carries an `Effects` summary. The builder
 assigns a conservative opcode or semantic-descriptor default; after the complete
 module is lowered, an effect-refinement fixed point may replace the summary on
-explicitly refinable direct calls, named static calls (including inherited
-implementations), instance calls, and property reads. Forwarding static receivers
-and unresolved closure, descriptor, or pipe targets retain conservative defaults
-until their target is proven by a lowering-specific contract. Final
-effects are immutable after validation and remain PHP-observable.
+explicitly refinable direct calls, static calls, instance calls, and property
+reads. Named static receivers include inherited implementations; `self::` and
+`parent::` resolve in the enclosing lexical class. A `static::` call unions all
+concrete implementations in that class's checked descendant hierarchy, including
+callable static bodies declared on abstract classes. Abstract declarations retain
+failure effects and any throwing parameter guards or warning-capable argument
+coercions that run before dispatch, so a discarded call cannot erase them. An opaque
+eval bridge gives late-static calls the full eval-call effects, including
+exceptions, output and global mutation, because it can introduce further
+overrides. Without that barrier, when the lexical class has no static vtable
+slot, such as for a private method, `static::` uses its implementation directly
+and does not union unrelated descendant methods. Unresolved closure, descriptor, pipe,
+function-variant and eval call opcodes retain their defaults, and the validator
+rejects narrower effects for them. Lowering-specific builtin and runtime
+contracts remain refinable. Final effects are immutable after validation and
+remain PHP-observable.
 
-Caller-visible summaries omit `ConcatReset`: it restores frame-private scratch
-bookkeeping rather than PHP state. The instruction itself retains `writes_global`
-so intra-function passes preserve its ordering. Genuine PHP-global writes,
+Call summaries include throwing guards for `false` and `null` parameter
+declarations even when the callee body is pure. Argument-coercion effects use the
+call's operand layout: lexical `self::` and `parent::` calls to instance methods
+omit the implicit receiver from parameter matching, while ordinary instance
+calls include that receiver on both sides.
+Warning-capable argument coercions also retain `may_throw`, because a PHP warning
+handler can throw an exception before the callee runs.
+
+Caller-visible summaries omit `ConcatReset`, `PushCallOperandOwner` and
+`PopCallOperandOwner`: they restore scratch offsets or publish temporary owner
+slots within the current frame rather than changing PHP state. The instructions
+retain their global-state effects so intra-function passes preserve their
+ordering. Actual ownership acquisition and retirement still contribute their
+effects, including possible destructors. Genuine PHP-global writes,
 output, allocation, and exception effects continue to flow into call summaries.
 
 ```rust
@@ -1057,6 +1087,7 @@ drifting apart silently.
 | `PropGetForWrite(property)` | object | property type, **borrowed** | `reads_heap`, `writes_heap`, `alloc_heap`, `refcount_op`, `may_throw`, `may_warn`, `may_deopt` |
 | `PropSet(class_id, property, value)` | object, value | `Void` | `writes_heap`, `refcount_op`, maybe `may_deopt` |
 | `PackedFieldMixedToInt`, `PackedFieldMixedToFloat`, `PackedFieldMixedToBool` | boxed value bound for a packed or extern struct field, `TypeError` message prefix | raw `I64`, `F64` or bool payload: only the field's own runtime type passes (a float field also widens an int), anything else throws | `reads_heap`, `alloc_heap`, `may_throw` |
+| `PropertyBoundaryCheckedToInt` | checked add/sub/mul result bound for a declared `int` property, full `TypeError` message | raw `I64`: an int forwards, an overflowed float inside `[-2^63, 2^63)` truncates, any other float throws `Cannot assign float to property C::$p of type int`; it only reads the cell, so the producer can use a frame cell | `reads_heap`, `alloc_heap`, `may_throw` |
 | `DynamicPropGet`, `DynamicPropSet` | object, property string/value | value or `Void` | `reads_heap`/`writes_heap`, `may_deopt`, maybe `may_warn` |
 | `NullsafePropGet`, `NullsafeMethodCall` | nullable object and metadata | nullable result | branch plus underlying op effects |
 | `MethodLookup` | object, method id | callable entry | `reads_heap`, `reads_global`, `may_deopt` |
@@ -1627,9 +1658,12 @@ the integer range; the store beside it is still typed. Loops of such updates now
 ### Bounded Mixed Counters
 
 `src/ir_passes/bounded_mixed_counter.rs` considers ordinary Mixed locals updated
-by increment/decrement and seeded with concrete PHP integers, or with checked or
-mixed `+`, `-`, `*` of raw integers and of the counters proven with them
-(`$j = $i + 1`). A seed producer becomes the matching `ichecked_*_to_int` on the
+by increment/decrement or by a constant compound step (`$i += c`, `$i -= c`), and
+seeded with concrete PHP integers, or with checked or mixed `+`, `-`, `*` of raw
+integers and of the counters proven with them (`$j = $i + 1`). Private slots in the
+executable main frame take part in the same proof; a runtime `include` (which hands
+the frame to evaluated code) or dynamic `eval` keeps main's counters boxed. A seed
+producer becomes the matching `ichecked_*_to_int` on the
 trial and, like an update, must be rewritten to unchecked arithmetic. A comparison
 of a counter with a checked `+`/`-` of raw integers (`$i < $n - 1`) stays a
 `php_rel_cmp`, since the bound may be an overflowed float; IntegerRange bounds the
@@ -1935,7 +1969,9 @@ stack frame's `concat_base_offset`, and `concat_reset` rewinds `_concat_off` to 
 frame base; AST-to-EIR lowering already emits `acquire` / `str_persist` for any string
 that outlives a statement before emitting the original statement-boundary `concat_reset`.
 
-The pass runs two greatest-fixed-point analyses over reachable blocks:
+The pass runs two greatest-fixed-point analyses over reachable blocks; a
+post-fixed-point finalizer then hoists a loop-body reset into a unique preheader
+when the preheader can arrive dirty:
 
 1. **Forward clean-state elimination** tracks whether `_concat_off` is guaranteed
    to equal `concat_base_offset` on entry to each block and across each
@@ -1956,6 +1992,13 @@ The pass runs two greatest-fixed-point analyses over reachable blocks:
    non-inert instruction, `may_throw` / `may_fatal` instruction, or function exit.
    An earlier `concat_reset` whose outgoing paths all hit a later reset without
    intervening observation is neutralized to `nop`.
+3. **Loop preheader hoisting** (`ConcatResetHoist`, a post-fixed-point
+   finalizer) appends one marked reset to a loop's unique preheader when the
+   loop body still contains a reset after the two analyses. The clean state
+   propagates from the preheader through the header, so phase 1 then drops the
+   per-iteration body resets. The mark keeps both analyses from removing the
+   inserted reset, so the finalizer converges; it runs only for non-internal,
+   non-synthetic functions of at most 2,000 instructions with a back edge.
 
 ### Small-Function Inlining
 
@@ -2480,10 +2523,18 @@ The pass has four stages:
 2. **Intervals** (`intervals.rs`): blocks are numbered in reverse postorder and
    each value gets one contiguous `[start, end]` live interval. A value live
    across edges or a loop back-edge spans the intervening positions.
+   A loop-header parameter is then coalesced with one scalar backedge argument:
+   their intervals merge into one group, so the latch copy disappears and both
+   values share the register the scan assigns to the group. Alternate
+   predecessors keep their own edge copies because they can carry different
+   values.
 3. **Scan** (`regalloc.rs`): intervals are walked in start order against an
    active set; a free register from the matching pool is assigned, otherwise the
    use-weighted spill heuristic evicts the cheapest interval. Integer and float
-   values draw from separate pools.
+   values draw from separate pools. When both operands of an integer binary
+   operation already live in registers, the backend writes the result directly
+   into its allocated home instead of computing into the ABI result register and
+   copying it afterward.
 4. **Frame integration** (`codegen/frame.rs`): the allocation is stored in
    the frame layout, each used callee-saved register gets a save slot, and the
    value-access chokepoints (`load_value_to_result`, `load_value_to_reg`,

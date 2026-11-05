@@ -44,6 +44,8 @@ pub(crate) mod object_operators;
 mod override_storage;
 /// Return-to-argument storage alias summaries used by ownership lowering.
 mod return_alias;
+mod return_boundary;
+pub(crate) use return_boundary::declared_int_return_requires_validation;
 /// Type checker result types and the `check` entry point.
 mod result;
 /// Shared builtin Reflection ancestry for public metadata property write handlers.
@@ -72,6 +74,7 @@ pub(crate) use array_literals::{fold_spreadless_mixed_array_literal, php_float_a
 pub(crate) use array_keys::{
     array_key_contiguity_is_unproven, array_key_type_from_value_type,
     empty_array_key_requires_hash_storage, is_php_integer_array_key,
+    nonempty_array_key_forces_hash_storage,
     merge_array_key_types, normalized_array_key_type, parse_php_string_offset_literal,
     static_array_key_forces_hash_storage,
 };
@@ -86,6 +89,8 @@ pub use model::{PhpType, TypeEnv};
 pub(crate) use model::MixedBoundary;
 pub(crate) use model::{
     eir_value_php_type, is_nullable_pointer_type, is_pointer_element_indexed_array,
+    is_unboxed_scalar_type,
+    box_tagged_scalar_array_elements,
     merge_local_pointer_targets, merge_pointer_elements, mixed_box_php_type,
     nullable_pointer_union_member, pointer_element_read_type, pointer_param_display,
 };
@@ -94,7 +99,7 @@ pub(crate) use return_alias::{
     ReturnArgAlias,
 };
 pub(crate) use override_storage::{diverging_overrides, diverging_static_overrides, DivergingOverride};
-pub(crate) use result::LoopStorageTypes;
+pub(crate) use result::{LocalValueReadTypes, LoopStorageTypes};
 pub use checker::CheckOptions;
 pub(crate) use checker::normalize_union_members;
 // `check_with_target` is superseded by `check_with_target_and_options` on the

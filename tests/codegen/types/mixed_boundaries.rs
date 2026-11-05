@@ -152,3 +152,35 @@ try { var_dump($list([2])); $list(null); } catch (TypeError $e) { report($e); }
         "NULL\narray(1) {\n  [0]=>\n  int(1)\n}\n{closure}(): Return value must be of type ?array, int returned\narray(0) {\n}\n{closure}(): Return value must be of type ?array, string returned\nBox\n{closure}(): Return value must be of type Box, stdClass returned\nNULL\n{closure}(): Return value must be of type ?Box, true returned\narray(1) {\n  [0]=>\n  int(2)\n}\n{closure}(): Return value must be of type array, null returned\n"
     );
 }
+
+/// Verifies a guarded array that a by-reference write may replace is checked again at the
+/// declared `array` return, and a foreach-retired object local at a class parameter: the
+/// checker admits both as `mixed`, and the run-time guard throws php's `TypeError`.
+#[test]
+fn test_mixed_boundary_checks_reference_writes_and_retired_foreach_locals() {
+    let out = compile_and_run(
+        r#"<?php
+class D { public function __destruct() { echo "destruct\n"; throw new Exception('d'); } }
+function need(D $x): void { echo "need\n"; }
+function replaceValue(mixed &$a): void { $a = null; }
+function retype(?array $a): array { if ($a === null) return []; sort($a); settype($a, 'integer'); return $a; }
+function replace(?array $a): array { if ($a === null) return []; sort($a); replaceValue($a); return $a; }
+function walk(array $xs): void { $e = new D(); try { foreach ($xs as $e) { return; } } catch (Exception $c) { echo "caught ", $c->getMessage(), "\n"; need($e); } }
+function report(Throwable $e): void {
+    $message = $e->getMessage();
+    $cut = strpos($message, ', called in');
+    echo get_class($e), ": ", $cut === false ? $message : substr($message, 0, $cut), "\n";
+}
+foreach (['retype', 'replace'] as $f) {
+    try { var_dump($f([3, 1])); } catch (TypeError $e) { report($e); }
+    var_dump($f(null));
+}
+try { walk([1]); } catch (TypeError $e) { report($e); }
+try { walk([]); } catch (Exception $e) { report($e); }
+"#,
+    );
+    assert_eq!(
+        out,
+        "TypeError: retype(): Return value must be of type array, int returned\narray(0) {\n}\nTypeError: replace(): Return value must be of type array, null returned\narray(0) {\n}\ndestruct\ncaught d\nTypeError: need(): Argument #1 ($x) must be of type D, int given\ndestruct\nException: d\n"
+    );
+}

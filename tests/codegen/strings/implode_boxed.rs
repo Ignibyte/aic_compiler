@@ -419,3 +419,22 @@ echo implode(',', $sizes), "\n";
         out.stderr
     );
 }
+
+/// Multi-element integer joins keep the destination cursor across small and slow values.
+///
+/// Regression: the x86_64 fast path overwrote its saved destination cursor with the array
+/// pointer after each one/two-digit element, corrupting the array payload and crashing on the
+/// next separator write.
+#[test]
+fn test_implode_int_mixed_width_elements_preserve_array_and_cursor() {
+    let out = compile_and_run(
+        r#"<?php
+$a = [10, 20, 30];
+echo implode(',', $a), '|';
+echo implode('-', [$a[0], 12, 345, -7]), '|';
+echo implode('', [1, 2, 3]), '|';
+echo $a[1], ':', implode(',', $a), "\n";
+"#,
+    );
+    assert_eq!(out, "10,20,30|10-12-345--7|123|20:10,20,30\n");
+}

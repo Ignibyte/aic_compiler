@@ -41,6 +41,7 @@ mod mixed_boundaries;
 mod union_returns;
 #[path = "types/scalar_arguments.rs"]
 mod scalar_arguments;
+mod nullable_fallback_flow;
 #[path = "types/narrowed_object_arguments.rs"]
 mod narrowed_object_arguments;
 mod guarded_interface_receivers;

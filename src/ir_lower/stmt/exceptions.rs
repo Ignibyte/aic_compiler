@@ -90,7 +90,7 @@ pub(super) fn lower_try_catch(
     ctx.clear_static_callable_locals();
     emit_try_pop_handler(ctx, handler_token, span);
     lower_catch_dispatch(ctx, catches, &mut exits, span);
-    finish_try_type_join(ctx, exits, after_block, span);
+    finish_try_type_join(ctx, exits, after_block, catches, span);
 }
 
 /// Joins the local types of every fall-through exit at the post-try block and positions there.
@@ -100,14 +100,30 @@ pub(super) fn lower_try_catch(
 /// code whatever the LAST catch left: `try { $a = f(); } catch (E) { $a = []; }` with a `mixed` `f()`
 /// typed the reads below as `array`, so the try path's boxed value was read as an indexed array.
 /// The same join `if` chains use reconciles them (`conditionals::finish_if_type_join`).
+///
+/// A catch that leaves through `break` or `continue` carries its locals to the loop's exit or
+/// header, and lowering types those from the state after the `try`, not from the catch's own
+/// exit. So when the try body is the only fall-through, the post-try code keeps the state the
+/// last catch left, as it did before this join.
 fn finish_try_type_join(
     ctx: &mut LoweringContext<'_, '_>,
     exits: Vec<IfArmExit>,
     after_block: BlockId,
+    catches: &[CatchClause],
     span: Span,
 ) {
     let after_reachable = !exits.is_empty();
-    finish_if_type_join(ctx, exits, after_block, span);
+    let loop_control_catch = catches.iter().any(|catch| {
+        matches!(
+            catch.body.last().map(|stmt| &stmt.kind),
+            Some(StmtKind::Break(_) | StmtKind::Continue(_))
+        )
+    });
+    if exits.len() == 1 && loop_control_catch {
+        branch_arm_tails(ctx, &exits, after_block);
+    } else {
+        finish_if_type_join(ctx, exits, after_block, span);
+    }
     ctx.builder.position_at_end(after_block);
     if !after_reachable {
         ctx.builder.terminate(Terminator::Unreachable);
@@ -180,7 +196,7 @@ pub(super) fn lower_try_catch_finally(
     ctx.clear_static_callable_locals();
     emit_try_pop_handler(ctx, handler_token, span);
     lower_catch_dispatch_with_finally(ctx, catches, &mut exits, finally_body, span);
-    finish_try_type_join(ctx, exits, after_block, span);
+    finish_try_type_join(ctx, exits, after_block, catches, span);
 }
 
 /// Emits the runtime cleanup for a pushed try/catch handler.
@@ -460,6 +476,7 @@ pub(super) fn lower_catch_bind(ctx: &mut LoweringContext<'_, '_>, catch: &CatchC
         Op::CatchBind.default_effects(),
         Some(span),
     );
+    let incoming_pins = crate::ir_lower::expr::pin_in_flight_owners(ctx, &[caught.value], span);
     // Only a matched user catch consumes a replacement here. Internal CatchBind users rethrow
     // after cleanup and must preserve the pending host predecessor automatically.
     ctx.emit_void(
@@ -471,7 +488,41 @@ pub(super) fn lower_catch_bind(ctx: &mut LoweringContext<'_, '_>, catch: &CatchC
         crate::ir::Effects::all(),
         Some(span),
     );
+    // Keep the old PHP value alive until the replacement is visible. Its last release can
+    // throw, and an outer catch must already observe the newly bound exception at that point.
+    let previous_owner = catch.variable.as_ref().and_then(|name| {
+        if !ctx.has_local_slot(name) {
+            if ctx.loop_stack.is_empty()
+                && !ctx.has_eval_barrier()
+                && !ctx.local_uses_global_storage(name)
+            {
+                return None;
+            }
+            // A first syntactic binding can replace a previous iteration's value, a value
+            // reloaded by eval, or program-global storage populated by another scope. Frame
+            // slots are zero-initialized when absent; global loads use their shared symbol.
+            if !ctx.local_uses_global_storage(name) {
+                ctx.declare_local(name, php_type.clone());
+            }
+        }
+        let previous = ctx.load_local_for_retirement_pin(name, Some(span));
+        crate::ir_lower::expr::root_value_for_later_use(ctx, previous, span).1
+    });
+    // Reorder only owner records, preserving their values: the incoming transfer must be
+    // disarmed before retiring the old value can throw. Owner records are a strict stack.
+    if let Some(owner) = previous_owner {
+        crate::ir_lower::expr::unregister_owned_call_operand(ctx, owner, span);
+    }
+    crate::ir_lower::expr::unpin_in_flight_owners(ctx, incoming_pins, span);
+    if let Some(owner) = previous_owner {
+        crate::ir_lower::expr::register_owned_call_operand(ctx, owner, span);
+    }
+    let store_pins = crate::ir_lower::expr::pin_in_flight_owners(ctx, &[caught.value], span);
     ctx.store_local(&variable, caught, php_type, Some(span));
+    crate::ir_lower::expr::unpin_in_flight_owners(ctx, store_pins, span);
+    if let Some(owner) = previous_owner {
+        crate::ir_lower::expr::retire_owned_call_operand(ctx, owner, span);
+    }
 }
 
 /// Returns the local type to use for a catch variable.

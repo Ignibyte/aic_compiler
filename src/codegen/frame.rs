@@ -72,6 +72,7 @@ pub(super) struct FrameLayout {
     pub(super) value_placement: ValuePlacement,
     pub(super) local_offsets: HashMap<LocalSlotId, usize>,
     pub(super) numeric_cell_offsets: HashMap<ValueId, usize>,
+    pub(super) numeric_seed_offsets: HashMap<LocalSlotId, usize>,
     pub(super) numeric_local_slots: HashSet<LocalSlotId>,
     pub(super) numeric_values: HashSet<ValueId>,
     pub(super) ref_cell_state_offsets: HashMap<LocalSlotId, usize>,
@@ -144,6 +145,11 @@ pub(super) fn layout_for_function(
             numeric_cell_offsets.insert(value, offset);
         }
     }
+    let mut numeric_seed_offsets = HashMap::new();
+    for slot in numeric.seed_slots {
+        offset += 24;
+        numeric_seed_offsets.insert(slot, offset);
+    }
     let mut ref_cell_state_offsets = HashMap::new();
     let mut ref_cell_slots = local_analysis.ref_cell_slots().collect::<Vec<_>>();
     ref_cell_slots.sort_by_key(|slot| slot.as_raw());
@@ -205,6 +211,7 @@ pub(super) fn layout_for_function(
         value_placement,
         local_offsets,
         numeric_cell_offsets,
+        numeric_seed_offsets,
         numeric_local_slots: numeric.locals,
         numeric_values: numeric.proven_values,
         ref_cell_state_offsets,
@@ -474,6 +481,7 @@ pub(super) fn emit_main_prologue(ctx: &mut FunctionContext<'_>) {
         abi::emit_enable_heap_debug_flag(ctx.emitter);
     }
     zero_initialize_main_cleanup_locals(ctx);
+    initialize_nullable_scalar_locals(ctx);
     initialize_ref_cell_state_slots(ctx);
     zero_initialize_ref_cell_owner_locals(ctx);
     zero_initialize_eval_context_locals(ctx);
@@ -561,6 +569,7 @@ pub(super) fn emit_function_prologue_with_label(
         }
     }
     zero_initialize_function_cleanup_locals(ctx);
+    initialize_nullable_scalar_locals(ctx);
     initialize_ref_cell_state_slots(ctx);
     zero_initialize_ref_cell_owner_locals(ctx);
     zero_initialize_eval_context_locals(ctx);
@@ -1061,6 +1070,7 @@ pub(super) fn emit_web_handler_prologue(ctx: &mut FunctionContext<'_>) {
     emit_opcache_restart_boundary(ctx);
     capture_concat_base(ctx);
     zero_initialize_main_cleanup_locals(ctx);
+    initialize_nullable_scalar_locals(ctx);
     initialize_ref_cell_state_slots(ctx);
     zero_initialize_ref_cell_owner_locals(ctx);
     zero_initialize_eval_context_locals(ctx);
@@ -1310,6 +1320,24 @@ pub(super) fn emit_web_entry_stub(
         crate::codegen::lower_inst::builtins::io::emit_application_stream_closer(ctx);
     }
     Ok(())
+}
+
+/// Gives nullable scalar frame locals a null tag before any conditional store can be skipped.
+fn initialize_nullable_scalar_locals(ctx: &mut FunctionContext<'_>) {
+    let slots: Vec<_> = ctx.function.locals.iter().filter(|local|
+        local.kind == crate::ir::LocalKind::PhpLocal && local.ir_type == crate::ir::IrType::TaggedScalar
+            && !local_slot_is_parameter(ctx.function, local.id))
+        .map(|local| local.id).collect();
+    for slot in slots {
+        let offset = ctx.local_offset(slot).expect("declared nullable frame slot");
+        let scratch = abi::secondary_scratch_reg(ctx.emitter);
+        abi::emit_load_int_immediate(ctx.emitter, scratch,
+            crate::codegen_support::sentinels::NULL_SENTINEL);
+        abi::store_at_offset(ctx.emitter, scratch, offset);
+        abi::emit_load_int_immediate(ctx.emitter, scratch,
+            crate::codegen_support::sentinels::TAGGED_SCALAR_TAG_NULL);
+        abi::store_at_offset(ctx.emitter, scratch, offset - 8);
+    }
 }
 
 /// Zero-initializes cleanup-tracked locals so skipped assignments stay safe at epilogue.
@@ -1832,9 +1860,26 @@ pub(super) fn emit_owned_local_cleanup(
 ) {
     if ctx.numeric_local_slots.contains(&slot) {
         // -- numeric cells have no child that can run a PHP destructor --
-        abi::load_at_offset(ctx.emitter, abi::int_result_reg(ctx.emitter), offset);
+        let result = abi::int_result_reg(ctx.emitter);
+        abi::load_at_offset(ctx.emitter, result, offset);
+        let done = ctx.next_label("numeric_local_cleanup_done");
+        abi::emit_branch_if_int_result_zero(ctx.emitter, &done);
         abi::emit_store_zero_to_local_slot(ctx.emitter, offset);
+        let cells = ctx.numeric_cell_offsets_sorted();
+        if !cells.is_empty() && cells.len() <= 4 {
+            // -- a checked numeric local may hold a transient frame cell instead of a heap box --
+            let scratch = abi::secondary_scratch_reg(ctx.emitter);
+            for cell_offset in cells {
+                abi::emit_frame_slot_address(ctx.emitter, scratch, cell_offset);
+                ctx.emitter.instruction(&format!(                               // compare the retiring pointer with this frame cell
+                    "cmp {}, {}",
+                    result, scratch
+                ));
+                abi::emit_branch_if_equal_wide(ctx.emitter, &done);                // frame cells own no heap payload
+            }
+        }
         abi::emit_decref_if_refcounted(ctx.emitter, &PhpType::Mixed);
+        ctx.emitter.label(&done);
         return;
     }
     let done = ctx

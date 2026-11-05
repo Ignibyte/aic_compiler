@@ -256,7 +256,10 @@ fn stmt_guarantees_function_exit(
 
 /// Returns true if the given expression guarantees that the current function will exit.
 /// Recognizes `throw`, `exit`/`die` function calls, and expressions wrapping these.
-fn expr_guarantees_function_exit(expr: &Expr) -> bool {
+///
+/// Also answers whether a lazy merge arm (`$v ?? throw ...`, `$v ?: exit(1)`) ever yields a
+/// value: the checker and the EIR lowering both keep the other arm's type for such a default.
+pub(crate) fn expr_guarantees_function_exit(expr: &Expr) -> bool {
     match &expr.kind {
         crate::parser::ast::ExprKind::Throw(_) => true,
         crate::parser::ast::ExprKind::ErrorSuppress(inner) => expr_guarantees_function_exit(inner),
@@ -332,7 +335,7 @@ fn switch_guarantees_function_exit(
 
 /// Returns true if the expression is a truthy literal constant.
 /// Recognizes bool, int, float, and non-empty non-"0" string literals.
-fn expr_is_truthy_literal(expr: &Expr) -> bool {
+pub(crate) fn expr_is_truthy_literal(expr: &Expr) -> bool {
     match &expr.kind {
         crate::parser::ast::ExprKind::BoolLiteral(value) => *value,
         crate::parser::ast::ExprKind::IntLiteral(value) => *value != 0,
