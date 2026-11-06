@@ -1460,7 +1460,10 @@ impl RuntimeFnId {
                     | crate::ir::Effects::ALLOC_HEAP.bits()
                     | crate::ir::Effects::MAY_THROW.bits(),
             ),
-            RuntimeFnId::ArrayMerge | RuntimeFnId::ArrayReverse | RuntimeFnId::ArrayValues => crate::ir::Effects::from_bits_retain(
+            // `array_keys()` joins them: its boxed receiver (`mixed`, `array|false`) raises PHP's
+            // `TypeError` on a non-array tag, so it neither is pure nor can be discarded.
+            RuntimeFnId::ArrayKeys
+            | RuntimeFnId::ArrayMerge | RuntimeFnId::ArrayReverse | RuntimeFnId::ArrayValues => crate::ir::Effects::from_bits_retain(
                 crate::ir::Effects::READS_HEAP.bits()
                     | crate::ir::Effects::ALLOC_HEAP.bits()
                     | crate::ir::Effects::REFCOUNT_OP.bits()
@@ -1489,7 +1492,6 @@ impl RuntimeFnId {
             RuntimeFnId::ArrayIntersectKey |
             RuntimeFnId::ArrayIsList |
             RuntimeFnId::ArrayKeyExists |
-            RuntimeFnId::ArrayKeys |
             RuntimeFnId::ArrayMergeRecursive |
             RuntimeFnId::ArrayReplace |
             RuntimeFnId::ArrayReplaceRecursive |
