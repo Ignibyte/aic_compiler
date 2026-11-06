@@ -129,6 +129,8 @@ pub mod tz_prelude;
 pub mod xml_prelude;
 pub mod fileinfo_prelude;
 pub mod tokenizer_prelude;
+/// Conditionally-injected PHP-written stdlib functions (`pack`, `unpack`).
+pub mod stdlib_prelude;
 /// Conditionally-injected `var_export` prelude (elephc-PHP rendering function).
 pub mod var_export_prelude;
 /// Conditionally-injected key-set prelude (`array_intersect_key`/`array_diff_key` on any array).

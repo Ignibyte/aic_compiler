@@ -93,6 +93,7 @@ mod tz_prelude;
 mod xml_prelude;
 mod fileinfo_prelude;
 mod tokenizer_prelude;
+mod stdlib_prelude;
 mod var_export_prelude;
 mod key_set_prelude;
 mod preg_named_groups;
