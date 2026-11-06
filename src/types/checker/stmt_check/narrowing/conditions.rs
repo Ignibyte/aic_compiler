@@ -237,9 +237,27 @@ impl Checker {
     fn right_operand_keeps_local_guard(&self, right: &Expr, var: &str) -> bool {
         !Self::narrowed_place_key_is_property(var)
             && self.local_binding_is_unaliased(var)
-            && expr_cannot_rebind_local(right, var, &|name, index| {
-                self.function_param_is_by_value(name, index)
+            && expr_cannot_rebind_local(right, var, &|callee, index| match callee {
+                RebindCallee::Function(name) => self.function_param_is_by_value(name, index),
+                RebindCallee::Method(method) => self.method_param_is_by_value(method, index),
             })
+    }
+
+    /// Returns whether every instance method named `method` that a class or interface
+    /// declares takes the argument at `index` by value. PHP binds a caller's local by
+    /// reference only through a declared `&` parameter, so when no same-named method declares
+    /// one there, the call cannot rebind the local whatever its receiver. A name no class
+    /// declares (a magic `__call` target) answers no.
+    fn method_param_is_by_value(&self, method: &str, index: usize) -> bool {
+        let key = crate::names::php_symbol_key(method);
+        let mut signatures = self
+            .classes
+            .values()
+            .filter_map(|class| class.methods.get(&key))
+            .chain(self.interfaces.values().filter_map(|interface| interface.methods.get(&key)))
+            .peekable();
+        signatures.peek().is_some()
+            && signatures.all(|signature| signature.ref_params.get(index).is_some_and(|by_ref| !by_ref))
     }
 
     /// Returns whether the declared parameter at `index` of the user function or builtin
@@ -296,13 +314,22 @@ impl Checker {
     }
 }
 
+/// The callee of a call whose arguments may pass a guarded local by reference.
+#[derive(Clone, Copy)]
+enum RebindCallee<'a> {
+    /// A function, by its written name.
+    Function(&'a str),
+    /// An instance method, by its name alone.
+    Method(&'a str),
+}
+
 /// Returns whether evaluating `expr` cannot rebind the unaliased local `var`: it is built only
 /// from literals, reads, comparisons and arithmetic, property reads, and calls that are not
-/// `extract()` and hand `var` itself only to a parameter `by_value(function, position)` proves
-/// takes it by value (a by-reference parameter could rebind it; a method's is never proved).
+/// `extract()` and hand `var` itself only to a parameter `by_value(callee, position)` proves
+/// takes it by value (a by-reference parameter could rebind it).
 /// Anything else, an assignment or an increment included, counts as a possible write.
-fn expr_cannot_rebind_local(expr: &Expr, var: &str, by_value: &dyn Fn(&str, usize) -> bool) -> bool {
-    let arguments_keep = |callee: Option<&str>, args: &[Expr]| {
+fn expr_cannot_rebind_local(expr: &Expr, var: &str, by_value: &dyn Fn(RebindCallee<'_>, usize) -> bool) -> bool {
+    let arguments_keep = |callee: Option<RebindCallee<'_>>, args: &[Expr]| {
         args.iter().enumerate().all(|(index, arg)| match &arg.kind {
             ExprKind::Variable(name) if name == var => {
                 callee.is_some_and(|callee| by_value(callee, index))
@@ -324,11 +351,13 @@ fn expr_cannot_rebind_local(expr: &Expr, var: &str, by_value: &dyn Fn(&str, usiz
         ExprKind::PropertyAccess { object, .. } | ExprKind::NullsafePropertyAccess { object, .. } => {
             expr_cannot_rebind_local(object, var, by_value)
         }
-        ExprKind::MethodCall { object, args, .. } | ExprKind::NullsafeMethodCall { object, args, .. } => {
-            expr_cannot_rebind_local(object, var, by_value) && arguments_keep(None, args)
+        ExprKind::MethodCall { object, method, args } | ExprKind::NullsafeMethodCall { object, method, args } => {
+            expr_cannot_rebind_local(object, var, by_value)
+                && arguments_keep(Some(RebindCallee::Method(method.as_str())), args)
         }
         ExprKind::FunctionCall { name, args } => {
-            crate::names::php_symbol_key(name.as_str()) != "extract" && arguments_keep(Some(name.as_str()), args)
+            crate::names::php_symbol_key(name.as_str()) != "extract"
+                && arguments_keep(Some(RebindCallee::Function(name.as_str())), args)
         }
         _ => false,
     }
