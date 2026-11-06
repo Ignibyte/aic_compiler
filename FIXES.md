@@ -1,6 +1,6 @@
 # Fixes not upstream yet
 
-This fork carries 247 fix and feature commits that upstream elephc (`68c9c53d47`) does not have.
+This fork carries 249 fix and feature commits that upstream elephc (`34cbe93384`) does not have.
 18 of them are in an open pull request on [illegalstudio/elephc](https://github.com/illegalstudio/elephc/pulls); the rest are not sent.
 The list should shrink: a row leaves when upstream merges the fix, or fixes the same bug its own way,
 and the fork drops its copy at the next sync.
@@ -256,3 +256,5 @@ Generated from `git log upstream/main..main` and our upstream pull requests. Do 
 | [`39af9370ba`](https://github.com/Ignibyte/aic_compiler/commit/39af9370ba) | fix | - | box an object arm where a join reads mixed | not sent |
 | [`f1359f64ff`](https://github.com/Ignibyte/aic_compiler/commit/f1359f64ff) | fix | - | keep a guard across a by-value call on the guarded local | not sent |
 | [`a100bbdc9f`](https://github.com/Ignibyte/aic_compiler/commit/a100bbdc9f) | fix | - | prove a method result non-null through any recorded receiver | not sent |
+| [`f10c6f9cf5`](https://github.com/Ignibyte/aic_compiler/commit/f10c6f9cf5) | fix | - | keep a guard past a method call that takes the local by value | not sent |
+| [`6d1782a443`](https://github.com/Ignibyte/aic_compiler/commit/6d1782a443) | feat | - | add pack() and unpack() as a pay-for-use PHP prelude | not sent |
