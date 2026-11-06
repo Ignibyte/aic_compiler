@@ -1,0 +1,192 @@
+name: AIC release
+
+# The fork's own release (FORK.md, "Releases"): the Linux x86_64 tarball that
+# AIC's gates pin by SHA-256 and install with `aic-gate tools`. A tag
+# `aic-v<version>-<n>` builds, verifies and publishes it; a manual run builds
+# and verifies the same tarball and keeps it as a workflow artifact only.
+#
+# Upstream's release.yml publishes upstream's releases with upstream's
+# secrets. It runs only for tags starting with `v`, so it skips these.
+on:
+  push:
+    tags:
+      - "aic-v*"
+  workflow_dispatch:
+
+# Only the publish job writes.
+permissions:
+  contents: read
+
+env:
+  # Same toolchain as release.yml.
+  RUST_TOOLCHAIN: "1.98"
+  TARGET: x86_64-unknown-linux-gnu
+
+jobs:
+  build:
+    name: Build and verify ${{ github.ref_name }}
+    # glibc 2.35, as upstream's Linux release builds, so the binary also runs on
+    # older distributions.
+    runs-on: ubuntu-22.04
+    # The release build, then verify-release-artifact.sh, which builds curl and
+    # libxml2 from source on a cold cache.
+    timeout-minutes: 120
+    outputs:
+      tag: ${{ steps.name.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Name the release
+        id: name
+        run: |
+          VERSION="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
+            case "$TAG" in
+              "aic-v${VERSION}-"[0-9]*) ;;
+              *)
+                echo "::error::Tag ${TAG} does not name Cargo.toml's version ${VERSION} (aic-v${VERSION}-<n>)."
+                exit 1
+                ;;
+            esac
+            git fetch origin main:refs/remotes/origin/main
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "::error::Tag ${TAG} points to ${GITHUB_SHA}, which is not on main."
+              exit 1
+            fi
+          else
+            TAG="aic-v${VERSION}-dev"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable, 2026-09-03
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Verify release binary version
+        run: |
+          ACTUAL="$(target/release/elephc --version)"
+          if [ "$ACTUAL" != "elephc ${VERSION}" ]; then
+            echo "::error::Release version mismatch: expected 'elephc ${VERSION}', got '${ACTUAL}'."
+            exit 1
+          fi
+
+      # The same bridges, in the same order, as release.yml's "Build release
+      # bridge staticlibs" step. verify-release-artifact.sh fails a tarball
+      # that lacks one the binary advertises.
+      - name: Build release bridge staticlibs
+        run: cargo build --release -p elephc-tls -p elephc-pdo -p elephc-crypto -p elephc-openssl -p elephc-bcmath -p elephc-gmp -p elephc-random -p elephc-mbstring -p elephc-iconv -p elephc-phar -p elephc-tz -p elephc-image -p elephc-probe -p elephc-instr -p elephc-web -p elephc-pcntl -p elephc-xml -p elephc-fileinfo -p elephc-tokenizer -p elephc-magician -p elephc-curl -p elephc-zend
+
+      - name: Build curl-aware Magician staticlib
+        run: |
+          cargo build --release -p elephc-magician --features curl \
+            --target-dir target/elephc-magician-curl-release-build
+          cp target/elephc-magician-curl-release-build/release/libelephc_magician.a \
+            target/release/libelephc_magician_curl.a
+
+      - name: Strip binary
+        run: strip target/release/elephc
+
+      - name: Copy data notices
+        run: |
+          mkdir -p target/release/fileinfo-notices
+          cp crates/elephc-fileinfo/NOTICE.md target/release/fileinfo-notices/
+          mkdir -p target/release/mbstring-notices
+          cp crates/elephc-mbstring/NOTICE.md target/release/mbstring-notices/
+          cp crates/elephc-mbstring/src/unicode/data/LICENSE-UNICODE target/release/mbstring-notices/
+          cp crates/elephc-mbstring/src/detect/data/LICENSE-PHP target/release/mbstring-notices/
+
+      - name: Create tarball
+        run: |
+          cd target/release
+          TARBALL="elephc-${TAG}-${TARGET}.tar.gz"
+          tar czf "$TARBALL" \
+            elephc \
+            libelephc_tls.a \
+            libelephc_pdo.a \
+            libelephc_crypto.a \
+            libelephc_openssl.a \
+            libelephc_bcmath.a \
+            libelephc_gmp.a \
+            libelephc_random.a \
+            libelephc_mbstring.a \
+            libelephc_iconv.a \
+            libelephc_phar.a \
+            libelephc_tz.a \
+            libelephc_image.a \
+            libelephc_probe.a \
+            libelephc_instr.a \
+            libelephc_web.a \
+            libelephc_pcntl.a \
+            libelephc_xml.a \
+            libelephc_fileinfo.a \
+            libelephc_tokenizer.a \
+            libelephc_magician.a \
+            libelephc_curl.a \
+            libelephc_magician_curl.a \
+            libelephc_zend.a \
+            mbstring-notices \
+            fileinfo-notices
+          sha256sum "$TARBALL" > "$TARBALL.sha256"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          mv "$TARBALL" "$TARBALL.sha256" "$GITHUB_WORKSPACE/dist/"
+
+      # The verify step links real programs and builds the managed native
+      # packages from source; release.yml's verify-artifact job installs the
+      # same set.
+      - name: Install a linking toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils build-essential file libbz2-dev zlib1g-dev
+
+      - name: Cache managed native dependencies
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/elephc/native
+          key: aic-verify-native-${{ env.TARGET }}-${{ hashFiles('src/native_deps/**') }}
+          restore-keys: |
+            aic-verify-native-${{ env.TARGET }}-
+
+      - name: Verify the tarball is complete
+        run: ./scripts/verify-release-artifact.sh "dist/elephc-${TAG}-${TARGET}.tar.gz"
+
+      - name: Upload the tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: aic-release-${{ env.TARGET }}
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish ${{ needs.build.outputs.tag }}
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the tarball
+        uses: actions/download-artifact@v8
+        with:
+          name: aic-release-x86_64-unknown-linux-gnu
+          path: dist
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes "The fork's Linux x86_64 build for AIC. AIC's gates pin this tarball by SHA-256 and install it with \`vendor/bin/aic-gate tools\`."

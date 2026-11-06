@@ -7,7 +7,7 @@ does not have yet. [FIXES.md](FIXES.md) lists every one, with the upstream pull 
 carries it where there is one. The goal is a fork with nothing left in that list.
 
 Use upstream elephc for anything else. This fork follows upstream closely, but it is tested
-against AIC's code, not released on its own.
+against AIC's code, and its releases are for AIC.
 
 ## Build
 
@@ -24,6 +24,19 @@ ln -s "$PWD/target/release/elephc" ~/.local/bin/elephc   # or anywhere on PATH
 Keep the binary in `target/release/`, beside the bridge archives the build writes there, and
 link to it rather than copying it. AIC's gates look for `elephc` on `PATH` (or `ELEPHC_BIN`) and
 install the native packages they pin (PCRE2, Oniguruma) on first use.
+
+## Releases
+
+A tag `aic-v<version>-<n>` (the upstream version in `Cargo.toml`, then a fork serial) runs
+`.github/workflows/aic-release.yml`. On ubuntu-22.04 it builds the Linux x86_64 tarball:
+the binary and every bridge archive, as upstream's `release.yml` packs them. It writes the
+tarball's `.sha256`, proves the tarball complete with `scripts/verify-release-artifact.sh`, and
+publishes both as a release. A manual run of the workflow builds and verifies the same tarball
+and keeps it as a workflow artifact, with nothing published.
+
+AIC's gates pin one release by its SHA-256 (`gates/native/elephc-release` in AIC) and install it
+with `vendor/bin/aic-gate tools`. Cut a release only from a `main` that AIC's gates have passed
+with. Other platforms build from source, as above.
 
 ## History
 
