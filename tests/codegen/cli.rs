@@ -1834,10 +1834,12 @@ fn exact_incl_percent(report: &str, name: &str) -> f64 {
 /// milliseconds — so anything under 10% passes and every shape of the defect
 /// lands far above it.
 ///
-/// `heavy` runs 1,200,000 rounds per call so its work keeps dominating the fixed
-/// drain and dispatch overhead: at 120,000 rounds a faster loop left it at about
+/// `heavy` runs 12,000,000 rounds per call so its work keeps dominating the fixed
+/// drain and dispatch overhead. At 120,000 rounds a faster loop left it at about
 /// 4 ms in total, and the consumer's own share fell to 85-89.5% on loaded CI
-/// runners, failing the >90% control while the coroutines stayed far below 10%.
+/// runners; at 1,200,000 a fast x86_64 machine ran it in 6.5 ms and the share still
+/// fell to 88%. Both failed the >90% control while the coroutines stayed far below
+/// 10%.
 #[test]
 fn test_cli_monitor_does_not_charge_a_coroutine_for_its_consumer() {
     let dir = make_cli_test_dir("elephc_cli_monitor_coroutine");
@@ -1850,10 +1852,10 @@ fn test_cli_monitor_does_not_charge_a_coroutine_for_its_consumer() {
          function body(): int { Fiber::suspend(1); return 7; }\n\
          function drain(): int {\n\
          $t = 0;\n\
-         foreach (outer() as $v) { $t += heavy(1200000); }\n\
+         foreach (outer() as $v) { $t += heavy(12000000); }\n\
          $f = new Fiber('body');\n\
          $f->start();\n\
-         $t += heavy(1200000);\n\
+         $t += heavy(12000000);\n\
          $f->resume(0);\n\
          return $t + $f->getReturn();\n\
          }\n\
