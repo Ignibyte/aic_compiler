@@ -335,3 +335,13 @@ fn test_error_or_guard_drops_past_a_by_reference_call() {
         "expects string",
     );
 }
+
+/// A method of the called name that takes the guarded local by reference may rebind it, even
+/// when another class's method of that name takes it by value, so the guard does not survive.
+#[test]
+fn test_error_or_guard_drops_past_a_by_reference_method_call() {
+    expect_error(
+        "<?php final class Keep { public function check(?string $x): bool { return true; } } final class Reset { public function check(?string &$x): bool { $x = null; return true; } } function need(string $x): void {} function run(Reset $r, ?string $x): void { if ($x === null || !$r->check($x)) { return; } need($x); }",
+        "expects string",
+    );
+}

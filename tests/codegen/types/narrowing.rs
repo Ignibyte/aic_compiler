@@ -1285,6 +1285,33 @@ echo $files->name(3), "|", $files->name(0), "\n";
     assert_eq!(out, "3.txt|none\n");
 }
 
+/// Verifies `!$x instanceof C || !$o->m($x)` keeps the left guard's object type past an early
+/// return when every method named `m` takes `$x` by value: the call cannot rebind the local.
+#[test]
+fn test_or_guard_survives_a_by_value_method_call_on_the_guarded_local() {
+    let out = compile_and_run(
+        r#"<?php
+final class Chat { public function __construct(public int $id, public bool $open) {} }
+final class Viewer { public function mayRead(Chat $chat): bool { return $chat->id > 1; } }
+final class Chats {
+    public function __construct(private Viewer $viewer) {}
+    public function find(int $id): ?Chat { return $id > 0 ? new Chat($id, true) : null; }
+    public function mark(int $id): string {
+        $chat = $this->find($id);
+        if (!$chat instanceof Chat || !$chat->open || !$this->viewer->mayRead($chat)) {
+            return "none";
+        }
+        return $this->label($chat->id);
+    }
+    private function label(int $id): string { return "chat " . $id; }
+}
+$chats = new Chats(new Viewer());
+echo $chats->mark(3), "|", $chats->mark(1), "|", $chats->mark(0), "\n";
+"#,
+    );
+    assert_eq!(out, "chat 3|none|none\n");
+}
+
 /// Verifies a declared non-null method result on a property receiver replaces the nullable view
 /// a returning branch's binding of the same local left behind.
 #[test]
