@@ -109,7 +109,12 @@ fn collection_effects_include_destructor_callbacks() {
 fn array_projection_effects_preserve_heap_reads_and_failures() {
     let required = Effects::READS_HEAP | Effects::ALLOC_HEAP | Effects::REFCOUNT_OP
         | Effects::MAY_THROW | Effects::MAY_FATAL;
-    for target in [RuntimeFnId::ArrayMerge, RuntimeFnId::ArrayReverse, RuntimeFnId::ArrayValues] {
+    for target in [
+        RuntimeFnId::ArrayKeys,
+        RuntimeFnId::ArrayMerge,
+        RuntimeFnId::ArrayReverse,
+        RuntimeFnId::ArrayValues,
+    ] {
         assert!(target.effects().contains(required), "{target:?}");
         assert!(!target.effects().is_pure(), "{target:?}");
     }
