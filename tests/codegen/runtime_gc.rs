@@ -13,6 +13,8 @@
 
 #[path = "runtime_gc/mixed_inc_dec_in_place.rs"]
 mod mixed_inc_dec_in_place;
+#[path = "runtime_gc/conditional_arm_owner_overwrite.rs"]
+mod conditional_arm_owner_overwrite;
 #[path = "runtime_gc/case_transform_owners.rs"]
 mod case_transform_owners;
 #[path = "runtime_gc/borrowed_numeric.rs"]
