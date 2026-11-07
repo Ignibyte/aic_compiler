@@ -15,6 +15,8 @@ use crate::support::*;
 mod alternative_syntax;
 #[path = "control_flow/branches_and_loops.rs"]
 mod branches_and_loops;
+#[path = "control_flow/loop_exit_scalar_reads.rs"]
+mod loop_exit_scalar_reads;
 #[path = "control_flow/functions.rs"]
 mod functions;
 #[path = "control_flow/booleans.rs"]
