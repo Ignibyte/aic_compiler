@@ -1492,6 +1492,69 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         locals.into_iter().map(|(_, name)| name).collect()
     }
 
+    /// Returns whether an already-lowered `store_local` writes this non-parameter slot.
+    ///
+    /// Such a slot may hold an owner on a path that is not definitely initialized — a conditional
+    /// arm wrote it before the merge. Non-parameter slots start at zero, so releasing the occupant
+    /// before an overwrite is safe on the path where that arm never ran.
+    fn slot_has_store_owner(&self, slot: LocalSlotId) -> bool {
+        let function = self.builder.function();
+        slot.as_raw() as usize >= function.params.len()
+            && function.instructions.iter().any(|inst| {
+                inst.op == Op::StoreLocal && inst.immediate == Some(Immediate::LocalSlot(slot))
+            })
+    }
+
+    /// Returns whether an already-lowered `store_local` of this non-parameter slot can reach the
+    /// block being lowered.
+    ///
+    /// The search runs backwards over the edges built so far, handler entries included, so an
+    /// exclusive arm (the other operand of a ternary) does not count, while an `if` arm that merged
+    /// into this path, or a `catch` an earlier `try` reached, does.
+    fn slot_has_reaching_store_owner(&self, slot: LocalSlotId) -> bool {
+        let Some(current) = self.builder.insertion_block() else {
+            return false;
+        };
+        let function = self.builder.function();
+        if (slot.as_raw() as usize) < function.params.len() {
+            return false;
+        }
+        let stores: HashSet<BlockId> = function.blocks.iter()
+            .filter(|block| block.instructions.iter().any(|id| {
+                let inst = &function.instructions[id.as_raw() as usize];
+                inst.op == Op::StoreLocal && inst.immediate == Some(Immediate::LocalSlot(slot))
+            }))
+            .map(|block| block.id)
+            .collect();
+        if stores.is_empty() {
+            return false;
+        }
+        // A handler is entered from the block that pushed it, as the EIR validator links it.
+        let mut predecessors: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+        for block in &function.blocks {
+            for next in block.terminator.as_ref().map(crate::ir_passes::successors).unwrap_or_default() {
+                predecessors.entry(next).or_default().push(block.id);
+            }
+            for id in &block.instructions {
+                let inst = &function.instructions[id.as_raw() as usize];
+                if let (Op::TryPushHandler, Some(Immediate::I64(token))) = (inst.op, &inst.immediate) {
+                    predecessors.entry(BlockId::from_raw(*token as u32)).or_default().push(block.id);
+                }
+            }
+        }
+        let mut pending = vec![current];
+        let mut seen = HashSet::new();
+        while let Some(block) = pending.pop() {
+            if stores.contains(&block) {
+                return true;
+            }
+            if seen.insert(block) {
+                pending.extend(predecessors.get(&block).into_iter().flatten().copied());
+            }
+        }
+        false
+    }
+
     /// Replaces the definitely-initialized local set after branch lowering or merge analysis.
     pub(crate) fn restore_initialized_slots(&mut self, initialized_slots: HashSet<LocalSlotId>) {
         self.initialized_slots = initialized_slots;
@@ -2657,13 +2720,15 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         }
         // A loop-carried slot can exist globally without being definitely initialized
         // on this CFG path. An earlier eval barrier can likewise reload a future PHP local
-        // before lowering reaches its first syntactic store. Release either runtime occupant
-        // before overwriting it.
+        // before lowering reaches its first syntactic store, and a conditional arm lowered
+        // earlier may have written the slot (`if ($c) { $e = new A(); }` before a store the
+        // merge does not split). Release any such runtime occupant before overwriting it.
         if !uses_global
             && local_kind_uses_plain_store_cleanup(previous_kind)
             && previous_slot.is_some_and(|slot| !self.initialized_slots.contains(&slot))
             && (!self.loop_stack.is_empty()
-                || (previous_kind == LocalKind::PhpLocal && self.eval_barrier_active))
+                || (previous_kind == LocalKind::PhpLocal && self.eval_barrier_active)
+                || previous_slot.is_some_and(|slot| self.slot_has_reaching_store_owner(slot)))
         {
             self.release_stored_local_value_before_overwrite(name, slot, &widened_storage_type, span);
         }
@@ -3326,11 +3391,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         self.clear_fiber_start_sig(name);
         self.reset_array_pointer_cursor(name);
         let storage = self.builder.local_php_type(slot);
-        let function = self.builder.function();
-        let has_store_owner = slot.as_raw() as usize >= function.params.len()
-            && function.instructions.iter().any(|inst| {
-                inst.op == Op::StoreLocal && inst.immediate == Some(Immediate::LocalSlot(slot))
-            });
+        let has_store_owner = self.slot_has_store_owner(slot);
         // The same liveness test `store_local` applies before overwriting a slot: release the
         // occupant when this path definitely wrote it, and also when a loop back-edge can carry a
         // previous iteration's value into a slot straight-line flow has not initialized yet.
