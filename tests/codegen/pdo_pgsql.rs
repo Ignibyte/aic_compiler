@@ -754,6 +754,32 @@ echo $db->query("SELECT 'tls-ok'")->fetchColumn();
     assert_eq!(out, "tls-ok");
 }
 
+/// Live libpq sslmode semantics against a server with a self-signed certificate.
+/// `ELEPHC_PG_TLS_SELF_SIGNED_DSN` is a DSN with no `sslmode` for a TLS-enabled
+/// PostgreSQL whose certificate no trust store holds (set up as for
+/// `pgsql_tls_round_trip`). As with libpq, the default, `prefer` and `require`
+/// encrypt without verifying the certificate, `disable` stays plaintext, and
+/// `verify-full` refuses the unknown certificate. `#[ignore]` — needs that server.
+#[test]
+#[ignore]
+fn pgsql_tls_self_signed_follows_libpq_sslmode() {
+    let out = compile_and_run(
+        r#"<?php
+$dsn = (string) getenv("ELEPHC_PG_TLS_SELF_SIGNED_DSN");
+foreach (["", ";sslmode=disable", ";sslmode=prefer", ";sslmode=require", ";sslmode=verify-full"] as $mode) {
+    try {
+        $db = new PDO($dsn . $mode);
+        echo $db->query("SELECT ssl::text FROM pg_stat_ssl WHERE pid = pg_backend_pid()")->fetchColumn();
+    } catch (PDOException $e) {
+        echo "refused";
+    }
+    echo "|";
+}
+"#,
+    );
+    assert_eq!(out, "true|false|true|true|refused|");
+}
+
 /// P2-k: `getColumnMeta()` on a `pgsql:` statement reports the column's REAL
 /// PostgreSQL type — the server native_type name (`int4`/`bool`/`bytea`/`text`),
 /// the correct pdo_type (INT4→PARAM_INT=1, BOOL→PARAM_BOOL=5, BYTEA→PARAM_LOB=3,

@@ -933,7 +933,7 @@ with the usual libpq DSN keys:
 ```php
 <?php
 // Encrypt and verify the server against the bundled public trust roots:
-$db = new PDO("pgsql:host=db.example.com;dbname=app;sslmode=require;user=u;password=p");
+$db = new PDO("pgsql:host=db.example.com;dbname=app;sslmode=verify-full;user=u;password=p");
 
 // Verify against a specific CA (e.g. a managed provider's root):
 $db = new PDO(
@@ -941,8 +941,9 @@ $db = new PDO(
 );
 ```
 
-- `sslmode`: `disable` (plaintext), `prefer` (the default — try TLS, allow plaintext),
-  or `require`/`verify-ca`/`verify-full` (require TLS).
+- `sslmode`: `disable` (plaintext), `allow` (plaintext, then TLS if that fails),
+  `prefer` (the default — TLS, then plaintext if that fails), or
+  `require`/`verify-ca`/`verify-full` (require TLS).
 - `sslrootcert`: a PEM CA bundle to trust instead of the bundled webpki roots.
 - `sslcert` + `sslkey`: a client certificate + private key for mutual TLS (both required
   together).
@@ -951,10 +952,13 @@ $db = new PDO(
   `ssl_max_protocol_version`: TLS 1.2/1.3 bounds honored by rustls.
 - `sslcrl` / `sslcrldir`: PEM revocation lists applied to rustls verification.
 
-Unlike libpq's bare `require` (which encrypts without verifying), elephc always
-validates the server certificate once TLS is negotiated — the safer default — so
-`require`, `verify-ca`, and `verify-full` all verify against the trust roots. For a
-server with a self-signed certificate, pass its CA via `sslrootcert`.
+The server certificate is checked as libpq checks it. `allow`, `prefer`, and
+`require` encrypt without verifying the certificate, so a server with a self-signed
+certificate connects as it does under PHP; when `sslrootcert` names a CA, the chain
+must lead to it in those modes too. `verify-ca` verifies the chain against
+`sslrootcert` (or the bundled webpki roots) without comparing the host name, and
+`verify-full` verifies the chain and the host name. Use `verify-full` wherever the
+network between the program and the server is not trusted.
 
 **MySQL / MariaDB** — ships in the default build through mysql 28's ring-backed
 rustls feature. Configure it with the `Pdo\Mysql::ATTR_SSL_*` constructor options:
