@@ -1,7 +1,7 @@
 # Fixes not upstream yet
 
-This fork carries 252 fix and feature commits that upstream elephc (`a2b348d40b`) does not have.
-18 of them are in an open pull request on [illegalstudio/elephc](https://github.com/illegalstudio/elephc/pulls); the rest are not sent.
+This fork carries 246 fix and feature commits that upstream elephc (`9435998e5a`) does not have.
+13 of them are in an open pull request on [illegalstudio/elephc](https://github.com/illegalstudio/elephc/pulls); the rest are not sent.
 The list should shrink: a row leaves when upstream merges the fix, or fixes the same bug its own way,
 and the fork drops its copy at the next sync.
 
@@ -174,14 +174,9 @@ Generated from `git log upstream/main..main` and our upstream pull requests. Do 
 | [`a05e1d7a3d`](https://github.com/Ignibyte/aic_compiler/commit/a05e1d7a3d) | fix | checker | array_keys over a Mixed-element array stamps Array(Mixed), mirroring ir_lower (#696) | not sent |
 | [`d5eb4a2cf0`](https://github.com/Ignibyte/aic_compiler/commit/d5eb4a2cf0) | fix | checker | compound && conditions apply guard-conjunct narrowing to the branch (#695 drift pin) | not sent |
 | [`716ca3e6e5`](https://github.com/Ignibyte/aic_compiler/commit/716ca3e6e5) | fix | - | widen a function-local hash before a write of another value type | not sent |
-| [`641817e575`](https://github.com/Ignibyte/aic_compiler/commit/641817e575) | fix | - | keep x86_64 interface dispatch off the fifth and sixth argument registers | not sent |
-| [`504c760634`](https://github.com/Ignibyte/aic_compiler/commit/504c760634) | fix | - | accept every PHP regex delimiter, not only the slash | [#1929](https://github.com/illegalstudio/elephc/pull/1929) |
-| [`a9f1423e9b`](https://github.com/Ignibyte/aic_compiler/commit/a9f1423e9b) | fix | - | expand the braced ${n} backreferences in preg_replace replacements | [#1939](https://github.com/illegalstudio/elephc/pull/1939) |
-| [`c40a3fc97c`](https://github.com/Ignibyte/aic_compiler/commit/c40a3fc97c) | fix | - | vivify a nested append's missing bucket without the undefined-key warning | not sent |
 | [`77b1cd6c39`](https://github.com/Ignibyte/aic_compiler/commit/77b1cd6c39) | feat | - | add flush(), a no-op over elephc's unbuffered writes | [#1942](https://github.com/illegalstudio/elephc/pull/1942) |
 | [`3af2ba7d5e`](https://github.com/Ignibyte/aic_compiler/commit/3af2ba7d5e) | fix | - | dispatch a method only the narrowed class declares on the runtime class | not sent |
 | [`209e45918e`](https://github.com/Ignibyte/aic_compiler/commit/209e45918e) | fix | - | keep WeakMap's retire loop off a user get() method | [#1947](https://github.com/illegalstudio/elephc/pull/1947) |
-| [`188469c005`](https://github.com/Ignibyte/aic_compiler/commit/188469c005) | fix | - | accept control and non-ASCII regex delimiters as PHP does | [#1929](https://github.com/illegalstudio/elephc/pull/1929) |
 | [`f19e4ed777`](https://github.com/Ignibyte/aic_compiler/commit/f19e4ed777) | fix | - | warn for a nested append's key reads once and before the right-hand side | not sent |
 | [`9dab31e876`](https://github.com/Ignibyte/aic_compiler/commit/9dab31e876) | fix | - | send queued headers on flush() under --web | [#1942](https://github.com/illegalstudio/elephc/pull/1942) |
 | [`35a34cc4fd`](https://github.com/Ignibyte/aic_compiler/commit/35a34cc4fd) | fix | - | narrow logical operands as PHP flows them, and merge [] into any array | not sent |
@@ -238,8 +233,6 @@ Generated from `git log upstream/main..main` and our upstream pull requests. Do 
 | [`efe8f97792`](https://github.com/Ignibyte/aic_compiler/commit/efe8f97792) | fix | - | satisfy a declared Stringable with an implicit Stringable class | [#2213](https://github.com/illegalstudio/elephc/pull/2213) |
 | [`7e00df7dcc`](https://github.com/Ignibyte/aic_compiler/commit/7e00df7dcc) | fix | - | unite a declared array operand of + with any array | [#2217](https://github.com/illegalstudio/elephc/pull/2217) |
 | [`1e12f37684`](https://github.com/Ignibyte/aic_compiler/commit/1e12f37684) | fix | - | release an owned sprintf format after the call | [#2209](https://github.com/illegalstudio/elephc/pull/2209) |
-| [`4e976b5a02`](https://github.com/Ignibyte/aic_compiler/commit/4e976b5a02) | fix | - | warn when a NAN is coerced to string | [#2210](https://github.com/illegalstudio/elephc/pull/2210) |
-| [`dd95495052`](https://github.com/Ignibyte/aic_compiler/commit/dd95495052) | fix | - | make --heap-debug work under --web | [#2211](https://github.com/illegalstudio/elephc/pull/2211) |
 | [`089c152e31`](https://github.com/Ignibyte/aic_compiler/commit/089c152e31) | fix | - | map a hash of objects or mixed values, and a list of objects | [#2212](https://github.com/illegalstudio/elephc/pull/2212) |
 | [`6774b2aaef`](https://github.com/Ignibyte/aic_compiler/commit/6774b2aaef) | fix | - | convert a weak scalar argument at a builtin's string parameter | [#2214](https://github.com/illegalstudio/elephc/pull/2214) |
 | [`bcbc9866fe`](https://github.com/Ignibyte/aic_compiler/commit/bcbc9866fe) | fix | - | take any array operand in array_intersect_key() and array_diff_key() | not sent |
@@ -261,3 +254,4 @@ Generated from `git log upstream/main..main` and our upstream pull requests. Do 
 | [`a134fefdc0`](https://github.com/Ignibyte/aic_compiler/commit/a134fefdc0) | fix | - | accept array unions in array_keys() and keep its TypeError catchable | not sent |
 | [`0cc0a26a03`](https://github.com/Ignibyte/aic_compiler/commit/0cc0a26a03) | fix | - | read a mixed local as mixed when another scalar store reaches it after a loop | not sent |
 | [`ef3fd33884`](https://github.com/Ignibyte/aic_compiler/commit/ef3fd33884) | fix | - | release a conditional arm's owner when a later store overwrites the local | not sent |
+| [`e707837931`](https://github.com/Ignibyte/aic_compiler/commit/e707837931) | fix | pdo | check pgsql server certificates as libpq does for each sslmode | not sent |
