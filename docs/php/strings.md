@@ -333,6 +333,11 @@ routing and web transport verification remain open.
 | `openssl_decrypt()` | `openssl_decrypt($data, $cipher_algo, $passphrase, $options = 0, $iv = "", $tag = null, $aad = ""): string\|false` | Decrypt and authenticate AEAD data with the supplied tag and AAD. |
 | `openssl_cipher_iv_length()` | `openssl_cipher_iv_length($cipher_algo): int\|false` | Return the default IV length for a supported cipher. |
 | `openssl_get_cipher_methods()` | `openssl_get_cipher_methods($aliases = false): array` | Return PHP's 135-name OpenSSL 3.6.4 default-provider cipher catalog. |
+| `openssl_pkey_get_public()` | `openssl_pkey_get_public($public_key): OpenSSLAsymmetricKey\|false` | Load a public key from PEM text, a certificate, a `file://` path or a key object. Alias: `openssl_get_publickey()`. |
+| `openssl_pkey_get_private()` | `openssl_pkey_get_private($private_key, $passphrase = null): OpenSSLAsymmetricKey\|false` | Load a private key from PEM text (encrypted with `$passphrase`), a `file://` path or a `[key, passphrase]` array. Alias: `openssl_get_privatekey()`. |
+| `openssl_sign()` | `openssl_sign($data, &$signature, $private_key, $algorithm = OPENSSL_ALGO_SHA1, $padding = 0): bool` | Sign `$data` and write the raw signature to `$signature`. |
+| `openssl_verify()` | `openssl_verify($data, $signature, $public_key, $algorithm = OPENSSL_ALGO_SHA1, $padding = 0): int\|false` | 1 when the signature is valid, 0 when it is not, -1 on an error. |
+| `openssl_pkey_get_details()` | `openssl_pkey_get_details($key): array\|false` | `bits`, the public `key` PEM, `type`, and the `rsa` or `ec` fields. |
 | `htmlspecialchars()` | `htmlspecialchars($str, $flags = ENT_QUOTES \| ENT_SUBSTITUTE \| ENT_HTML401, $encoding = "UTF-8"): string` | Escape HTML special chars: `&` `<` `>` always, `"` under `ENT_COMPAT`, `'` under `ENT_QUOTES`; `ENT_NOQUOTES` leaves both quotes literal. The single quote is `&#039;` under `ENT_HTML401` and `&apos;` under `ENT_HTML5`, `ENT_XHTML` or `ENT_XML1`. The `ENT_*` flag constants are defined with PHP's values; `$encoding` is accepted but not applied |
 | `htmlentities()` | `htmlentities($str, $flags = ENT_QUOTES \| ENT_SUBSTITUTE \| ENT_HTML401, $encoding = "UTF-8"): string` | Alias for htmlspecialchars |
 | `html_entity_decode()` | `html_entity_decode($str): string` | Decode HTML entities |
@@ -520,6 +525,44 @@ CBC/CTR IV normalization; the cryptographic result and `false` return behavior
 match the supported PHP fixtures. See the
 [`examples/openssl_crypt`](https://github.com/illegalstudio/elephc/tree/main/examples/openssl_crypt)
 program for CBC and GCM round trips.
+
+### Signatures and asymmetric keys (OpenSSL-compatible)
+
+`openssl_pkey_get_public()`, `openssl_pkey_get_private()`, `openssl_sign()`,
+`openssl_verify()` and `openssl_pkey_get_details()` run on the same `elephc-openssl`
+bridge and `openssl-crypto` package as the ciphers, so they need the same manifest
+entries. A program that names none of them, and not `OpenSSLAsymmetricKey`, links
+nothing for them. They are compiled (AOT) only: `eval()` code cannot call them.
+
+```php
+<?php
+$private = openssl_pkey_get_private(file_get_contents("key.pem"));
+openssl_sign("payload", $signature, $private, OPENSSL_ALGO_SHA256);
+
+$public = openssl_pkey_get_public(file_get_contents("key.pub.pem"));
+echo openssl_verify("payload", $signature, $public, "sha256"); // 1
+```
+
+- Keys: RSA and EC (any named curve libcrypto knows), from PEM text, a
+  certificate's PEM (public keys), a `file://` path, or a `[key, passphrase]`
+  array. `OpenSSLAsymmetricKey` is final, cannot be constructed, cloned or
+  serialized, and dumps as an empty object, as in PHP.
+- Digests: every `OPENSSL_ALGO_*` constant and any digest name or alias libcrypto
+  resolves (`"sha256"`, `"SHA512"`, `"RSA-SHA256"`). An unknown name warns
+  `Unknown digest algorithm` and returns `false`.
+- Padding (RSA only): `OPENSSL_PKCS1_PADDING` and `OPENSSL_PKCS1_PSS_PADDING`,
+  whose salt is as long as the digest. ECDSA signatures are DER, as PHP returns
+  them.
+- `openssl_pkey_get_details()` returns PHP's keys in PHP's order: `bits`, `key`,
+  `rsa` (`n`, `e`, and `d`, `p`, `q`, `dmp1`, `dmq1`, `iqmp` for a private key) or
+  `ec` (`curve_name`, `curve_oid`, `x`, `y`, and `d` for a private key), then `type`.
+- The warnings for a key of the wrong kind, an unknown digest and a padding error
+  carry PHP's text.
+
+Not supported yet: `openssl_pkey_new()`, key and certificate export, the X.509
+functions and `OpenSSLCertificate`, and signatures with Ed25519 or Ed448 keys. An
+encrypted key given without its passphrase fails to load, where PHP's libcrypto
+prompts for one on the terminal.
 
 `parse_url()` follows PHP's component shapes: without a selector (or with any
 negative selector) it returns an associative array containing only present keys,

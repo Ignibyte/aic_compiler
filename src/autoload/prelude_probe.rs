@@ -40,6 +40,7 @@ const PROBED_GROUPS: &[(&str, fn(&[Stmt]) -> bool)] = &[
     ("tz", crate::tz_prelude::program_uses_surface),
     ("image", crate::image_prelude::program_uses_surface),
     ("hash", crate::hash_prelude::program_uses_surface),
+    ("openssl", crate::openssl_prelude::program_uses_surface),
     ("tokenizer", crate::tokenizer_prelude::program_uses_surface),
     ("curl", crate::curl_prelude::program_uses_surface),
     ("xml", crate::xml_prelude::program_uses_surface),

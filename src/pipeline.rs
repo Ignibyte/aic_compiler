@@ -525,6 +525,13 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
     crate::progress::phase("hash-prelude");
     let phase_started = Instant::now();
     let ast = crate::hash_prelude::inject_if_used(ast, autoloaded("hash"), &mut prelude_inventory);
+    // The asymmetric openssl key surface, injected on the same terms: a program that never
+    // names a key function or `OpenSSLAsymmetricKey` never links the openssl bridge for it.
+    let ast = crate::openssl_prelude::inject_if_used(
+        ast,
+        with_crates.contains("openssl") || autoloaded("openssl"),
+        &mut prelude_inventory,
+    );
     let ast = crate::tokenizer_prelude::inject_if_used(
         ast,
         with_crates.contains("tokenizer") || autoloaded("tokenizer"),

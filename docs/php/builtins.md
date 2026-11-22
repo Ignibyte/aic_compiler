@@ -985,6 +985,13 @@ Browse by category: [Array](./builtins/array.md) · [Buffer](./builtins/buffer.m
 | [`openssl_decrypt()`](./builtins/string/openssl_decrypt.md) | `(string $data, string $cipher_algo, string $passphrase, int $options = 0, string $iv = '', mixed $tag = null, string $aad = ''): mixed` | `mixed` | ✓ | ✓ |
 | [`openssl_encrypt()`](./builtins/string/openssl_encrypt.md) | `(string $data, string $cipher_algo, string $passphrase, int $options = 0, string $iv = '', mixed $tag = null, string $aad = '', int $tag_length = 16): mixed` | `mixed` | ✓ | ✓ |
 | [`openssl_get_cipher_methods()`](./builtins/string/openssl_get_cipher_methods.md) | `(bool $aliases = false): array` | `array` | ✓ | ✓ |
+| [`openssl_get_privatekey()`](./builtins/string/openssl_get_privatekey.md) | `(mixed $private_key, ?string $passphrase = null): mixed` | `mixed` | ✓ | - |
+| [`openssl_get_publickey()`](./builtins/string/openssl_get_publickey.md) | `(mixed $public_key): mixed` | `mixed` | ✓ | - |
+| [`openssl_pkey_get_details()`](./builtins/string/openssl_pkey_get_details.md) | `(mixed $key): array|false` | `array|false` | ✓ | - |
+| [`openssl_pkey_get_private()`](./builtins/string/openssl_pkey_get_private.md) | `(mixed $private_key, ?string $passphrase = null): mixed` | `mixed` | ✓ | - |
+| [`openssl_pkey_get_public()`](./builtins/string/openssl_pkey_get_public.md) | `(mixed $public_key): mixed` | `mixed` | ✓ | - |
+| [`openssl_sign()`](./builtins/string/openssl_sign.md) | `(string $data, mixed $signature, mixed $private_key, mixed $algorithm = 1, int $padding = 0): bool` | `bool` | ✓ | - |
+| [`openssl_verify()`](./builtins/string/openssl_verify.md) | `(string $data, string $signature, mixed $public_key, mixed $algorithm = 1, int $padding = 0): int|false` | `int|false` | ✓ | - |
 | [`ord()`](./builtins/string/ord.md) | `(string $character): int` | `int` | ✓ | ✓ |
 | [`parse_url()`](./builtins/string/parse_url.md) | `(string $url, int $component = -1): mixed` | `mixed` | ✓ | ✓ |
 | [`printf()`](./builtins/string/printf.md) | `(string $format, ...$values): int` | `int` | ✓ | ✓ |

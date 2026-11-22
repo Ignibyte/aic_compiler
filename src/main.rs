@@ -26,6 +26,7 @@ mod func_args;
 mod generics;
 mod global_decls;
 mod hash_prelude;
+mod openssl_prelude;
 mod core_prelude;
 mod bcmath_prelude;
 mod gmp_prelude;

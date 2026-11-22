@@ -561,6 +561,13 @@ PRELUDE_SOURCES: dict[str, tuple[str | tuple[str, ...], str, str]] = {
     ),
     # Prelude-provided contracts seeded from the built prelude declarations live in
     # catalog_data.rs; each area maps to the prelude (or preludes) declaring it.
+    # The openssl key surface (`Area::String`, module openssl) is its own built prelude;
+    # the cipher functions are ordinary registry builtins and never reach this map.
+    "openssl": (
+        "openssl_prelude/build.rs",
+        "openssl",
+        "crates/elephc-builtin-contract/src/catalog_surfaces.rs",
+    ),
     "image": ("image_prelude.rs", "image", "crates/elephc-builtin-contract/src/catalog_data.rs"),
     "web": (
         ("web_prelude/build.rs", "shared_ini_prelude.rs"),

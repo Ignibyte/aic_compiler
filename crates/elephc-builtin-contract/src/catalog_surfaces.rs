@@ -509,4 +509,91 @@ pub(crate) static SURFACE_CONTRACTS: &[BuiltinContract] = &[
         Bool,
         "Alias of trigger_error."
     ),
+    BuiltinContract {
+        id: BuiltinId::from_canonical_name("openssl_pkey_get_public"), name: "openssl_pkey_get_public", area: Area::String,
+        module: PhpModule::Openssl, since: None, kind: BuiltinKind::PreludeProvided,
+        params: &[
+            ParamSpec { name: "public_key", ty: TypeSpec::Mixed, default: None, by_ref: false }
+        ],
+        variadic: None, variadic_by_ref: false, min_args: None, max_args: None,
+        arity_error: None, returns: TypeSpec::Mixed, by_ref_return: false,
+        summary: "Loads a public key from a PEM key or certificate, a file:// path, or a key object.", examples: &[], php_manual: Some("https://www.php.net/manual/en/function.openssl-pkey-get-public.php"), deprecation: None,
+        extension: false, internal: false, requirements: &[],
+    },
+    BuiltinContract {
+        id: BuiltinId::from_canonical_name("openssl_get_publickey"), name: "openssl_get_publickey", area: Area::String,
+        module: PhpModule::Openssl, since: None, kind: BuiltinKind::PreludeProvided,
+        params: &[
+            ParamSpec { name: "public_key", ty: TypeSpec::Mixed, default: None, by_ref: false }
+        ],
+        variadic: None, variadic_by_ref: false, min_args: None, max_args: None,
+        arity_error: None, returns: TypeSpec::Mixed, by_ref_return: false,
+        summary: "Alias of openssl_pkey_get_public.", examples: &[], php_manual: Some("https://www.php.net/manual/en/function.openssl-get-publickey.php"), deprecation: None,
+        extension: false, internal: false, requirements: &[],
+    },
+    BuiltinContract {
+        id: BuiltinId::from_canonical_name("openssl_pkey_get_private"), name: "openssl_pkey_get_private", area: Area::String,
+        module: PhpModule::Openssl, since: None, kind: BuiltinKind::PreludeProvided,
+        params: &[
+            ParamSpec { name: "private_key", ty: TypeSpec::Mixed, default: None, by_ref: false },
+            ParamSpec { name: "passphrase", ty: TypeSpec::Nullable(&TypeSpec::Str), default: Some(DefaultSpec::Null), by_ref: false }
+        ],
+        variadic: None, variadic_by_ref: false, min_args: None, max_args: None,
+        arity_error: None, returns: TypeSpec::Mixed, by_ref_return: false,
+        summary: "Loads a private key from PEM text or a file:// path, with an optional passphrase.", examples: &[], php_manual: Some("https://www.php.net/manual/en/function.openssl-pkey-get-private.php"), deprecation: None,
+        extension: false, internal: false, requirements: &[],
+    },
+    BuiltinContract {
+        id: BuiltinId::from_canonical_name("openssl_get_privatekey"), name: "openssl_get_privatekey", area: Area::String,
+        module: PhpModule::Openssl, since: None, kind: BuiltinKind::PreludeProvided,
+        params: &[
+            ParamSpec { name: "private_key", ty: TypeSpec::Mixed, default: None, by_ref: false },
+            ParamSpec { name: "passphrase", ty: TypeSpec::Nullable(&TypeSpec::Str), default: Some(DefaultSpec::Null), by_ref: false }
+        ],
+        variadic: None, variadic_by_ref: false, min_args: None, max_args: None,
+        arity_error: None, returns: TypeSpec::Mixed, by_ref_return: false,
+        summary: "Alias of openssl_pkey_get_private.", examples: &[], php_manual: Some("https://www.php.net/manual/en/function.openssl-get-privatekey.php"), deprecation: None,
+        extension: false, internal: false, requirements: &[],
+    },
+    BuiltinContract {
+        id: BuiltinId::from_canonical_name("openssl_sign"), name: "openssl_sign", area: Area::String,
+        module: PhpModule::Openssl, since: None, kind: BuiltinKind::PreludeProvided,
+        params: &[
+            ParamSpec { name: "data", ty: TypeSpec::Str, default: None, by_ref: false },
+            ParamSpec { name: "signature", ty: TypeSpec::Mixed, default: None, by_ref: true },
+            ParamSpec { name: "private_key", ty: TypeSpec::Mixed, default: None, by_ref: false },
+            ParamSpec { name: "algorithm", ty: TypeSpec::Mixed, default: Some(DefaultSpec::Int(1)), by_ref: false },
+            ParamSpec { name: "padding", ty: TypeSpec::Int, default: Some(DefaultSpec::Int(0)), by_ref: false }
+        ],
+        variadic: None, variadic_by_ref: false, min_args: None, max_args: None,
+        arity_error: None, returns: TypeSpec::Bool, by_ref_return: false,
+        summary: "Signs data with an RSA or EC private key and a digest, writing the signature by reference.", examples: &[], php_manual: Some("https://www.php.net/manual/en/function.openssl-sign.php"), deprecation: None,
+        extension: false, internal: false, requirements: &[],
+    },
+    BuiltinContract {
+        id: BuiltinId::from_canonical_name("openssl_verify"), name: "openssl_verify", area: Area::String,
+        module: PhpModule::Openssl, since: None, kind: BuiltinKind::PreludeProvided,
+        params: &[
+            ParamSpec { name: "data", ty: TypeSpec::Str, default: None, by_ref: false },
+            ParamSpec { name: "signature", ty: TypeSpec::Str, default: None, by_ref: false },
+            ParamSpec { name: "public_key", ty: TypeSpec::Mixed, default: None, by_ref: false },
+            ParamSpec { name: "algorithm", ty: TypeSpec::Mixed, default: Some(DefaultSpec::Int(1)), by_ref: false },
+            ParamSpec { name: "padding", ty: TypeSpec::Int, default: Some(DefaultSpec::Int(0)), by_ref: false }
+        ],
+        variadic: None, variadic_by_ref: false, min_args: None, max_args: None,
+        arity_error: None, returns: TypeSpec::Union(&[TypeSpec::Int, TypeSpec::False]), by_ref_return: false,
+        summary: "Verifies a signature with a public key: 1 valid, 0 invalid, -1 or false on error.", examples: &[], php_manual: Some("https://www.php.net/manual/en/function.openssl-verify.php"), deprecation: None,
+        extension: false, internal: false, requirements: &[],
+    },
+    BuiltinContract {
+        id: BuiltinId::from_canonical_name("openssl_pkey_get_details"), name: "openssl_pkey_get_details", area: Area::String,
+        module: PhpModule::Openssl, since: None, kind: BuiltinKind::PreludeProvided,
+        params: &[
+            ParamSpec { name: "key", ty: TypeSpec::Mixed, default: None, by_ref: false }
+        ],
+        variadic: None, variadic_by_ref: false, min_args: None, max_args: None,
+        arity_error: None, returns: TypeSpec::Union(&[TypeSpec::Array, TypeSpec::False]), by_ref_return: false,
+        summary: "Returns the bits, PEM public key, type and RSA or EC parameters of a key.", examples: &[], php_manual: Some("https://www.php.net/manual/en/function.openssl-pkey-get-details.php"), deprecation: None,
+        extension: false, internal: false, requirements: &[],
+    },
 ];

@@ -48,6 +48,7 @@ fn injected_prelude_programs() -> Vec<(&'static str, crate::parser::ast::Program
     let mut built = vec![
         ("bcmath_prelude", crate::bcmath_prelude::bcmath_declarations()),
         ("hash_prelude", crate::hash_prelude::hash_declarations()),
+        ("openssl_prelude", crate::openssl_prelude::openssl_declarations()),
         ("core_prelude", crate::core_prelude::core_declarations()),
         ("random_prelude", crate::random_prelude::random_declarations()),
         ("tz_prelude", crate::tz_prelude::tz_declarations()),

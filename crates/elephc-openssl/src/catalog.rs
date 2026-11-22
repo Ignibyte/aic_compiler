@@ -42,7 +42,7 @@ struct CatalogBuilder {
 static CATALOG: OnceLock<Catalog> = OnceLock::new();
 
 /// Loads the default provider once for this process.
-fn ensure_default_provider() {
+pub(crate) fn ensure_default_provider() {
     static PROVIDER: OnceLock<()> = OnceLock::new();
     PROVIDER.get_or_init(|| {
         let default = CString::new("default").expect("static provider name");

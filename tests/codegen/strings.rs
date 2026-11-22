@@ -50,6 +50,7 @@ mod misc;
 mod transient_string_ownership;
 #[path = "strings/openssl.rs"]
 mod openssl;
+mod openssl_keys;
 #[path = "strings/parse_url.rs"]
 mod parse_url;
 #[path = "strings/offset_warnings.rs"]

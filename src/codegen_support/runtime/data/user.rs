@@ -3943,6 +3943,9 @@ fn var_dump_descriptor_rows(
 ///
 /// A hosted extension object's wrapper keeps the engine handle in a protected property
 /// too; PHP's object has no such property, so no renderer shows it.
+///
+/// A private `__`-named slot the class catalog lists in `hidden_properties` is compiler
+/// storage (an `OpenSSLAsymmetricKey`'s PEM), so no renderer shows it either.
 fn is_reflection_backing_slot(class_info: &ClassInfo, class_name: &str, prop_name: &str) -> bool {
     if prop_name == crate::php_ext::prelude::HANDLE_PROPERTY && is_hosted_extension_class(class_info) {
         return true;
@@ -3960,7 +3963,8 @@ fn is_reflection_backing_slot(class_info: &ClassInfo, class_name: &str, prop_nam
         .get(prop_name)
         .map(String::as_str)
         .unwrap_or(class_name);
-    REFLECTION_CLASS_NAMES.contains(&declaring_class)
+    class_property_is_hidden(declaring_class, prop_name)
+        || REFLECTION_CLASS_NAMES.contains(&declaring_class)
 }
 
 /// Resolves by-name metadata on the nearest ancestor where this physical slot is visible.

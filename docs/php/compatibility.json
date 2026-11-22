@@ -187,15 +187,15 @@
   ],
   "coverage": {
     "classes": {
-      "have": 185,
+      "have": 186,
       "total": 329
     },
     "constants": {
-      "have": 1349,
+      "have": 1367,
       "total": 3180
     },
     "functions": {
-      "have": 1053,
+      "have": 1060,
       "total": 2169
     }
   },
@@ -1045,20 +1045,20 @@
     },
     {
       "classes": {
-        "eval": 0,
-        "have": 0,
+        "eval": 1,
+        "have": 1,
         "total": 3
       },
       "constants": {
-        "eval": 3,
-        "have": 3,
+        "eval": 21,
+        "have": 21,
         "total": 70
       },
       "docs": null,
       "extension": "openssl",
       "functions": {
         "eval": 4,
-        "have": 4,
+        "have": 11,
         "total": 64
       },
       "name": "openssl",
