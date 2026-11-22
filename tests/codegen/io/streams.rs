@@ -7344,6 +7344,57 @@ echo $n1, ":", count($r), ":", $w === null ? "null" : "set", " ", $n2, ":", coun
     assert_eq!(out, "1:1:null 1:1:null 1:1:null 2:1:1\n");
 }
 
+/// Verifies `stream_select()` sees descriptors above 63. The sets were one 64-bit word with
+/// `nfds = 64`, so a socket opened after 70 files was never examined and its set came back empty.
+#[test]
+fn test_stream_select_examines_descriptors_above_63() {
+    let out = compile_and_run(
+        r#"<?php
+$held = [];
+for ($i = 0; $i < 70; $i++) {
+    $held[] = fopen("/dev/null", "r");
+}
+$pair = stream_socket_pair(1, 1, 0);
+fwrite($pair[0], "x");
+$r1 = [$pair[1]]; $w1 = null; $e1 = null;
+$n1 = stream_select($r1, $w1, $e1, 0, 0);
+$r2 = [$pair[0]]; $w2 = null; $e2 = null;
+$n2 = stream_select($r2, $w2, $e2, 0, 0);
+echo $n1, ":", count($r1), " ", $n2, ":", count($r2), "\n";
+"#,
+    );
+    assert_eq!(out, "1:1 0:0\n");
+}
+
+/// Verifies one `stream_select()` call over descriptors below and above 64 in the read and
+/// write sets keeps exactly the ready ones, as PHP does.
+#[test]
+fn test_stream_select_mixes_low_and_high_descriptors() {
+    let out = compile_and_run(
+        r#"<?php
+$low = stream_socket_pair(1, 1, 0);
+$held = [];
+for ($i = 0; $i < 200; $i++) {
+    $held[] = fopen("/dev/null", "r");
+}
+$high = stream_socket_pair(1, 1, 0);
+fwrite($low[0], "x");
+fwrite($high[0], "y");
+$quiet = stream_socket_pair(1, 1, 0);
+$r = [$low[1], $quiet[1], $high[1]];
+$w = [$quiet[0]];
+$e = null;
+$n = stream_select($r, $w, $e, 0, 0);
+echo $n, ":", count($r), ":", count($w), " ";
+foreach ($r as $ready) {
+    echo fread($ready, 1);
+}
+echo "\n";
+"#,
+    );
+    assert_eq!(out, "3:2:1 xy\n");
+}
+
 /// Verifies compiled PHP output for stream bucket append then pop in order.
 #[test]
 fn test_stream_bucket_append_then_pop_in_order() {
