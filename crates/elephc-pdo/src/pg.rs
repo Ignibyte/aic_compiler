@@ -1101,12 +1101,13 @@ fn tls_protocol_rank(value: &str) -> Result<u8, String> {
 }
 
 /// Applies the DSN's `sslmode` to `config` and opens the connection, using rustls
-/// (ring provider) when TLS is requested. `disable` connects in plaintext;
-/// `prefer` (the default) attempts TLS but allows a plaintext session;
-/// `require`/`verify-ca`/`verify-full` demand TLS. The rustls verifier always
-/// validates the server certificate against the trust anchors (a stricter, safer
-/// default than libpq's bare `require`, which encrypts without verifying);
-/// `verify-ca` and `verify-full` therefore behave identically here.
+/// (ring provider) for the encrypted attempts, with libpq's sequence: `disable`
+/// connects in plaintext; `allow` tries plaintext, then TLS; `prefer` (the
+/// default) tries TLS, then plaintext; `require`/`verify-ca`/`verify-full` demand
+/// TLS. How the server certificate is checked follows libpq too (see
+/// [`PgCertCheck`]): `require` and below encrypt without verifying unless
+/// `sslrootcert` names a CA, `verify-ca` checks the chain, and `verify-full` the
+/// chain and the host name.
 #[cfg(feature = "tls")]
 fn connect_tls(
     config: &mut Config,
@@ -1114,24 +1115,50 @@ fn connect_tls(
     notices: Arc<Mutex<VecDeque<String>>>,
 ) -> Result<Client, String> {
     use tokio_postgres::config::SslMode;
+    match tls.mode.as_str() {
+        "disable" => connect_plain(config, notices),
+        "allow" => connect_plain(config, Arc::clone(&notices))
+            .or_else(|_| connect_encrypted(config, tls, SslMode::Require, notices)),
+        "require" | "verify-ca" | "verify-full" => {
+            connect_encrypted(config, tls, SslMode::Require, notices)
+        }
+        _ => connect_encrypted(config, tls, SslMode::Prefer, Arc::clone(&notices))
+            .or_else(|_| connect_plain(config, notices)),
+    }
+}
+
+/// Opens one plaintext connection attempt on its own runtime.
+#[cfg(feature = "tls")]
+fn connect_plain(
+    config: &mut Config,
+    notices: Arc<Mutex<VecDeque<String>>>,
+) -> Result<Client, String> {
+    config.ssl_mode(tokio_postgres::config::SslMode::Disable);
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|error| error.to_string())?;
-    if tls.mode == "disable" {
-        config.ssl_mode(SslMode::Disable);
-        let connected = runtime
-            .block_on(config.connect(NoTls))
-            .map_err(|error| error.to_string())?;
-        return Ok(start_async_client(runtime, connected, notices));
-    }
-    let require = matches!(tls.mode.as_str(), "require" | "verify-ca" | "verify-full");
-    config.ssl_mode(if require {
-        SslMode::Require
-    } else {
-        SslMode::Prefer
-    });
+    let connected = runtime
+        .block_on(config.connect(NoTls))
+        .map_err(|error| error.to_string())?;
+    Ok(start_async_client(runtime, connected, notices))
+}
+
+/// Opens one TLS connection attempt on its own runtime; `ssl_mode` is `Prefer`
+/// when a server that declines TLS may still be used in plaintext.
+#[cfg(feature = "tls")]
+fn connect_encrypted(
+    config: &mut Config,
+    tls: &PgTls,
+    ssl_mode: tokio_postgres::config::SslMode,
+    notices: Arc<Mutex<VecDeque<String>>>,
+) -> Result<Client, String> {
+    config.ssl_mode(ssl_mode);
     let connector = build_tls_connector(tls)?;
+    let runtime = RuntimeBuilder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
     let connected = runtime
         .block_on(config.connect(connector))
         .map_err(|error| error.to_string())?;
@@ -1207,14 +1234,128 @@ where
     }
 }
 
-/// Builds a rustls `MakeRustlsConnect` for the pg connection. The `ClientConfig`
-/// is built with an explicit ring `CryptoProvider` (`builder_with_provider`), so
-/// it never depends on a process-global default provider. When `sslrootcert` is
-/// given, only that PEM CA bundle is trusted; otherwise the bundled webpki-roots
-/// anchors are used. `sslcert`+`sslkey` (both required together) enable
-/// client-certificate mutual TLS.
+/// How the server certificate is checked once TLS is negotiated, by libpq's
+/// rules (`fe-secure-openssl.c`): only the `verify-*` modes demand verification,
+/// but a CA named by `sslrootcert` turns on chain verification in any mode.
 #[cfg(feature = "tls")]
-fn build_tls_connector(tls: &PgTls) -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PgCertCheck {
+    /// Encrypt without verifying: `allow`, `prefer` and `require` with no `sslrootcert`.
+    Unverified,
+    /// The chain must lead to a trust anchor; the host name is not compared
+    /// (`verify-ca`, and the weaker modes when `sslrootcert` is given).
+    Chain,
+    /// The chain and the host name are both verified (`verify-full`).
+    Full,
+}
+
+#[cfg(feature = "tls")]
+impl PgCertCheck {
+    /// Picks the check libpq applies for the DSN's `sslmode` and `sslrootcert`.
+    fn for_tls(tls: &PgTls) -> Self {
+        match tls.mode.as_str() {
+            "verify-full" => Self::Full,
+            "verify-ca" => Self::Chain,
+            _ if tls.root_cert.is_some() => Self::Chain,
+            _ => Self::Unverified,
+        }
+    }
+}
+
+/// The pg connection's server-certificate verifier: rustls's WebPKI verifier,
+/// narrowed to what [`PgCertCheck`] asks for. Handshake signatures are always
+/// checked against the presented certificate, so even an unverified session is
+/// bound to the key the server proved it holds.
+#[cfg(feature = "tls")]
+#[derive(Debug)]
+struct PgServerVerifier {
+    /// What the DSN's `sslmode` and `sslrootcert` ask to verify.
+    check: PgCertCheck,
+    /// Chain, revocation and host-name verification against the trust anchors.
+    webpki: std::sync::Arc<rustls::client::WebPkiServerVerifier>,
+    /// The ring provider's signature algorithms for handshake signatures.
+    provider: std::sync::Arc<rustls::crypto::CryptoProvider>,
+}
+
+#[cfg(feature = "tls")]
+impl rustls::client::danger::ServerCertVerifier for PgServerVerifier {
+    /// Accepts any certificate when unverified, the chain alone for `verify-ca`,
+    /// and only a full WebPKI pass (chain and name) for `verify-full`.
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        server_name: &rustls::pki_types::ServerName<'_>,
+        ocsp_response: &[u8],
+        now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        use rustls::client::danger::ServerCertVerified;
+        use rustls::CertificateError;
+        if self.check == PgCertCheck::Unverified {
+            return Ok(ServerCertVerified::assertion());
+        }
+        // WebPKI compares the name only after the chain verified, so a name
+        // mismatch here means the chain itself is sound.
+        match self.webpki.verify_server_cert(
+            end_entity,
+            intermediates,
+            server_name,
+            ocsp_response,
+            now,
+        ) {
+            Err(rustls::Error::InvalidCertificate(
+                CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. },
+            )) if self.check == PgCertCheck::Chain => Ok(ServerCertVerified::assertion()),
+            result => result,
+        }
+    }
+
+    /// Verifies a TLS 1.2 handshake signature with the ring provider.
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    /// Verifies a TLS 1.3 handshake signature with the ring provider.
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    /// Lists the signature schemes the ring provider can verify.
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Builds the [`PgServerVerifier`] for `tls`: the trust anchors are the
+/// `sslrootcert` bundle when given, otherwise the bundled webpki roots, with any
+/// `sslcrl`/`sslcrldir` revocation lists applied.
+#[cfg(feature = "tls")]
+fn build_server_verifier(
+    tls: &PgTls,
+    provider: std::sync::Arc<rustls::crypto::CryptoProvider>,
+) -> Result<PgServerVerifier, String> {
     use rustls::RootCertStore;
     use std::sync::Arc;
 
@@ -1228,6 +1369,31 @@ fn build_tls_connector(tls: &PgTls) -> Result<tokio_postgres_rustls::MakeRustlsC
     } else {
         roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
     }
+    let crls = load_crls(tls)?;
+    let mut builder =
+        rustls::client::WebPkiServerVerifier::builder_with_provider(Arc::new(roots), Arc::clone(&provider));
+    if !crls.is_empty() {
+        builder = builder.with_crls(crls);
+    }
+    let webpki = builder
+        .build()
+        .map_err(|error| format!("PostgreSQL TLS verifier configuration: {error}"))?;
+    Ok(PgServerVerifier {
+        check: PgCertCheck::for_tls(tls),
+        webpki,
+        provider,
+    })
+}
+
+/// Builds a rustls `MakeRustlsConnect` for the pg connection. The `ClientConfig`
+/// is built with an explicit ring `CryptoProvider` (`builder_with_provider`), so
+/// it never depends on a process-global default provider. The server certificate
+/// is checked by [`PgServerVerifier`] as libpq would for the DSN's `sslmode`.
+/// `sslcert`+`sslkey` (both required together) enable client-certificate mutual
+/// TLS.
+#[cfg(feature = "tls")]
+fn build_tls_connector(tls: &PgTls) -> Result<tokio_postgres_rustls::MakeRustlsConnect, String> {
+    use std::sync::Arc;
 
     let min_rank = tls
         .min_protocol_version
@@ -1251,11 +1417,12 @@ fn build_tls_connector(tls: &PgTls) -> Result<tokio_postgres_rustls::MakeRustlsC
         protocol_versions.push(&rustls::version::TLS12);
     }
     let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let verifier_roots = Arc::new(roots.clone());
-    let builder = rustls::ClientConfig::builder_with_provider(Arc::clone(&provider))
-    .with_protocol_versions(&protocol_versions)
-    .map_err(|e| e.to_string())?
-    .with_root_certificates(roots);
+    let verifier = build_server_verifier(tls, Arc::clone(&provider))?;
+    let builder = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&protocol_versions)
+        .map_err(|e| e.to_string())?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(verifier));
 
     let mut config = match (
         tls.client_cert_mode.as_str(),
@@ -1273,19 +1440,6 @@ fn build_tls_connector(tls: &PgTls) -> Result<tokio_postgres_rustls::MakeRustlsC
         _ => builder.with_no_client_auth(),
     };
     config.enable_sni = tls.server_name_indication;
-    let crls = load_crls(tls)?;
-    if !crls.is_empty() {
-        let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
-            verifier_roots,
-            provider,
-        )
-        .with_crls(crls)
-        .build()
-        .map_err(|error| format!("PostgreSQL TLS CRL configuration: {error}"))?;
-        config
-            .dangerous()
-            .set_certificate_verifier(verifier);
-    }
     Ok(tokio_postgres_rustls::MakeRustlsConnect::new(config))
 }
 
@@ -3708,5 +3862,89 @@ mod tests {
             Ok(_) => panic!("expected an error for a missing sslcrl file"),
             Err(error) => assert!(error.contains("CRL"), "unexpected error: {error}"),
         }
+    }
+
+    /// The path of a fixture certificate under `testdata/pg_tls/`: `ca.pem` (a
+    /// test CA), `leaf.pem` (signed by it for `db.example.test`) and `other.pem`
+    /// (self-signed, outside every trust store).
+    #[cfg(feature = "tls")]
+    fn pg_tls_fixture(name: &str) -> String {
+        format!("{}/testdata/pg_tls/{name}", env!("CARGO_MANIFEST_DIR"))
+    }
+
+    /// Runs the pg verifier built for `mode` (and `sslrootcert`, when given) on a
+    /// fixture certificate presented for `host`, at a moment inside its validity.
+    #[cfg(feature = "tls")]
+    fn pg_verify(mode: &str, root_cert: Option<&str>, cert: &str, host: &str) -> bool {
+        use rustls::client::danger::ServerCertVerifier;
+        use rustls::pki_types::{ServerName, UnixTime};
+        let tls = PgTls {
+            mode: mode.to_string(),
+            root_cert: root_cert.map(pg_tls_fixture),
+            ..PgTls::default()
+        };
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let verifier = build_server_verifier(&tls, provider).expect("verifier");
+        let chain = load_certs(&pg_tls_fixture(cert), "fixture").expect("fixture certificate");
+        let name = ServerName::try_from(host.to_string()).expect("server name");
+        let now = UnixTime::since_unix_epoch(std::time::Duration::from_secs(1_900_000_000));
+        verifier
+            .verify_server_cert(&chain[0], &chain[1..], &name, &[], now)
+            .is_ok()
+    }
+
+    /// libpq verifies nothing below `verify-ca` unless `sslrootcert` names a CA,
+    /// which turns on chain verification in every mode.
+    #[cfg(feature = "tls")]
+    #[test]
+    fn pg_cert_check_follows_libpq_modes() {
+        let check = |mode: &str, root: Option<&str>| {
+            PgCertCheck::for_tls(&PgTls {
+                mode: mode.to_string(),
+                root_cert: root.map(str::to_string),
+                ..PgTls::default()
+            })
+        };
+        for mode in ["", "allow", "prefer", "require"] {
+            assert_eq!(check(mode, None), PgCertCheck::Unverified, "{mode}");
+            assert_eq!(check(mode, Some("/ca.pem")), PgCertCheck::Chain, "{mode}");
+        }
+        assert_eq!(check("verify-ca", None), PgCertCheck::Chain);
+        assert_eq!(check("verify-full", None), PgCertCheck::Full);
+        assert_eq!(check("verify-full", Some("/ca.pem")), PgCertCheck::Full);
+    }
+
+    /// `prefer` and `require` accept a self-signed server certificate, as libpq
+    /// does when no `sslrootcert` is given; `verify-ca` and `verify-full` refuse it.
+    #[cfg(feature = "tls")]
+    #[test]
+    fn pg_verifier_accepts_self_signed_below_verify_ca() {
+        assert!(pg_verify("", None, "other.pem", "db.example.test"));
+        assert!(pg_verify("prefer", None, "other.pem", "127.0.0.1"));
+        assert!(pg_verify("require", None, "other.pem", "db.example.test"));
+        assert!(!pg_verify("verify-ca", None, "other.pem", "db.example.test"));
+        assert!(!pg_verify("verify-full", None, "other.pem", "db.example.test"));
+    }
+
+    /// `verify-ca` checks the chain to `sslrootcert` but not the host name;
+    /// `verify-full` checks both.
+    #[cfg(feature = "tls")]
+    #[test]
+    fn pg_verifier_verify_ca_skips_the_host_name() {
+        assert!(pg_verify("verify-ca", Some("ca.pem"), "leaf.pem", "db.example.test"));
+        assert!(pg_verify("verify-ca", Some("ca.pem"), "leaf.pem", "other.example.test"));
+        assert!(pg_verify("verify-full", Some("ca.pem"), "leaf.pem", "db.example.test"));
+        assert!(!pg_verify("verify-full", Some("ca.pem"), "leaf.pem", "other.example.test"));
+    }
+
+    /// A CA named by `sslrootcert` is enforced in `require` and `prefer` too, and
+    /// `verify-ca` still refuses a certificate outside it.
+    #[cfg(feature = "tls")]
+    #[test]
+    fn pg_verifier_enforces_sslrootcert_in_every_mode() {
+        assert!(pg_verify("require", Some("ca.pem"), "leaf.pem", "other.example.test"));
+        assert!(!pg_verify("require", Some("ca.pem"), "other.pem", "db.example.test"));
+        assert!(!pg_verify("prefer", Some("ca.pem"), "other.pem", "db.example.test"));
+        assert!(!pg_verify("verify-ca", Some("ca.pem"), "other.pem", "db.example.test"));
     }
 }
