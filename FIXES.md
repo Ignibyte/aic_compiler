@@ -1,6 +1,6 @@
 # Fixes not upstream yet
 
-This fork carries 246 fix and feature commits that upstream elephc (`9435998e5a`) does not have.
+This fork carries 247 fix and feature commits that upstream elephc (`9435998e5a`) does not have.
 13 of them are in an open pull request on [illegalstudio/elephc](https://github.com/illegalstudio/elephc/pulls); the rest are not sent.
 The list should shrink: a row leaves when upstream merges the fix, or fixes the same bug its own way,
 and the fork drops its copy at the next sync.
@@ -255,3 +255,4 @@ Generated from `git log upstream/main..main` and our upstream pull requests. Do 
 | [`0cc0a26a03`](https://github.com/Ignibyte/aic_compiler/commit/0cc0a26a03) | fix | - | read a mixed local as mixed when another scalar store reaches it after a loop | not sent |
 | [`ef3fd33884`](https://github.com/Ignibyte/aic_compiler/commit/ef3fd33884) | fix | - | release a conditional arm's owner when a later store overwrites the local | not sent |
 | [`e707837931`](https://github.com/Ignibyte/aic_compiler/commit/e707837931) | fix | pdo | check pgsql server certificates as libpq does for each sslmode | not sent |
+| [`ca9a5a92ea`](https://github.com/Ignibyte/aic_compiler/commit/ca9a5a92ea) | feat | openssl | load asymmetric keys, sign and verify like ext/openssl | not sent |
