@@ -205,6 +205,7 @@ pub(crate) static CLASSES: &[ClassContract] = &[
     class!("mysqli_stmt", "mysqli_stmt", Class, Mysqli, Prelude),
     class!("NoDiscard", "nodiscard", Class, Core, Prelude, since: Php85),
     class!("NoRewindIterator", "norewinditerator", Class, Spl, CheckerInjected),
+    class!("OpenSSLAsymmetricKey", "opensslasymmetrickey", Class, Openssl, Prelude, cloneable: false, hidden_properties: &["__elephc_pem", "__elephc_private"], visible_methods: &[]),
     class!("OuterIterator", "outeriterator", Interface, Spl, CheckerInjected),
     class!("OutOfBoundsException", "outofboundsexception", Class, Spl, CheckerInjected),
     class!("OutOfRangeException", "outofrangeexception", Class, Spl, CheckerInjected),

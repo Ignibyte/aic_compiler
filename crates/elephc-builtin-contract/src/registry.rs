@@ -167,8 +167,9 @@ mod tests {
         // the extension-hosting prelude calls.
         // +2: PHP 8.5 array value-edge functions.
         // Fork: +1 `flush`, +2 the `--web` prelude's `is_uploaded_file` and `move_uploaded_file`,
-        // +2 `preg_last_error` and `preg_last_error_msg` (#235).
-        assert_eq!(contracts().len(), 1253 + curl_surface);
+        // +2 `preg_last_error` and `preg_last_error_msg` (#235), +7 the openssl key prelude's
+        // functions (key loading, sign, verify, details).
+        assert_eq!(contracts().len(), 1260 + curl_surface);
         assert_eq!(lookup("STRLEN").map(|contract| contract.name), Some("strlen"));
         assert_eq!(lookup("\\parse_url").map(|contract| contract.name), Some("parse_url"));
     }

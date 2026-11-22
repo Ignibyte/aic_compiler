@@ -402,10 +402,11 @@ mod tests {
         // None of the eleven is callable from eval'd code. Nor are the four internal aliases
         // the extension-hosting prelude calls (`__elephc_ptr_get`, `__elephc_zval_*`).
         assert_eq!(eval_internal, 134);
-        // 30 registry builtins awaiting eval homes, plus the 325 PHP-visible prelude-provided
+        // 30 registry builtins awaiting eval homes, plus the 332 PHP-visible prelude-provided
         // and name-resolver-rewritten functions eval does not reach (see `eval_support`).
-        // Fork: +2 the `--web` upload pair, +2 the `preg_last_error*` pair (#235).
-        assert_eq!(eval_pending, 363);
+        // Fork: +2 the `--web` upload pair, +2 the `preg_last_error*` pair (#235), +7 the
+        // openssl key prelude.
+        assert_eq!(eval_pending, 370);
         // The shared mbstring catalog adds sixty-four registry contracts, including
         // its internal INI helper, to the prior compiler registry surface; the eleven
         // `__elephc_opcache_rt_*` runtime script-cache helpers rolled through above add the rest.
@@ -418,9 +419,10 @@ mod tests {
         // Fork: +1 `flush`, +2 the `preg_last_error*` pair (#235).
         assert_eq!(aot_registry, 827);
         // Compiler transforms, constructs, dedicated syntax, preludes, and
-        // name-resolver rewrites remain outside the ordinary AOT registry.
+        // name-resolver rewrites remain outside the ordinary AOT registry; the openssl key
+        // prelude adds seven.
         // Fork: +2 the `--web` upload pair.
-        assert_eq!(aot_external, 426 + curl_surface);
+        assert_eq!(aot_external, 433 + curl_surface);
     }
 
     /// Verifies representative exceptional routes are attached to their contracts.
@@ -476,9 +478,10 @@ mod tests {
         assert_eq!(interpreter_adapter, 661 + curl_surface);
         // Includes the eleven `__elephc_opcache_rt_*` helpers: they lower to an eval-bridge
         // call from AOT code and have no eval execution route of their own. So do the four
-        // internal aliases the extension-hosting prelude calls.
+        // internal aliases the extension-hosting prelude calls, and the seven openssl key
+        // prelude functions, which eval does not reach.
         // Fork: +2 the `--web` upload pair, +2 the `preg_last_error*` pair (#235).
-        assert_eq!(unsupported, 497);
+        assert_eq!(unsupported, 504);
         assert_eq!(
             eval_execution(lookup("strval").expect("strval contract")),
             Some(EvalExecution::Adapter {

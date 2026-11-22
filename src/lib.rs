@@ -89,6 +89,8 @@ pub mod shared_ini_prelude;
 pub mod object_cast_prelude;
 /// Optimizer passes.
 pub mod optimize;
+/// Asymmetric openssl key prelude injection (`openssl_sign`, `openssl_verify`, key loading).
+pub mod openssl_prelude;
 /// Parser for PHP syntax.
 pub mod parser;
 /// Selected PHP compatibility version for version-sensitive compiler surfaces.

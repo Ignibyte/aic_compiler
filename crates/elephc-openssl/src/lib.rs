@@ -1,9 +1,11 @@
 //! Purpose:
-//! libcrypto-backed OpenSSL cipher bridge staticlib for elephc: the PHP-visible
-//! 135-method default-provider catalog plus raw EVP encrypt/decrypt operations.
+//! libcrypto-backed OpenSSL bridge staticlib for elephc: the PHP-visible 135-method
+//! default-provider cipher catalog, raw EVP encrypt/decrypt operations, and the
+//! asymmetric key surface (PEM keys, `openssl_sign`, `openssl_verify`, key details).
 //!
 //! Called from:
-//! - Compiled PHP programs through the `__rt_openssl_*` runtime helpers.
+//! - Compiled PHP programs through the `__rt_openssl_*` runtime helpers (ciphers) and
+//!   the openssl prelude's `extern "elephc_openssl"` block (keys).
 //! - `cargo test -p elephc-openssl` with a pinned `ELEPHC_OPENSSL_LIB_DIR`.
 //!
 //! Key details:
@@ -17,10 +19,19 @@ mod abi;
 mod catalog;
 mod engine;
 mod ffi;
+mod pkey;
+mod pkey_abi;
+mod pkey_ffi;
 
 pub use abi::{
     elephc_openssl_cipher_count, elephc_openssl_cipher_iv_length, elephc_openssl_cipher_methods,
     elephc_openssl_decrypt, elephc_openssl_encrypt,
+};
+pub use pkey_abi::{
+    elephc_openssl_pkey_details, elephc_openssl_pkey_load, elephc_openssl_pkey_result,
+    elephc_openssl_pkey_sign, elephc_openssl_pkey_verify, PKEY_ERR_BAD_KEY, PKEY_ERR_FAILED,
+    PKEY_ERR_INTERNAL, PKEY_ERR_PADDING_NEEDS_RSA, PKEY_ERR_UNKNOWN_DIGEST,
+    PKEY_ERR_UNKNOWN_PADDING,
 };
 
 /// Successful cipher ABI operation.

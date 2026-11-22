@@ -263,6 +263,7 @@ pub(crate) const NOT_SERIALIZABLE_BUILTIN_CLASSES: &[&str] = &[
     "Generator",
     "GlobIterator",
     "InternalIterator",
+    "OpenSSLAsymmetricKey",
     "PDO",
     "PDORow",
     "PDOStatement",

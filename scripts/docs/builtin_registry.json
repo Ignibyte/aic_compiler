@@ -112173,6 +112173,573 @@
   },
   {
     "aot": {
+      "kind": "prelude",
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "private_key",
+          "optional": false,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "passphrase",
+          "optional": true,
+          "type": "?string"
+        }
+      ],
+      "required_param_count": 1,
+      "signature_override_reason": null,
+      "supported": true,
+      "variadic": null
+    },
+    "area": "String",
+    "canonical_name": "openssl_get_privatekey",
+    "description": "Alias of openssl_pkey_get_private.",
+    "eval": {
+      "kind": "none",
+      "supported": false,
+      "unsupported_reason": "eval-implementation-pending"
+    },
+    "eval_only": false,
+    "examples": [],
+    "in_catalog": true,
+    "is_extension": false,
+    "is_internal": false,
+    "lowering": {
+      "checker_file": null,
+      "codegen_file": "src/openssl_prelude/build.rs",
+      "codegen_function": "openssl_get_privatekey",
+      "notes": [
+        "Implemented by the compiler-injected openssl prelude."
+      ],
+      "runtime_helpers": [],
+      "sig_arm": null,
+      "sig_file": "crates/elephc-builtin-contract/src/catalog_surfaces.rs"
+    },
+    "module": "openssl",
+    "name": "openssl_get_privatekey",
+    "semantics": null,
+    "sig": {
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "private_key",
+          "optional": false,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": "null",
+          "name": "passphrase",
+          "optional": true,
+          "type": "?string"
+        }
+      ],
+      "return_type": "mixed",
+      "variadic": null
+    },
+    "since": null,
+    "slug": "openssl_get_privatekey",
+    "sub_area": "String"
+  },
+  {
+    "aot": {
+      "kind": "prelude",
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "public_key",
+          "optional": false,
+          "type": "mixed"
+        }
+      ],
+      "required_param_count": 1,
+      "signature_override_reason": null,
+      "supported": true,
+      "variadic": null
+    },
+    "area": "String",
+    "canonical_name": "openssl_get_publickey",
+    "description": "Alias of openssl_pkey_get_public.",
+    "eval": {
+      "kind": "none",
+      "supported": false,
+      "unsupported_reason": "eval-implementation-pending"
+    },
+    "eval_only": false,
+    "examples": [],
+    "in_catalog": true,
+    "is_extension": false,
+    "is_internal": false,
+    "lowering": {
+      "checker_file": null,
+      "codegen_file": "src/openssl_prelude/build.rs",
+      "codegen_function": "openssl_get_publickey",
+      "notes": [
+        "Implemented by the compiler-injected openssl prelude."
+      ],
+      "runtime_helpers": [],
+      "sig_arm": null,
+      "sig_file": "crates/elephc-builtin-contract/src/catalog_surfaces.rs"
+    },
+    "module": "openssl",
+    "name": "openssl_get_publickey",
+    "semantics": null,
+    "sig": {
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "public_key",
+          "optional": false,
+          "type": "mixed"
+        }
+      ],
+      "return_type": "mixed",
+      "variadic": null
+    },
+    "since": null,
+    "slug": "openssl_get_publickey",
+    "sub_area": "String"
+  },
+  {
+    "aot": {
+      "kind": "prelude",
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "key",
+          "optional": false,
+          "type": "mixed"
+        }
+      ],
+      "required_param_count": 1,
+      "signature_override_reason": null,
+      "supported": true,
+      "variadic": null
+    },
+    "area": "String",
+    "canonical_name": "openssl_pkey_get_details",
+    "description": "Returns the bits, PEM public key, type and RSA or EC parameters of a key.",
+    "eval": {
+      "kind": "none",
+      "supported": false,
+      "unsupported_reason": "eval-implementation-pending"
+    },
+    "eval_only": false,
+    "examples": [],
+    "in_catalog": true,
+    "is_extension": false,
+    "is_internal": false,
+    "lowering": {
+      "checker_file": null,
+      "codegen_file": "src/openssl_prelude/build.rs",
+      "codegen_function": "openssl_pkey_get_details",
+      "notes": [
+        "Implemented by the compiler-injected openssl prelude."
+      ],
+      "runtime_helpers": [],
+      "sig_arm": null,
+      "sig_file": "crates/elephc-builtin-contract/src/catalog_surfaces.rs"
+    },
+    "module": "openssl",
+    "name": "openssl_pkey_get_details",
+    "semantics": null,
+    "sig": {
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "key",
+          "optional": false,
+          "type": "mixed"
+        }
+      ],
+      "return_type": "array|false",
+      "variadic": null
+    },
+    "since": null,
+    "slug": "openssl_pkey_get_details",
+    "sub_area": "String"
+  },
+  {
+    "aot": {
+      "kind": "prelude",
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "private_key",
+          "optional": false,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "passphrase",
+          "optional": true,
+          "type": "?string"
+        }
+      ],
+      "required_param_count": 1,
+      "signature_override_reason": null,
+      "supported": true,
+      "variadic": null
+    },
+    "area": "String",
+    "canonical_name": "openssl_pkey_get_private",
+    "description": "Loads a private key from PEM text or a file:// path, with an optional passphrase.",
+    "eval": {
+      "kind": "none",
+      "supported": false,
+      "unsupported_reason": "eval-implementation-pending"
+    },
+    "eval_only": false,
+    "examples": [],
+    "in_catalog": true,
+    "is_extension": false,
+    "is_internal": false,
+    "lowering": {
+      "checker_file": null,
+      "codegen_file": "src/openssl_prelude/build.rs",
+      "codegen_function": "openssl_pkey_get_private",
+      "notes": [
+        "Implemented by the compiler-injected openssl prelude."
+      ],
+      "runtime_helpers": [],
+      "sig_arm": null,
+      "sig_file": "crates/elephc-builtin-contract/src/catalog_surfaces.rs"
+    },
+    "module": "openssl",
+    "name": "openssl_pkey_get_private",
+    "semantics": null,
+    "sig": {
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "private_key",
+          "optional": false,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": "null",
+          "name": "passphrase",
+          "optional": true,
+          "type": "?string"
+        }
+      ],
+      "return_type": "mixed",
+      "variadic": null
+    },
+    "since": null,
+    "slug": "openssl_pkey_get_private",
+    "sub_area": "String"
+  },
+  {
+    "aot": {
+      "kind": "prelude",
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "public_key",
+          "optional": false,
+          "type": "mixed"
+        }
+      ],
+      "required_param_count": 1,
+      "signature_override_reason": null,
+      "supported": true,
+      "variadic": null
+    },
+    "area": "String",
+    "canonical_name": "openssl_pkey_get_public",
+    "description": "Loads a public key from a PEM key or certificate, a file:// path, or a key object.",
+    "eval": {
+      "kind": "none",
+      "supported": false,
+      "unsupported_reason": "eval-implementation-pending"
+    },
+    "eval_only": false,
+    "examples": [],
+    "in_catalog": true,
+    "is_extension": false,
+    "is_internal": false,
+    "lowering": {
+      "checker_file": null,
+      "codegen_file": "src/openssl_prelude/build.rs",
+      "codegen_function": "openssl_pkey_get_public",
+      "notes": [
+        "Implemented by the compiler-injected openssl prelude."
+      ],
+      "runtime_helpers": [],
+      "sig_arm": null,
+      "sig_file": "crates/elephc-builtin-contract/src/catalog_surfaces.rs"
+    },
+    "module": "openssl",
+    "name": "openssl_pkey_get_public",
+    "semantics": null,
+    "sig": {
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "public_key",
+          "optional": false,
+          "type": "mixed"
+        }
+      ],
+      "return_type": "mixed",
+      "variadic": null
+    },
+    "since": null,
+    "slug": "openssl_pkey_get_public",
+    "sub_area": "String"
+  },
+  {
+    "aot": {
+      "kind": "prelude",
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "data",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "by_ref": true,
+          "default": null,
+          "name": "signature",
+          "optional": false,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "private_key",
+          "optional": false,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": 1,
+          "name": "algorithm",
+          "optional": true,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": 0,
+          "name": "padding",
+          "optional": true,
+          "type": "int"
+        }
+      ],
+      "required_param_count": 3,
+      "signature_override_reason": null,
+      "supported": true,
+      "variadic": null
+    },
+    "area": "String",
+    "canonical_name": "openssl_sign",
+    "description": "Signs data with an RSA or EC private key and a digest, writing the signature by reference.",
+    "eval": {
+      "kind": "none",
+      "supported": false,
+      "unsupported_reason": "eval-implementation-pending"
+    },
+    "eval_only": false,
+    "examples": [],
+    "in_catalog": true,
+    "is_extension": false,
+    "is_internal": false,
+    "lowering": {
+      "checker_file": null,
+      "codegen_file": "src/openssl_prelude/build.rs",
+      "codegen_function": "openssl_sign",
+      "notes": [
+        "Implemented by the compiler-injected openssl prelude."
+      ],
+      "runtime_helpers": [],
+      "sig_arm": null,
+      "sig_file": "crates/elephc-builtin-contract/src/catalog_surfaces.rs"
+    },
+    "module": "openssl",
+    "name": "openssl_sign",
+    "semantics": null,
+    "sig": {
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "data",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "by_ref": true,
+          "default": null,
+          "name": "signature",
+          "optional": false,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "private_key",
+          "optional": false,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": "1",
+          "name": "algorithm",
+          "optional": true,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": "0",
+          "name": "padding",
+          "optional": true,
+          "type": "int"
+        }
+      ],
+      "return_type": "bool",
+      "variadic": null
+    },
+    "since": null,
+    "slug": "openssl_sign",
+    "sub_area": "String"
+  },
+  {
+    "aot": {
+      "kind": "prelude",
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "data",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "signature",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "public_key",
+          "optional": false,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": 1,
+          "name": "algorithm",
+          "optional": true,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": 0,
+          "name": "padding",
+          "optional": true,
+          "type": "int"
+        }
+      ],
+      "required_param_count": 3,
+      "signature_override_reason": null,
+      "supported": true,
+      "variadic": null
+    },
+    "area": "String",
+    "canonical_name": "openssl_verify",
+    "description": "Verifies a signature with a public key: 1 valid, 0 invalid, -1 or false on error.",
+    "eval": {
+      "kind": "none",
+      "supported": false,
+      "unsupported_reason": "eval-implementation-pending"
+    },
+    "eval_only": false,
+    "examples": [],
+    "in_catalog": true,
+    "is_extension": false,
+    "is_internal": false,
+    "lowering": {
+      "checker_file": null,
+      "codegen_file": "src/openssl_prelude/build.rs",
+      "codegen_function": "openssl_verify",
+      "notes": [
+        "Implemented by the compiler-injected openssl prelude."
+      ],
+      "runtime_helpers": [],
+      "sig_arm": null,
+      "sig_file": "crates/elephc-builtin-contract/src/catalog_surfaces.rs"
+    },
+    "module": "openssl",
+    "name": "openssl_verify",
+    "semantics": null,
+    "sig": {
+      "params": [
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "data",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "signature",
+          "optional": false,
+          "type": "string"
+        },
+        {
+          "by_ref": false,
+          "default": null,
+          "name": "public_key",
+          "optional": false,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": "1",
+          "name": "algorithm",
+          "optional": true,
+          "type": "mixed"
+        },
+        {
+          "by_ref": false,
+          "default": "0",
+          "name": "padding",
+          "optional": true,
+          "type": "int"
+        }
+      ],
+      "return_type": "int|false",
+      "variadic": null
+    },
+    "since": null,
+    "slug": "openssl_verify",
+    "sub_area": "String"
+  },
+  {
+    "aot": {
       "kind": "registry",
       "params": [
         {
