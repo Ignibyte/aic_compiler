@@ -10,9 +10,15 @@
 
 use crate::codegen_support::{emit::Emitter, platform::Arch};
 
+use super::preg_error::{
+    emit_branch_unless_bad_utf8, emit_set_preg_last_error, PREG_BAD_UTF8_ERROR,
+    PREG_INTERNAL_ERROR, PREG_NO_ERROR,
+};
+
 /// __rt_preg_match: check if a PCRE regex matches a subject string.
 /// Input:  x1=pattern ptr, x2=pattern len, x3=subject ptr, x4=subject len
-/// Output: x0=1 if a match is found, 0 if not, -1 when the pattern is invalid or uses `/e`
+/// Output: x0=1 if a match is found, 0 if not, -1 when the pattern is invalid or uses `/e`,
+/// or when a `/u` subject is not valid UTF-8. `_preg_last_error` records which.
 pub(crate) fn emit_preg_match(emitter: &mut Emitter) {
     if emitter.target.arch == Arch::X86_64 {
         emit_preg_match_linux_x86_64(emitter);
@@ -42,6 +48,7 @@ pub(crate) fn emit_preg_match(emitter: &mut Emitter) {
     emitter.instruction(&format!("sub sp, sp, #{}", stack_size));               // allocate preg_match stack frame
     emitter.instruction(&format!("stp x29, x30, [sp, #{}]", save_off));         // save frame pointer and return address
     emitter.instruction(&format!("add x29, sp, #{}", save_off));                // set new frame pointer
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
 
     // -- save inputs --
     emitter.instruction(&format!("str x1, [sp, #{}]", pattern_ptr_off));        // save pattern ptr
@@ -95,10 +102,17 @@ pub(crate) fn emit_preg_match(emitter: &mut Emitter) {
     emitter.instruction("b __rt_preg_match_ret");                               // return
 
     emitter.label("__rt_preg_match_no");
+    emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_match_zero");
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction("mov x0, #-1");                                         // malformed UTF-8 subject: PHP false
+    emitter.instruction("b __rt_preg_match_ret");                               // return the sentinel
+
+    emitter.label("__rt_preg_match_zero");
     emitter.instruction("mov x0, #0");                                          // no match → return 0
     emitter.instruction("b __rt_preg_match_ret");                               // skip the failure sentinel
 
     emitter.label("__rt_preg_match_fail");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emitter.instruction("mov x0, #-1");                                         // failure sentinel: PHP false
     emitter.instruction("b __rt_preg_match_ret");                               // return the sentinel
 
@@ -138,6 +152,7 @@ fn emit_preg_match_capture_arm64(emitter: &mut Emitter) {
     emitter.instruction(&format!("add x9, sp, #{}", save_off));                 // compute save-slot address beyond ARM64 pair-store range
     emitter.instruction("stp x29, x30, [x9]");                                  // save frame pointer and return address
     emitter.instruction(&format!("add x29, sp, #{}", save_off));                // establish the preg_match capture frame pointer
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
 
     // -- save inputs --
     emitter.instruction(&format!("str x1, [sp, #{}]", pattern_ptr_off));        // save pattern ptr
@@ -245,13 +260,22 @@ fn emit_preg_match_capture_arm64(emitter: &mut Emitter) {
     emitter.label("__rt_preg_match_capture_no_match");
     emitter.instruction(&format!("ldr x0, [sp, #{}]", regmatches_ptr_off));     // reload dynamic capture buffer for the no-match cleanup path
     emitter.bl_c("free");                                                       // free the dynamic offset-pair vector before returning an empty matches array
-    emitter.instruction("b __rt_preg_match_capture_empty");                     // allocate and return the empty matches array
+    emitter.instruction(&format!("ldr x0, [sp, #{}]", regexec_result_off));     // reload the exec status after the cleanup call
+    emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_match_capture_empty");
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction("mov x0, #0");                                          // empty array capacity for the malformed subject
+    emitter.instruction("mov x1, #16");                                         // empty matches array still has string slot metadata
+    emitter.instruction("bl __rt_array_new");                                   // PHP writes an empty $matches for a malformed subject
+    emitter.instruction("mov x1, x0");                                          // return empty matches array in x1
+    emitter.instruction("mov x0, #-2");                                         // match-error sentinel: PHP false, $matches written
+    emitter.instruction("b __rt_preg_match_capture_ret");                       // return the sentinel and empty matches
 
     emitter.label("__rt_preg_match_capture_malloc_fail");
     emitter.instruction(&format!("ldr x0, [sp, #{}]", handle_off));             // reload opaque handle after capture-buffer allocation failed
     emitter.bl_c("elephc_pcre2_v1_free");                                       // free compiled regex resources before returning no match
 
     emitter.label("__rt_preg_match_capture_compile_fail");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emitter.instruction("mov x0, #0");                                          // empty array capacity for the failed call
     emitter.instruction("mov x1, #16");                                         // empty matches array still has string slot metadata
     emitter.instruction("bl __rt_array_new");                                   // allocate empty indexed string matches array
@@ -295,6 +319,7 @@ fn emit_preg_match_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer before reserving regex compilation scratch storage
     emitter.instruction("mov rbp, rsp");                                        // establish a stable frame base for the regex object, regmatch buffer, and subject spill slots
     emitter.instruction(&format!("sub rsp, {}", stack_size));                   // reserve aligned local storage for the opaque handle, pair, and spill fields
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rdx", subject_ptr_off)); // preserve the elephc subject pointer across delimiter stripping and regex compilation helper calls
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rcx", subject_len_off)); // preserve the elephc subject length across delimiter stripping and regex compilation helper calls
     emitter.instruction("mov rax, rdi");                                        // move the elephc pattern pointer into the preg-strip helper input register
@@ -333,10 +358,17 @@ fn emit_preg_match_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("jmp __rt_preg_match_ret_linux_x86_64");                // share the common epilogue after materializing the successful match result
 
     emitter.label("__rt_preg_match_no_linux_x86_64");
+    emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_match_zero_linux_x86_64");
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction("mov rax, -1");                                         // malformed UTF-8 subject: PHP false
+    emitter.instruction("jmp __rt_preg_match_ret_linux_x86_64");                // return the sentinel
+
+    emitter.label("__rt_preg_match_zero_linux_x86_64");
     emitter.instruction("xor eax, eax");                                        // return zero when the subject does not match
     emitter.instruction("jmp __rt_preg_match_ret_linux_x86_64");                // skip the failure sentinel
 
     emitter.label("__rt_preg_match_fail_linux_x86_64");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emitter.instruction("mov rax, -1");                                         // failure sentinel: PHP false
     emitter.instruction("jmp __rt_preg_match_ret_linux_x86_64");                // return the sentinel
 
@@ -369,6 +401,7 @@ fn emit_preg_match_capture_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer before reserving capture helper storage
     emitter.instruction("mov rbp, rsp");                                        // establish a stable frame base for regex and capture spill slots
     emitter.instruction(&format!("sub rsp, {}", stack_size));                   // reserve local storage for the opaque handle, pair buffer, and matches state
+    emit_set_preg_last_error(emitter, PREG_NO_ERROR);
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rdx", subject_ptr_off)); // preserve the elephc subject pointer across pattern helper calls
     emitter.instruction(&format!("mov QWORD PTR [rsp + {}], rcx", subject_len_off)); // preserve the elephc subject length across pattern helper calls
     emitter.instruction("mov rax, rdi");                                        // move pattern pointer into preg-strip helper input register
@@ -475,13 +508,22 @@ fn emit_preg_match_capture_linux_x86_64(emitter: &mut Emitter) {
     emitter.label("__rt_preg_match_capture_no_match_linux_x86_64");
     emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", regmatches_ptr_off)); // reload dynamic capture buffer for the no-match cleanup path
     emitter.bl_c("free");                                                       // free the dynamic offset-pair vector before returning an empty matches array
-    emitter.instruction("jmp __rt_preg_match_capture_empty_linux_x86_64");      // allocate and return the empty matches array
+    emitter.instruction(&format!("mov eax, DWORD PTR [rsp + {}]", regexec_result_off)); // reload the exec status after the cleanup call
+    emit_branch_unless_bad_utf8(emitter, flags_off, "__rt_preg_match_capture_empty_linux_x86_64");
+    emit_set_preg_last_error(emitter, PREG_BAD_UTF8_ERROR);
+    emitter.instruction("xor edi, edi");                                        // empty array capacity for the malformed subject
+    emitter.instruction("mov esi, 16");                                         // empty matches array still uses string slot metadata
+    emitter.instruction("call __rt_array_new");                                 // PHP writes an empty $matches for a malformed subject
+    emitter.instruction("mov rdx, rax");                                        // return empty matches array pointer in rdx
+    emitter.instruction("mov rax, -2");                                         // match-error sentinel: PHP false, $matches written
+    emitter.instruction("jmp __rt_preg_match_capture_ret_linux_x86_64");        // return the sentinel and empty matches
 
     emitter.label("__rt_preg_match_capture_malloc_fail_linux_x86_64");
     emitter.instruction(&format!("mov rdi, QWORD PTR [rsp + {}]", handle_off)); // reload opaque handle after capture-buffer allocation failed
     emitter.bl_c("elephc_pcre2_v1_free");                                       // free compiled regex resources before returning no match
 
     emitter.label("__rt_preg_match_capture_compile_fail_linux_x86_64");
+    emit_set_preg_last_error(emitter, PREG_INTERNAL_ERROR);
     emitter.instruction("xor edi, edi");                                        // empty array capacity for the failed call
     emitter.instruction("mov esi, 16");                                         // empty matches array still uses string slot metadata
     emitter.instruction("call __rt_array_new");                                 // allocate empty indexed string matches array

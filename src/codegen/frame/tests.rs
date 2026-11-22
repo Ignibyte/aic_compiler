@@ -130,6 +130,7 @@ fn hidden_argument_snapshot_enables_backtrace_activations_without_a_core_instruc
         false,
         true,
         backtrace_enabled,
+        false,
     );
     assert!(layout.backtrace_activation);
     assert!(layout.exception_activation_offset.is_some());
@@ -152,7 +153,7 @@ fn dynamic_constructor_frames_preserve_the_nested_receiver_register() {
                 builder.terminate(Terminator::Return { value: None });
             }
             for regalloc in [false, true] {
-                let layout = layout_for_function(&function, target, regalloc, false, false);
+                let layout = layout_for_function(&function, target, regalloc, false, false, false);
                 let register = nested_call_reg_name(target.arch);
                 assert_eq!(layout.callee_saved_offsets.iter().filter(|(saved, _)| *saved == register).count(),
                     1, "{name}: {op:?}, register allocation {regalloc}");
@@ -201,7 +202,7 @@ fn dispatching_frames_preserve_the_nested_receiver_register() {
                 builder.terminate(Terminator::Return { value: None });
             }
             for regalloc in [false, true] {
-                let layout = layout_for_function(&function, target, regalloc, false, false);
+                let layout = layout_for_function(&function, target, regalloc, false, false, false);
                 let register = nested_call_reg_name(target.arch);
                 assert_eq!(layout.callee_saved_offsets.iter().filter(|(saved, _)| *saved == register).count(),
                     1, "{name}: {op:?}, register allocation {regalloc}");
@@ -236,7 +237,7 @@ fn scalar_leaf_frames_skip_the_nested_receiver_register_save() {
         }
         let register = nested_call_reg_name(target.arch);
         for regalloc in [false, true] {
-            let layout = layout_for_function(&function, target, regalloc, false, false);
+            let layout = layout_for_function(&function, target, regalloc, false, false, false);
             assert!(layout.callee_saved_offsets.iter().all(|(saved, _)| *saved != register),
                 "{name}: register allocation {regalloc}");
         }
@@ -248,7 +249,7 @@ fn scalar_leaf_frames_skip_the_nested_receiver_register_save() {
             LocalKind::PhpLocal,
         );
         for regalloc in [false, true] {
-            let layout = layout_for_function(&function, target, regalloc, false, false);
+            let layout = layout_for_function(&function, target, regalloc, false, false, false);
             assert_eq!(layout.callee_saved_offsets.iter().filter(|(saved, _)| *saved == register).count(),
                 1, "{name}: heap local, register allocation {regalloc}");
         }

@@ -26,6 +26,8 @@ pub(crate) fn emit_user_filter_release_fd(emitter: &mut Emitter) {
     // Cross-entry jumps must name the global body so Mach-O keeps its separate atom.
     abi::emit_jump(emitter, "__rt_user_filter_reject_fd");
     emitter.label_global("__rt_user_filter_reject_fd");
+    // -- a descriptor with no per-fd table slot has no filter instances to release --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, arg, "__rt_user_filter_untabled_fd");
     // -- detach both direction owners before publishing their exceptional cleanup --
     // Frame112: fd0, objects8/16, rejected object24, guards32/64, caller linkage96.
     abi::emit_frame_prologue(emitter, 112);
@@ -95,6 +97,12 @@ pub(crate) fn emit_user_filter_release_fd(emitter: &mut Emitter) {
     abi::emit_load_from_address(emitter, result, frame, 0);
     abi::emit_frame_restore(emitter, 112);
     abi::emit_return(emitter);
+    // -- an untabled descriptor returns unchanged, with no frame to restore --
+    emitter.label("__rt_user_filter_untabled_fd");
+    if !arm {
+        emitter.instruction("mov rax, rdi");                                    // return the caller's descriptor unchanged
+    }
+    abi::emit_return(emitter);
     emit_close_fd_guard(emitter);
 }
 
@@ -104,6 +112,8 @@ fn emit_close_fd_guard(emitter: &mut Emitter) {
     let arm = emitter.target.arch == Arch::AArch64;
     let (arg, result, frame) = if arm { ("x0", "x0", "sp") } else { ("rdi", "rax", "rsp") };
     emitter.label_global("__rt_user_filter_close_fd");
+    // -- an untabled descriptor has no filter instances, so it takes the plain release --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, arg, "__rt_user_filter_release_fd");
     // -- ordinary descriptors need no exception guard when no filter object can run PHP --
     emitter.instruction(if arm { "add x10, x0, x0" } else { "lea r10, [rdi + rdi]" }); // select both user-filter direction entries
     abi::emit_symbol_address(emitter, if arm { "x9" } else { "r9" }, "_user_filter_instances");

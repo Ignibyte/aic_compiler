@@ -26,6 +26,7 @@ sidebar:
 | [`finfo_open()`](./io/finfo_open.md) | `(int $flags = 0, ?string $magic_database = null): finfo|false` | `finfo|false` | ✓ | ✓ |
 | [`finfo_set_flags()`](./io/finfo_set_flags.md) | `(finfo $finfo, int $flags): bool` | `bool` | ✓ | ✓ |
 | [`flock()`](./io/flock.md) | `(resource $stream, int $operation, bool $would_block = null): bool` | `bool` | ✓ | ✓ |
+| [`flush()`](./io/flush.md) | `(): void` | `void` | ✓ | ✓ |
 | [`fopen()`](./io/fopen.md) | `(string $filename, string $mode, bool $use_include_path = false, mixed $context = null): mixed` | `mixed` | ✓ | ✓ |
 | [`fpassthru()`](./io/fpassthru.md) | `(resource $stream): int` | `int` | ✓ | ✓ |
 | [`fprintf()`](./io/fprintf.md) | `(resource $stream, string $format, ...$values): int` | `int` | ✓ | ✓ |

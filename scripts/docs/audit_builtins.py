@@ -8,7 +8,7 @@ Checks:
 3. Every cross-link in a generated page resolves to an actual file.
 4. Per-area indexes only contain builtins that belong to that area.
 5. No stray top-level files (everything should be inside an area folder).
-6. Backend availability and all 465 non-registry contract routes remain coherent.
+6. Backend availability and all 467 non-registry contract routes remain coherent.
 7. User-facing pages contain no runs of multiple blank lines.
 8. No override table in ``registry.py`` declares the same builtin twice.
 
@@ -142,9 +142,9 @@ def _check_backend_contracts(
         # the 54 xml_* / xmlwriter_* functions the xml prelude declares, the six
         # procedural random entries, the internal random helper, the six fileinfo functions, and the
         # functions the mysqli, PDO, web, image, OPcache, tz, var_export, tokenizer and
-        # version preludes declare, and the seven openssl key functions, all
-        # injected-prelude routes.
-        "prelude": 402,
+        # version preludes declare (the fork's `--web` upload pair included), and the
+        # seven openssl key functions, all injected-prelude routes.
+        "prelude": 404,
         # Calls rewritten from their enclosing lexical function frame.
         "compiler-transform": 3,
         # The date/calendar procedural families the name resolver rewrites onto the

@@ -57,3 +57,9 @@ fn lfc_allows_tag_text_inside_comments_and_strings() {
         matches!(token, Token::StringLiteral(value) if value == "<?php ?>")
     }));
 }
+
+/// Verifies a `?>` in an LFC line comment stays comment text rather than closing PHP.
+#[test]
+fn lfc_line_comment_keeps_close_tag_text() {
+    assert_eq!(lfc_tokens("// ?> not html\necho 1;"), vec![Token::OpenTag, Token::Echo, Token::IntLiteral(1), Token::Semicolon, Token::Eof]);
+}

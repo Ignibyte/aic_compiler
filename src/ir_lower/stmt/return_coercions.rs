@@ -21,6 +21,7 @@ pub(super) fn coerce_to_return_type(
 ) -> LoweredValue {
     let return_php_type = ctx.return_php_type.clone();
     let value = ctx.retype_packed_address_for_pointer_sink(value, &return_php_type, span);
+    guard_declared_mixed_return(ctx, value, span);
     if let Some(value) = coerce_container_to_return_type(ctx, value, span) {
         return value;
     }
@@ -85,6 +86,40 @@ pub(super) fn coerce_to_return_type(
         IrType::Heap(_) => coerce_heap_return_source(ctx, value, span),
         IrType::Void => value,
     }
+}
+
+/// Verifies a boxed `Mixed` value against a DECLARED `array`, `?array` or class return.
+///
+/// The checker admits these returns because php checks them at run time; this emits that
+/// check. It only reads the value, so the coercion below still decides the storage: the cell
+/// itself for an array or nullable return, its owned unboxed object for an exact class.
+/// INFERRED returns are untouched: an undeclared function never throws on its own value.
+fn guard_declared_mixed_return(
+    ctx: &mut LoweringContext<'_, '_>,
+    value: LoweredValue,
+    span: Option<Span>,
+) {
+    if !ctx.return_type_is_declared
+        || ctx.builder.value_php_type(value.value) != PhpType::Mixed
+    {
+        return;
+    }
+    let Some(boundary) = ctx.return_php_type.mixed_boundary() else {
+        return;
+    };
+    let prefix = format!(
+        "{}(): Return value must be of type {}, ",
+        ctx.diagnostic_owner_name(),
+        boundary.php_type_name()
+    );
+    let data = ctx.intern_string(&prefix);
+    ctx.emit_void(
+        Op::ReturnBoundaryMixedGuard,
+        vec![value.value],
+        Some(Immediate::Data(data)),
+        Op::ReturnBoundaryMixedGuard.default_effects(),
+        span,
+    );
 }
 
 /// Coerces a heap value to the declared heap return storage through the runtime boundary.
@@ -166,7 +201,7 @@ fn declared_int_return_boundary(
     ) {
         return None;
     }
-    let prefix = format!("{}(): Return value must be of type int, ", ctx.owner_name());
+    let prefix = format!("{}(): Return value must be of type int, ", ctx.diagnostic_owner_name());
     let data = ctx.intern_string(&prefix);
     let verified = ctx.emit_value(
         Op::ReturnBoundaryMixedToInt,

@@ -159,6 +159,8 @@ pub(super) fn lower_builtin_call_args(
     let operands = borrowed_string_args::try_lower(ctx, name, sig, args)
         .unwrap_or_else(|| lower_planned_builtin_call_args(ctx, name, sig, args));
     let canonical = php_symbol_key(name.trim_start_matches('\\'));
+    let operands = box_array_map_mixed_hash_source(ctx, &canonical, args, operands);
+    let operands = coerce_weak_scalar_string_args(ctx, &canonical, sig, args, operands);
     let def = crate::builtins::registry::lookup(&canonical);
     let lowering = def.map(|def| def.spec.semantics.argument_lowering);
     let operands = match lowering {
@@ -192,6 +194,98 @@ fn validate_array_chunk_element_layout(
         crate::ir_lower::diagnostics::refuse(span,
             "array_chunk() on indexed string arrays is not supported in AOT mode");
     }
+}
+
+/// Converts an `int`, `float` or `bool` argument at a builtin's declared `string` parameter to a
+/// string in a weak-mode file, as php-src does before the builtin runs (`strlen(1.5)` is 3,
+/// `strtoupper(true)` is `"1"`).
+///
+/// Builtins whose argument lowering keeps raw values (`PreserveValues`, `PreserveUncoerced`
+/// and the other specialised modes) decide for themselves, and a by-reference parameter keeps
+/// the caller's storage. `null` is left alone: php-src deprecates it there rather than casting.
+fn coerce_weak_scalar_string_args(
+    ctx: &mut LoweringContext<'_, '_>,
+    canonical: &str,
+    sig: Option<&FunctionSig>,
+    args: &[Expr],
+    mut operands: Vec<crate::ir::ValueId>,
+) -> Vec<crate::ir::ValueId> {
+    let Some(sig) = sig else {
+        return operands;
+    };
+    if crate::source::current_strict_types() {
+        return operands;
+    }
+    // A result that may alias an argument (`trim()`) keeps that argument alive for the result's
+    // lifetime, so a converted copy there would never be released; those builtins already
+    // convert a scalar argument themselves.
+    let standard = crate::builtins::registry::lookup(canonical).is_some_and(|def| {
+        matches!(
+            def.spec.semantics.argument_lowering,
+            crate::builtins::semantics::BuiltinArgumentLowering::Standard
+                | crate::builtins::semantics::BuiltinArgumentLowering::MaterializeDefaults
+        ) && !matches!(
+            def.spec.semantics.result_ownership,
+            crate::builtins::semantics::BuiltinResultOwnership::MayAliasArguments
+        )
+    });
+    if !standard {
+        return operands;
+    }
+    for (index, operand) in operands.iter_mut().enumerate() {
+        let declares_string = sig
+            .params
+            .get(index)
+            .is_some_and(|(_, ty)| ty.codegen_repr() == PhpType::Str);
+        if !declares_string || sig.ref_params.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        if !matches!(
+            ctx.builder.value_php_type(*operand).codegen_repr(),
+            PhpType::Int | PhpType::Float | PhpType::Bool
+        ) {
+            continue;
+        }
+        let span = args.get(index).map_or_else(crate::span::Span::dummy, |arg| arg.span);
+        let value = lowered_value_from_id(ctx, *operand);
+        let converted = coerce_to_string_at_span(ctx, value, Some(span));
+        *operand = root_evaluated_call_argument(ctx, converted, span).value;
+    }
+    operands
+}
+
+/// Boxes the source of `array_map($callback, $hash)` when the hash's values are not `int`,
+/// `bool` or `string` (objects of different classes, a union, `mixed`), and of
+/// `array_map($callback, $list)` when the list holds objects.
+///
+/// `__rt_hash_map` takes its callback argument ABI from those three value types only, so such a
+/// hash maps through the boxed-array path a declared `array` source already takes, where every
+/// callback input is a `mixed` cell. The checker types the call the same way (`array_map`'s
+/// `check`). The box is rooted like any evaluated argument, so the call's cleanup releases it.
+fn box_array_map_mixed_hash_source(
+    ctx: &mut LoweringContext<'_, '_>,
+    canonical: &str,
+    args: &[Expr],
+    mut operands: Vec<crate::ir::ValueId>,
+) -> Vec<crate::ir::ValueId> {
+    if canonical != "array_map" || operands.len() != 2 {
+        return operands;
+    }
+    let boxes = match ctx.builder.value_php_type(operands[1]).codegen_repr() {
+        PhpType::AssocArray { value, .. } => {
+            !matches!(value.codegen_repr(), PhpType::Int | PhpType::Bool | PhpType::Str)
+        }
+        PhpType::Array(element) => matches!(element.as_ref(), PhpType::Object(_)),
+        _ => false,
+    };
+    if !boxes {
+        return operands;
+    }
+    let span = args.get(1).map_or_else(crate::span::Span::dummy, |arg| arg.span);
+    let source = lowered_value_from_id(ctx, operands[1]);
+    let boxed = coerce_value_for_temp(ctx, source, &PhpType::Mixed, span);
+    operands[1] = root_evaluated_call_argument(ctx, boxed, span).value;
+    operands
 }
 
 /// Lowers a string literal naming a BUILTIN, at a `callable` parameter, as that builtin's
@@ -462,12 +556,18 @@ fn lower_planned_builtin_call_args(
                 .enumerate()
                 .map(|(index, arg)| {
                     let value = lower_expr(ctx, arg);
-                    if index + 1 < args.len()
-                        && !sig.is_some_and(|sig| {
-                            sig.ref_params.get(index).copied().unwrap_or(false)
-                        })
-                    {
-                        root_evaluated_call_argument(ctx, value, arg.span).value
+                    let by_ref =
+                        sig.is_some_and(|sig| sig.ref_params.get(index).copied().unwrap_or(false));
+                    // A Mixed pattern or subject (a foreach key or value of an untyped array)
+                    // becomes an owned string here, rooted so the call's cleanup releases it.
+                    let coerced = match sig {
+                        Some(sig) if !by_ref => {
+                            coerce_scalar_arg_to_param_storage(ctx, sig, index, value, arg)
+                        }
+                        _ => value,
+                    };
+                    if coerced.value != value.value || (index + 1 < args.len() && !by_ref) {
+                        root_evaluated_call_argument(ctx, coerced, arg.span).value
                     } else {
                         value.value
                     }

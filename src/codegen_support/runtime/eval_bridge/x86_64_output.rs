@@ -80,6 +80,9 @@ pub(super) fn emit_x86_64_output(emitter: &mut Emitter) {
     emitter.instruction("mov QWORD PTR [r9], rdi");                             // store the (inert) implicit-flush flag
     emitter.instruction("ret");                                                 // return to Rust
 
+    label_c_global(emitter, "__elephc_eval_flush");
+    emitter.instruction("jmp __rt_flush");                                      // run the compiled flush(), which returns straight to Rust
+
     label_c_global(emitter, "__elephc_eval_ob_start_ex");
     emitter.instruction("test rdi, rdi");                                       // a zero has-handler flag selects the default handler
     emitter.instruction("jz __elephc_eval_ob_start_ex_default_x86");            // route the default-handler variant

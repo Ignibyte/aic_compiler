@@ -69,13 +69,24 @@ impl Checker {
                 self.infer_type_with_assignment_effects(condition, &mut label_env)?;
                 entries.push(self.snapshot_flow_exit(&label_env));
             }
+            // `match (true)`: the arm sees its single condition's then-narrowing, as in the
+            // result-type inference (`infer_basic_expr_type`), scoped to the arm's result.
+            let guards = match conditions.as_slice() {
+                [condition] if matches!(subject.kind, ExprKind::BoolLiteral(true)) => self
+                    .guard_narrowings(condition, &label_env)?
+                    .into_iter()
+                    .filter(|guard| super::basic::match_arm_may_narrow(result, &guard.var))
+                    .collect(),
+                _ => Vec::new(),
+            };
             missed = self.snapshot_flow_exit(&label_env);
             self.observe_flow_snapshot(&mut flow, &missed, false);
             let entry = self.join_scoped_flow_snapshots(&entries, &scope).unwrap_or(input);
             let mut arm_env = entry.views.clone();
             let ty = self.with_conditional_flow_arm(&mut flow, &mut arm_env, |checker, env| {
                 checker.restore_flow_snapshot(&entry, env);
-                checker.infer_type_with_assignment_effects(result, env)
+                checker.with_flow_narrowings(&guards, true, env,
+                    |checker, env| checker.infer_type_with_assignment_effects(result, env))
             })?;
             Self::merge_short_circuit_storage_effects(env, &arm_env);
             typed_arms.push((result, if matches!(result.kind, ExprKind::Throw(_)) { PhpType::Never } else { ty }));

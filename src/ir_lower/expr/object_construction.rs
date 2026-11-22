@@ -68,6 +68,11 @@ pub(super) fn lower_new_object(
         expr.span,
     );
     begin_call_argument_evaluation(ctx);
+    if let Some(callee) =
+        scalar_argument_guards::method_callee(ctx, class_name, "__construct", false, false)
+    {
+        name_argument_callee(ctx, callee);
+    }
     let previous_description = ctx
         .call_description
         .replace(format!("{}::__construct", class_name.as_str()));

@@ -375,6 +375,9 @@ impl Checker {
                 &format!("Method {}::{}", interface_name, method), interface_name,
             )?;
         }
+        if self.override_returns_in_other_storage(interface_name, &method_key) {
+            return Ok(PhpType::Mixed);
+        }
         let late_static_return = self.instance_method_late_static_return(interface_name, &method_key);
         match late_static_return {
             Some(return_type) => self.resolve_late_static_return_type_hint(
@@ -642,6 +645,7 @@ impl Checker {
             .get(&impl_class_name)
             .map(|class_info| Self::declared_method_param_flags(class_info, &method_key, false))
             .unwrap_or_default();
+        let boxed_return = self.override_returns_in_other_storage(class_name, &method_key);
         if let Some(class_info) = self.classes.get_mut(&impl_class_name) {
             if let Some(sig) = class_info.methods.get_mut(&method_key) {
                 let regular_param_count = if sig.variadic.is_some() {
@@ -718,12 +722,27 @@ impl Checker {
                             widen_method_variadic_element(existing_elem_ty.as_ref(), &elem_ty);
                     }
                 }
+                if boxed_return {
+                    return Ok(PhpType::Mixed);
+                }
                 return Ok(late_static_return_type
                     .clone()
                     .unwrap_or_else(|| sig.return_type.clone()));
             }
         }
         Ok(PhpType::Int)
+    }
+
+    /// Returns whether an override reachable from class or interface `receiver` returns
+    /// `method_key`'s result in other storage than `receiver`'s signature reads it.
+    ///
+    /// PHP lets an override narrow its return (`?int` to `int`), and an untyped method's
+    /// overrides may each return something else. Such a call is typed `mixed`, as EIR lowering
+    /// types it: codegen calls those overrides by the runtime class and boxes their results.
+    fn override_returns_in_other_storage(&self, receiver: &str, method_key: &str) -> bool {
+        crate::types::diverging_overrides(&self.classes, &self.interfaces, receiver, method_key)
+            .iter()
+            .any(|diverging| diverging.returns)
     }
 
     /// Returns `ancestor` (when it is a registered class) and every registered class below it.
@@ -1060,6 +1079,10 @@ impl Checker {
                 .check_enum_static_call(&enum_info, class_name, method, args, env, expr.span);
         }
         let method_key = php_symbol_key(method);
+        let late_static_boxed_return = matches!(receiver, StaticReceiver::Static)
+            && crate::types::diverging_static_overrides(&self.classes, class_name, &method_key)
+                .iter()
+                .any(|diverging| diverging.returns);
         let late_static_receiver_type = if parent_call {
             self.current_class
                 .clone()
@@ -1435,6 +1458,11 @@ impl Checker {
                         **existing_elem_ty =
                             widen_method_variadic_element(existing_elem_ty.as_ref(), &elem_ty);
                     }
+                }
+                if late_static_boxed_return {
+                    // A `static::` call can run an override returning in other storage, which
+                    // codegen boxes, as for an instance call.
+                    return Ok(PhpType::Mixed);
                 }
                 return Ok(late_static_static_return_type
                     .clone()

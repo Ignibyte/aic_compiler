@@ -21,7 +21,7 @@ use super::super::super::Checker;
 use super::super::validation::{
     declaration_is_source, declared_return_type_compatible,
     is_pdo_exception_get_code_contract, late_static_return_compatible,
-    validate_signature_compatibility,
+    validate_scalar_parameter_contravariance, validate_signature_compatibility,
 };
 use super::state::ClassBuildState;
 
@@ -286,6 +286,17 @@ fn validate_static_interface_method(
         .methods
         .iter()
         .find(|m| m.is_static && php_symbol_key(&m.name) == method_name);
+    let compares_source = state
+        .static_method_declaring_classes
+        .get(method_name)
+        .is_none_or(|owner| declaration_is_source(checker, owner))
+        && interface_info
+            .static_method_declaring_interfaces
+            .get(method_name)
+            .map_or_else(
+                || declaration_is_source(checker, interface_name),
+                |owner| declaration_is_source(checker, owner),
+            );
     validate_signature_compatibility(
         actual_method.map(|m| m.span).unwrap_or(class.span),
         &class.name,
@@ -294,19 +305,25 @@ fn validate_static_interface_method(
         required_sig,
         "static method",
         "implementing interface",
-        state
-            .static_method_declaring_classes
-            .get(method_name)
-            .is_none_or(|owner| declaration_is_source(checker, owner))
-            && interface_info
-                .static_method_declaring_interfaces
-                .get(method_name)
-                .map_or_else(
-                    || declaration_is_source(checker, interface_name),
-                    |owner| declaration_is_source(checker, owner),
-                ),
+        compares_source,
         checker.enums.contains_key(&class.name),
     )?;
+    // An enum's parameters are judged by its own interface check, after its factories bind.
+    if compares_source
+        && !checker.enums.contains_key(&class.name)
+        && actual_method.is_some_and(|m| m.span.line != 0)
+    {
+        validate_scalar_parameter_contravariance(
+            checker,
+            actual_method.map(|m| m.span).unwrap_or(class.span),
+            &class.name,
+            method_name,
+            actual_sig,
+            required_sig,
+            "static method",
+            "implement",
+        )?;
+    }
     if required_sig.declared_return && !actual_sig.declared_return {
         return Err(CompileError::new(
             actual_method
@@ -528,6 +545,17 @@ fn validate_interface_method(
     let required_owner = interface_info.method_declaring_interfaces
         .get(method_name).map(String::as_str).unwrap_or(interface_name);
     let tentative_return = php_symbol_key(required_owner) == "serializable";
+    let compares_source = state
+        .method_declaring_classes
+        .get(method_name)
+        .is_none_or(|owner| declaration_is_source(checker, owner))
+        && interface_info
+            .method_declaring_interfaces
+            .get(method_name)
+            .map_or_else(
+                || declaration_is_source(checker, interface_name),
+                |owner| declaration_is_source(checker, owner),
+            );
     validate_signature_compatibility(
         actual_method.map(|m| m.span).unwrap_or(class.span),
         &class.name,
@@ -536,19 +564,25 @@ fn validate_interface_method(
         required_sig,
         "method",
         "implementing interface",
-        state
-            .method_declaring_classes
-            .get(method_name)
-            .is_none_or(|owner| declaration_is_source(checker, owner))
-            && interface_info
-                .method_declaring_interfaces
-                .get(method_name)
-                .map_or_else(
-                    || declaration_is_source(checker, interface_name),
-                    |owner| declaration_is_source(checker, owner),
-                ),
+        compares_source,
         checker.enums.contains_key(&class.name),
     )?;
+    // An enum's parameters are judged by its own interface check, after its factories bind.
+    if compares_source
+        && !checker.enums.contains_key(&class.name)
+        && actual_method.is_some_and(|m| m.span.line != 0)
+    {
+        validate_scalar_parameter_contravariance(
+            checker,
+            actual_method.map(|m| m.span).unwrap_or(class.span),
+            &class.name,
+            method_name,
+            actual_sig,
+            required_sig,
+            "method",
+            "implement",
+        )?;
+    }
     if required_sig.declared_return && !actual_sig.declared_return && !tentative_return {
         return Err(CompileError::new(
             actual_method

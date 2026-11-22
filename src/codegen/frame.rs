@@ -101,6 +101,7 @@ pub(super) fn layout_for_function(
     regalloc_linear: bool,
     exception_activations: bool,
     backtrace_activations: bool,
+    save_all_callee_saved: bool,
 ) -> FrameLayout {
     let allocation = if regalloc_linear {
         allocate_registers(function, target)
@@ -174,6 +175,18 @@ pub(super) fn layout_for_function(
         offset += 8;
         callee_saved_offsets.push((*reg, offset));
     }
+    // A function called from outside elephc-compiled code (the `--web` handler, which the Rust
+    // server calls once per request) must hand back every callee-saved register its caller left,
+    // not only the ones its own allocator used: runtime routines and nested code treat the rest
+    // as scratch, and the caller keeps live values in them across the call.
+    if save_all_callee_saved {
+        for reg in abi_callee_saved_registers(target.arch) {
+            if !callee_saved_offsets.iter().any(|(saved, _)| saved == reg) {
+                offset += 8;
+                callee_saved_offsets.push((reg, offset));
+            }
+        }
+    }
     // Method/callable dispatch hand-uses the reserved nested-call register
     // (x19/r12) to hold a receiver across argument-lowering calls; it is
     // callee-saved but outside the allocator's tracking, so reserve a save slot
@@ -212,6 +225,18 @@ pub(super) fn layout_for_function(
         allocation,
         callee_saved_offsets,
         local_analysis,
+    }
+}
+
+/// The callee-saved registers of the platform C ABI that the frame prologue does not already
+/// save (the frame pointer and the link register are saved with the frame itself).
+fn abi_callee_saved_registers(arch: Arch) -> &'static [&'static str] {
+    match arch {
+        Arch::X86_64 => &["rbx", "r12", "r13", "r14", "r15"],
+        Arch::AArch64 => &[
+            "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "d8", "d9",
+            "d10", "d11", "d12", "d13", "d14", "d15",
+        ],
     }
 }
 
@@ -1181,6 +1206,14 @@ pub(super) fn emit_web_handler_epilogue(ctx: &mut FunctionContext<'_>) {
     if ctx.shared.counters {
         emit_counters_dump(ctx);
     }
+    // A worker never reaches the exit path that prints the heap-debug report, so it prints here,
+    // once per request, after the request's locals are released: the counters are the worker's
+    // running totals, so a leak shows as live blocks that grow from one request to the next.
+    if ctx.heap_debug {
+        ctx.emitter
+            .comment("heap-debug: print allocator summary and leak report to stderr");
+        abi::emit_call_label(ctx.emitter, "__rt_heap_debug_report");
+    }
     // The EXACT profile is not dumped here either. The bridge brackets every
     // request — `elephc_instr_request(1|2)` before the handler, `(0)` after — and
     // that close is what ends a slice and writes it, once, and only if one was
@@ -1238,6 +1271,13 @@ pub(super) fn emit_web_entry_stub(
     // request. (A `--no-web-heap-guard` opt-out for benchmarking is a follow-up.)
     ctx.emitter.comment("enable web heap-guard flag");
     abi::emit_enable_web_heap_guard_flag(ctx.emitter);
+    // `--heap-debug` turns on its validation the same way: once, here in the master, so every
+    // forked worker inherits it. `emit_main_prologue` does this for a CLI program, but a `--web`
+    // build never runs that prologue, so the flag stayed 0 and `--heap-debug` did nothing.
+    if ctx.heap_debug {
+        ctx.emitter.comment("enable heap debug flag");
+        abi::emit_enable_heap_debug_flag(ctx.emitter);
+    }
     // BEFORE the preload, not after. The preload's own code can call `opcache_*`, and every
     // one of those answers comes from the bridge. Running it first left the bridge at its
     // DEFAULT configuration — a disabled cache — so `opcache_compile_file()` in a preload

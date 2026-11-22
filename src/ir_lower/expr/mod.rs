@@ -119,6 +119,9 @@ mod closure_binding;
 mod member_receivers;
 mod enum_interface_calls;
 mod enum_argument_guards;
+mod union_return_guards;
+mod scalar_argument_guards;
+mod dispatched_argument_guards;
 mod enum_method_args;
 mod enum_static_args;
 mod enum_ref_args;
@@ -239,7 +242,7 @@ pub(crate) use callable_tracking::{
 };
 #[allow(unused_imports)]
 pub(crate) use callable_tracking::LoweredCallableArrayAssignment;
-pub(crate) use closures::{body_contains_eval_call, lower_closure_for_assignment};
+pub(crate) use closures::{body_contains_eval_call, expr_writes_local, lower_closure_for_assignment};
 pub(crate) use indexed_array_literals::{
     array_literal_type_for_ir, is_pointer_array_destination, lower_array_literal_with_expected_type,
     lower_expr_for_destination,
@@ -261,6 +264,8 @@ pub(crate) use instanceof_coercions::{
 };
 pub(crate) use merge_temps::emit_bool_literal;
 pub(in crate::ir_lower) use merge_temps::{store_value_into_temp, take_owned_temp};
+pub(in crate::ir_lower) use union_return_guards::bind_declared_union_return;
+use scalar_argument_guards::name_method_argument_callee;
 pub(crate) use property_access::{
     lower_owned_ref_assign_array_elem, lower_ref_assign_array_elem, lower_ref_assign_call,
     lower_ref_assign_property, lower_ref_assign_static_property,

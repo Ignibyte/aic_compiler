@@ -183,6 +183,7 @@ pub(super) fn lower_method_call(
     let (object, receiver_owner) = root_method_receiver(ctx, object, expr.span);
     let mut operands = vec![object.value];
     begin_call_argument_evaluation(ctx);
+    name_method_argument_callee(ctx, object.value, dispatch_method, method);
     let call_description = receiver_class
         .map(|class_name| format!("{class_name}::{dispatch_method}"))
         .unwrap_or_else(|| dispatch_method.to_string());
@@ -288,7 +289,9 @@ pub(super) fn method_call_argument_signature(
     if method_is_fiber_start(ctx, object, method) {
         return crate::ir_lower::fibers::start_sig_for_expr(ctx, object_expr);
     }
-    method_signature(ctx, object, method).or_else(|| narrowed_receiver_argument_signature(ctx, object, method))
+    method_signature(ctx, object, method)
+        .map(|sig| widen_diverging_override_params(ctx, object, method, sig))
+        .or_else(|| narrowed_receiver_argument_signature(ctx, object, method))
 }
 
 /// Returns the signature that normalizes the arguments of a method the receiver's static class

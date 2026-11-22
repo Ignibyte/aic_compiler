@@ -421,6 +421,8 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
         &mut prelude_inventory,
     );
     timings.record_since("var-export-prelude", phase_started);
+    let ast = crate::key_set_prelude::inject_if_used(ast, &mut prelude_inventory);
+    let ast = crate::preg_named_groups::rewrite(ast, &mut prelude_inventory);
 
     // Inject the OPcache preludes (pure elephc-PHP functions): `opcache_get_configuration()`
     // returns a compile-time array literal built from the version-keyed OPcache
@@ -798,6 +800,22 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
     };
     timings.record_since("object-cast-prelude", phase_started);
 
+    // Inject the PHP-written stdlib functions (`pack`, `unpack`) the program references. Runs
+    // AFTER `autoload::run` for the same reason as the object-cast prelude: vendor and PSR-4
+    // class files only join the AST there. The declarations are name-resolved on the way in
+    // because this position is past the pipeline's resolution pass.
+    crate::progress::phase("stdlib-prelude");
+    let phase_started = Instant::now();
+    let ast = match crate::stdlib_prelude::inject_if_used(ast, &mut prelude_inventory) {
+        Ok(injected) => injected,
+        Err(e) => {
+            crate::progress::clear();
+            errors::report(&e);
+            process::exit(1);
+        }
+    };
+    timings.record_since("stdlib-prelude", phase_started);
+
     // Desugar PHP's argument-introspection constructs (`func_num_args`, `func_get_args`,
     // `func_get_arg`) into plain PHP: every function scope that uses one gains the hidden
     // `mixed ...$__elephc_func_args` parameter, so the surplus positional arguments PHP
@@ -1046,6 +1064,10 @@ fn compile_config(config: CliConfig, entry: EntryKind<'_>) {
     // instantiation as unreferenced and lowering finds nothing to call.
     exported_function_names.extend(crate::generics::instantiation_roots(
         &check_result.requested_instantiations,
+    ));
+    // A key-set call retargeted to its prelude function names it only in that map, likewise.
+    exported_function_names.extend(crate::key_set_prelude::retarget_roots(
+        check_result.generic_call_sites.values(),
     ));
     let exported_function_names = exported_function_names;
     let ast = optimize::prune_unreachable_declarations(

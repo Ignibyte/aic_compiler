@@ -182,6 +182,13 @@ pub(crate) trait Pass {
         stmt
     }
 
+    /// Transforms a rebuilt expression after its children have been visited. Exists for one
+    /// caller, `preg_named_groups`, which rewrites a `preg_match()` call; the default keeps every
+    /// other pass unchanged.
+    fn transform_expr(&mut self, expr: crate::parser::ast::Expr) -> crate::parser::ast::Expr {
+        expr
+    }
+
     /// Transforms a magic constant node (e.g., `__FILE__`, `__LINE__`) into its
     /// substituted expression. Called for every `MagicConstant` encountered during the walk.
     fn transform_magic(&self, span: Span, mc: MagicConstant) -> ExprKind;

@@ -270,6 +270,10 @@ fn print_immediate(out: &mut String, data: &DataPool, immediate: &Immediate) {
         Immediate::TypePredicate(predicate) => {
             let _ = write!(out, " {}", predicate.as_eir());
         }
+        Immediate::ScalarArgumentCheck(check) => {
+            let mode = if check.strict { "strict" } else { "weak" };
+            let _ = write!(out, " {} {} data[{}]", check.target.as_eir(), mode, check.prefix.as_raw());
+        }
         Immediate::MixedNumericOp(op) => {
             let _ = write!(out, " {}", op.as_eir());
         }

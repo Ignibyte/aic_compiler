@@ -5,7 +5,7 @@
 //! - `cargo test` through Rust's test harness.
 //!
 //! Key details:
-//! - Submodules group focused fixtures for closures, closure array-literal returns, expr calls, language features, constants and system, state and variadics, argument introspection, callable strings, compiler-generated local visibility, callable dispatch branch reach, and where descriptor thunks land relative to their caller.
+//! - Submodules group focused fixtures for closures, closure array-literal returns, lexical `self`/`parent`/`static` receivers in closures, expr calls, language features, constants and system, state and variadics, argument introspection, callable strings, compiler-generated local visibility, callable dispatch branch reach, and where descriptor thunks land relative to their caller.
 
 mod boxed_calls;
 mod branch_reach;
@@ -13,6 +13,7 @@ mod callable_strings;
 mod closure_array_returns;
 mod closure_call_returns;
 mod closure_binding_scopes;
+mod closure_lexical_receivers;
 mod closures;
 mod property_callable_metadata;
 mod expr_calls;

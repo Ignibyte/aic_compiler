@@ -318,13 +318,17 @@ echo $removed[0][0];
 /// Verifies that an inner array in array_diff output survives unset of the original.
 /// Fixture: left contains inner array and another element, right contains only the other element, diff, unset left and inner, read result.
 /// Regression: ensures array_diff output preserves GC alias for nested inner arrays.
+///
+/// The other element used to be a second inner array, `[8]`, excluded by `[[8]]`. PHP compares
+/// by string rendering, and every array renders as `"Array"`, so that fixture excludes the
+/// survivor too; it now excludes by a string, which both PHP and elephc answer the same way.
 #[test]
 fn test_gc_array_diff_borrowed_array_survives_unset() {
     let out = compile_and_run(
         r#"<?php
 $inner = [6];
-$left = [$inner, [8]];
-$right = [[8]];
+$left = [$inner, "eight"];
+$right = ["eight"];
 $diff = array_diff($left, $right);
 unset($left);
 unset($inner);
@@ -337,21 +341,25 @@ echo $diff[0][0];
 /// Verifies that an inner array in array_intersect output survives unset of the originals.
 /// Fixture: left contains inner array and another element, right contains inner array, intersect, unset all, read result.
 /// Regression: ensures array_intersect output preserves GC alias for nested inner arrays.
+///
+/// The first element used to be another inner array, `[1]`, which PHP keeps as well (both
+/// render as `"Array"`), and the read used the renumbered key 0; the fixture now pairs the
+/// inner array with a string and reads it under its original key.
 #[test]
 fn test_gc_array_intersect_borrowed_array_survives_unset() {
     let out = compile_and_run(
         r#"<?php
 $inner = [9];
-$left = [[1], $inner];
+$left = ["one", $inner];
 $right = [$inner];
 $both = array_intersect($left, $right);
 unset($left);
 unset($right);
 unset($inner);
-echo $both[0][0];
+echo count($both), $both[1][0];
 "#,
     );
-    assert_eq!(out, "9");
+    assert_eq!(out, "19");
 }
 
 /// Verifies that an inner array in array_filter output survives unset of the original.

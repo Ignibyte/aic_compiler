@@ -3129,5 +3129,215 @@ fn web_array_push_onto_a_request_superglobal_keeps_the_worker_alive() {
 #[path = "web/memory_metrics.rs"]
 mod memory_metrics;
 
+/// Verifies `flush()` sends the status and headers before any body output, as PHP's built-in
+/// server does: the client sees the head while the handler is still running, with and without
+/// the worker's gzip (which otherwise waits for a body prefix).
+#[test]
+fn web_flush_sends_headers_before_body_output() {
+    let heads = web_flush_early_heads(
+        "<?php\nheader(\"X-Ready: yes\");\nflush();\nusleep(1000000);\necho \"done\";\n",
+        "web_flush_headers",
+    );
+    assert_flushed_heads(&heads);
+}
+
+/// Verifies `flush()` called from eval'd code sends the head too: eval reaches the compiled
+/// runtime's flush through the bridge.
+#[test]
+fn web_eval_flush_sends_headers_before_body_output() {
+    let heads = web_flush_early_heads(
+        "<?php\nheader(\"X-Ready: yes\");\neval('flush();');\nusleep(1000000);\necho \"done\";\n",
+        "web_eval_flush_headers",
+    );
+    assert_flushed_heads(&heads);
+}
+
+/// Verifies `is_uploaded_file()` and `move_uploaded_file()` accept only this request's uploads,
+/// that a move keeps the bytes and gives the file `0666 & ~umask()`, and that an upload the
+/// handler left in place is deleted when the request ends, in the default worker model and under
+/// pool isolation.
+#[test]
+fn web_move_uploaded_file_accepts_only_uploads_and_unmoved_ones_are_deleted() {
+    let src = r#"<?php
+$tmp = $_FILES['upload']['tmp_name'] ?? '';
+$to = $_GET['to'] ?? '';
+if ($to === '') {
+    echo $tmp;
+    return;
+}
+echo is_uploaded_file($tmp) ? 'up' : 'no', '|', is_uploaded_file(__FILE__) ? 'up' : 'no', '|';
+echo @move_uploaded_file(__FILE__, $to) ? 'moved' : 'refused', '|';
+echo move_uploaded_file($tmp, $to) ? 'moved' : 'failed', '|', file_get_contents($to), '|';
+echo file_exists($tmp) ? 'left' : 'gone', '|', is_uploaded_file($tmp) ? 'up' : 'no', '|';
+echo (fileperms($to) & 0777) === (0666 & ~umask()) ? 'mode' : 'badmode';
+"#;
+    let boundary = "Xbnd";
+    let body = format!(
+        "--{b}\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"up.txt\"\r\n\
+         Content-Type: text/plain\r\n\r\nFILEDATA-123\r\n--{b}--\r\n",
+        b = boundary
+    );
+    let ct = format!("multipart/form-data; boundary={}", boundary);
+    for mode in ["worker", "pool"] {
+        let dir = make_test_dir(&format!("web_move_uploaded_{mode}"));
+        let bin = if mode == "pool" {
+            compile_isolated_web(&dir, src, "app", "pool")
+        } else {
+            compile_web(&dir, src, "app")
+        };
+        let port = free_port();
+        let addr = format!("127.0.0.1:{port}");
+        let mut child = spawn_server(&bin, &addr, "1");
+        let dest = dir.join("moved.txt");
+        let moved = http_request(
+            &addr,
+            "POST",
+            &format!("/?to={}", dest.display()),
+            &[("Content-Type", &ct)],
+            &body,
+        );
+        let left = http_request(&addr, "POST", "/", &[("Content-Type", &ct)], &body);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(
+            moved.ends_with("up|no|refused|moved|FILEDATA-123|gone|no|mode"),
+            "{mode}: move_uploaded_file: {moved:?}"
+        );
+        let unmoved = raw_response_body(&left).trim().to_string();
+        assert!(unmoved.contains("elephc_up"), "{mode}: no upload temp path: {left:?}");
+        assert!(
+            !std::path::Path::new(&unmoved).exists(),
+            "{mode}: the unmoved upload {unmoved} outlived its request"
+        );
+    }
+}
+
+/// Regression: under pool isolation, a class method that requires a template with `?>`, inline
+/// HTML and `<?=` inside `ob_start()` answers every request with the bytes PHP prints.
+#[test]
+fn web_pool_renders_required_inline_html_template() {
+    let dir = make_test_dir("web_pool_inline_html");
+    fs::write(
+        dir.join("item.tpl.php"),
+        "<?php /** @var list<string> $items */ ?>\n<ul><?php foreach ($items as $item): ?><li><?= $item ?></li><?php endforeach ?></ul>\n",
+    )
+    .unwrap();
+    let source = "<?php\nfinal class View\n{\n    /** @param list<string> $items */\n    public function render(array $items): string\n    {\n        ob_start();\n        require __DIR__ . '/item.tpl.php';\n        return (string) ob_get_clean();\n    }\n}\necho (new View())->render(['a', 'b']);\n";
+    let bin = compile_isolated_web(&dir, source, "app", "pool");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let mut server = spawn_server_with_args(&bin, &addr, "1", &["--handler-concurrency", "2"]);
+
+    for _ in 0..2 {
+        assert_eq!(raw_response_body(&http_get(&addr, "/")), "<ul><li>a</li><li>b</li></ul>\n");
+    }
+
+    let _ = server.kill();
+    let _ = server.wait();
+}
+
+/// Serves `src` under pool isolation with gzip enabled and returns what each of two requests
+/// (plain, then accepting gzip) received in the 700 ms after it was sent, lowercased.
+fn web_flush_early_heads(src: &str, prefix: &str) -> Vec<String> {
+    let dir = make_test_dir(prefix);
+    let bin = compile_isolated_web(&dir, src, "app", "pool");
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let mut child = spawn_server_with_args(&bin, &addr, "1", &["--gzip"]);
+
+    let mut heads = Vec::new();
+    for accept_encoding in ["", "Accept-Encoding: gzip\r\n"] {
+        let mut stream = TcpStream::connect(&addr).expect("connect flushing client");
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("set bounded flushing read timeout");
+        let request = format!(
+            "GET / HTTP/1.1\r\nHost: {addr}\r\n{accept_encoding}Connection: close\r\n\r\n"
+        );
+        stream
+            .write_all(request.as_bytes())
+            .expect("send flushing request");
+
+        let deadline = Instant::now() + Duration::from_millis(700);
+        let mut early = Vec::new();
+        while Instant::now() < deadline && !early.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+            let mut chunk = [0u8; 8192];
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => early.extend_from_slice(&chunk[..read]),
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(error) => panic!("flushing response read failed: {error}"),
+            }
+        }
+        heads.push(String::from_utf8_lossy(&early).to_ascii_lowercase());
+        // Let the handler finish before the next request needs it.
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("set draining read timeout");
+        let mut rest = Vec::new();
+        let _ = stream.read_to_end(&mut rest);
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    heads
+}
+
+/// Asserts each early read holds the complete head with `X-Ready` and no body, and that the
+/// gzip request kept its compression.
+fn assert_flushed_heads(heads: &[String]) {
+    for head in heads {
+        assert!(
+            head.contains("\r\n\r\n") && head.contains("x-ready: yes"),
+            "flush() left the response head queued until handler completion: {head:?}"
+        );
+        assert!(!head.contains("done"), "the body arrived before the handler slept: {head:?}");
+    }
+    assert!(heads[1].contains("content-encoding: gzip"), "gzip was dropped: {:?}", heads[1]);
+}
+
 #[path = "web/environment.rs"]
 mod environment;
+
+/// Verifies `--heap-debug` works under `--web`: the flag is set in the master before the workers
+/// fork, and each request ends with the allocator summary on the server's stderr (AIC #68).
+#[test]
+fn web_heap_debug_reports_after_each_request() {
+    let dir = make_test_dir("web_heap_debug");
+    let bin = compile_web_with_flags(
+        &dir,
+        "<?php $a = [str_repeat('x', 40), 'y']; echo count($a), ':', strlen($a[0]);",
+        "app",
+        &["--web-isolation=pool", "--heap-debug"],
+    );
+    let port = free_port();
+    let addr = format!("127.0.0.1:{port}");
+    let stderr_path = dir.join("server.stderr");
+    let stderr = fs::File::create(&stderr_path).expect("create heap-debug stderr capture");
+    let mut child = Command::new(&bin)
+        .args(["--listen", &addr, "--workers", "1"])
+        .stderr(Stdio::from(stderr))
+        .spawn_group()
+        .expect("spawn heap-debug server");
+    wait_until_ready(&addr);
+
+    let first = http_request(&addr, "GET", "/", &[], "");
+    let second = http_request(&addr, "GET", "/", &[], "");
+    let pid = child.id();
+    let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).status();
+    let _ = child.wait();
+    let diagnostics = fs::read_to_string(&stderr_path).expect("read heap-debug diagnostics");
+
+    assert!(raw_response_body(&first).contains("2:40"), "first response: {first:?}");
+    assert!(raw_response_body(&second).contains("2:40"), "second response: {second:?}");
+    assert_eq!(
+        diagnostics.matches("HEAP DEBUG: allocs=").count(),
+        2,
+        "expected one heap-debug report per request: {diagnostics:?}"
+    );
+    assert!(diagnostics.contains("HEAP DEBUG: leak summary"), "no leak summary: {diagnostics:?}");
+}

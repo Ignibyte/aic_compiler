@@ -188,6 +188,22 @@ pub(crate) fn compile_source_to_asm_with_defines_repr_and_php_version(
     )
 }
 
+thread_local! {
+    /// Set by `compile_source_to_web_user_asm` so the fixture pipeline emits the `--web` entry.
+    static WEB_FIXTURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Compiles `source` as a `--web --web-isolation=pool` program and returns its user assembly,
+/// whose top-level body is the C-callable `_elephc_web_handler`.
+pub(crate) fn compile_source_to_web_user_asm(source: &str) -> String {
+    let dir = make_cli_test_dir("elephc_web_asm");
+    WEB_FIXTURE.with(|web| web.set(true));
+    let (user_asm, _, _) = compile_source_to_asm_with_options(source, &dir, 8_388_608, false, false);
+    WEB_FIXTURE.with(|web| web.set(false));
+    let _ = std::fs::remove_dir_all(&dir);
+    user_asm
+}
+
 /// Runs the full fixture pipeline with explicit regex and PHP-version settings.
 #[allow(clippy::too_many_arguments)]
 fn compile_source_to_asm_with_defines_repr_regex_and_php_version(
@@ -367,6 +383,8 @@ fn try_compile_source_to_asm_with_defines_repr_inner(
     let resolved = elephc::tz_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
     let resolved = elephc::list_id_prelude::inject_if_used(resolved, &mut prelude_inventory);
     let resolved = elephc::var_export_prelude::inject_if_used(resolved, &mut prelude_inventory);
+    let resolved = elephc::key_set_prelude::inject_if_used(resolved, &mut prelude_inventory);
+    let resolved = elephc::preg_named_groups::rewrite(resolved, &mut prelude_inventory);
     let resolved =
         elephc::image_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
     let resolved = elephc::hash_prelude::inject_if_used(resolved, false, &mut prelude_inventory);
@@ -396,6 +414,9 @@ fn try_compile_source_to_asm_with_defines_repr_inner(
         .expect("testing prelude post-autoload injection failed");
     let resolved = elephc::object_cast_prelude::inject_if_used(resolved, &mut prelude_inventory)
         .expect("object-cast prelude injection failed");
+    // Mirrors `pipeline::compile`: the stdlib prelude is injected after autoloading too.
+    let resolved = elephc::stdlib_prelude::inject_if_used(resolved, &mut prelude_inventory)
+        .expect("stdlib prelude injection failed");
     // Mirrors `pipeline::compile`: `func_num_args`/`func_get_args`/`func_get_arg` are
     // desugared into a hidden variadic parameter plus plain PHP after autoloading and
     // before the optimizer, so the checker and the backend only ever see ordinary PHP.
@@ -432,6 +453,9 @@ fn try_compile_source_to_asm_with_defines_repr_inner(
     let instantiation_roots: HashSet<String> =
         elephc::generics::instantiation_roots(&check_result.requested_instantiations)
             .into_iter()
+            .chain(elephc::key_set_prelude::retarget_roots(
+                check_result.generic_call_sites.values(),
+            ))
             .collect();
     let optimized = elephc::optimize::prune_unreachable_declarations(
         optimized,
@@ -473,8 +497,12 @@ fn try_compile_source_to_asm_with_defines_repr_inner(
         elephc::codegen::Emit::Executable,
         &exported_functions,
         regalloc_linear,
-        false,
-        elephc::codegen::WebIsolation::Worker,
+        WEB_FIXTURE.with(std::cell::Cell::get),
+        if WEB_FIXTURE.with(std::cell::Cell::get) {
+            elephc::codegen::WebIsolation::Pool
+        } else {
+            elephc::codegen::WebIsolation::Worker
+        },
     );
     let mut runtime_features = ir_module.required_runtime_features;
     if let Ok(output) = &generated_user_asm {

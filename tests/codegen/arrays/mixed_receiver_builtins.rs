@@ -1,6 +1,7 @@
 //! Purpose:
-//! Regression coverage for `array_values()`, `array_flip()`, `in_array()` and `array_slice()`
-//! over a receiver whose static type is `mixed` (issues #630 and #1348).
+//! Regression coverage for `array_values()`, `array_flip()`, `in_array()`, `array_slice()` and
+//! `array_keys()` over a receiver whose static type is `mixed` or a union with an array member
+//! (issues #630 and #1348).
 //!
 //! Called from:
 //! - The native codegen suite's array module.
@@ -295,4 +296,45 @@ for ($i = 0; $i < 3; $i++) {
         r#"2{"b":[0],"0":"z"}|["t"]|2{"b":[1],"0":"z"}|["t"]|2{"b":[2],"0":"z"}|["t"]|"#
     );
     assert!(out.stderr.contains("leak summary: clean"), "{}", out.stderr);
+}
+
+/// `array_keys()` takes a union with an array member, declared (`array|false`) or inferred from
+/// an untyped function that returns `false` or a guarded `json_decode()` array, as
+/// `array_values()` does. A non-array payload raises PHP's catchable `TypeError`, from a `mixed`
+/// receiver too, and a discarded call still raises it.
+#[test]
+fn test_array_keys_accepts_a_union_with_an_array_member() {
+    let out = compile_and_run(
+        r#"<?php
+function pick(int $i): array|false {
+    return $i === 0 ? false : ["a" => 1, "b" => 2];
+}
+function decoded(string $json) {
+    $d = json_decode($json, true);
+    if (!is_array($d)) {
+        return false;
+    }
+    return $d;
+}
+echo implode(",", array_keys(pick(1))), "|", implode(",", array_keys(decoded('{"x":1,"y":2}'))), "|";
+function boxed(mixed $v): string {
+    try {
+        $keys = array_keys($v);
+        return "kept " . count($keys);
+    } catch (TypeError $e) {
+        return "caught";
+    }
+}
+try {
+    array_keys(pick(0));
+} catch (TypeError $e) {
+    echo substr($e->getMessage(), 0, 56), "|";
+}
+echo boxed(false), "|", boxed(["k" => 1]), "\n";
+"#,
+    );
+    assert_eq!(
+        out,
+        "a,b|x,y|array_keys(): Argument #1 ($array) must be of type array|caught|kept 1\n"
+    );
 }

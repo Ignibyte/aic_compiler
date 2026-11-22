@@ -370,7 +370,7 @@ impl HandlerBroker {
                 lease,
                 _permit: permit,
             }),
-            ResponseFrame::Chunk(_) | ResponseFrame::End => Err(io::Error::new(
+            ResponseFrame::Chunk(_) | ResponseFrame::Flush | ResponseFrame::End => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "handler response did not begin with status and headers",
             )),

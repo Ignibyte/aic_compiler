@@ -67,7 +67,7 @@ fn guard_parameter_at(
 }
 
 /// Diagnoses and snapshots a selected integer conversion before a union erases its source tag.
-fn bind_implicit_integer(
+pub(super) fn bind_implicit_integer(
     ctx: &mut LoweringContext<'_, '_>, ty: &PhpType, variable: &Expr, span: Span,
 ) {
     if crate::source::current_strict_types() { return; }

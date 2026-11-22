@@ -40,6 +40,8 @@ pub(crate) mod pcntl_constants;
 /// PHP type model and type environment for tracking variable types.
 mod model;
 pub(crate) mod object_operators;
+/// Overrides whose parameters bind in other storage than the signature a call binds by.
+mod override_storage;
 /// Return-to-argument storage alias summaries used by ownership lowering.
 mod return_alias;
 mod return_boundary;
@@ -84,6 +86,7 @@ pub use ffi::{
     ExternAbiType, ScalarWidth,
 };
 pub use model::{PhpType, TypeEnv};
+pub(crate) use model::MixedBoundary;
 pub(crate) use model::{
     eir_value_php_type, is_nullable_pointer_type, is_pointer_element_indexed_array,
     is_unboxed_scalar_type,
@@ -95,8 +98,10 @@ pub(crate) use return_alias::{
     collect_return_alias_summaries, summarize_callable_return_alias, ReturnAliasSummaries,
     ReturnArgAlias,
 };
+pub(crate) use override_storage::{diverging_overrides, diverging_static_overrides, DivergingOverride};
 pub(crate) use result::{LocalValueReadTypes, LoopStorageTypes};
 pub use checker::CheckOptions;
+pub(crate) use checker::normalize_union_members;
 // `check_with_target` is superseded by `check_with_target_and_options` on the
 // production compile path; it stays public for tests that don't need `CheckOptions`.
 #[allow(unused_imports)]

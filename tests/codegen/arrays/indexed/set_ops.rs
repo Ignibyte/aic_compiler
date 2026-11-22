@@ -9,52 +9,163 @@
 
 use super::*;
 
-/// Verifies the value-comparing array builtins refuse BOXED elements rather than compare their
-/// addresses.
+/// Verifies `array_diff()` and `array_intersect()` take string lists and keep the original key
+/// of every survivor, as PHP does (AIC #245).
 ///
-/// These helpers compare slots as raw 8-byte words — the value itself for an int or float, a
-/// POINTER for anything heap-backed. Boxed elements therefore compared cell addresses, and two
-/// separately boxed `3`s never matched:
-///
-/// - `array_diff([1,"b",3,4], [3,"z"])` answered `1,b,3,4`, PHP answers `1,b,4`
-/// - `array_intersect` of the same pair answered NOTHING, PHP answers `3`
-/// - `array_unique([1,"b",1,4])` answered `1,b,1,4`, PHP answers `1,b,4`
-///
-/// All three silent. PHP compares these elements by their STRING rendering, which needs a
-/// by-value comparison in the runtime; until that exists the calls are refused, exactly as
-/// `array<string>` already is — its 16-byte slots do not fit these helpers either.
+/// A string list has 16-byte slots, which the native raw-slot helpers refused at compile time
+/// (`array_diff indexed-array element PHP type Str`), and on an int list they renumbered the
+/// result: `array_diff([10, 20, 30], [20])` answered keys `0, 1` where PHP keeps `0, 2`.
 #[test]
-fn test_value_comparing_builtins_refuse_boxed_elements() {
-    for (source, message) in [
-        (
-            r#"<?php $a = [1, "b", 3, 4]; $b = [3, "z"]; $r = array_diff($a, $b);"#,
-            "array_diff compares boxed elements by identity",
-        ),
-        (
-            r#"<?php $a = [1, "b", 3, 4]; $b = [3, "z"]; $r = array_intersect($a, $b);"#,
-            "array_intersect compares boxed elements by identity",
-        ),
-        (
-            r#"<?php $a = [1, "b", 1, 4]; $r = array_unique($a);"#,
-            "array_unique compares boxed elements by identity",
-        ),
-    ] {
-        let error = compile_source_expect_backend_error(source);
-        assert!(
-            error.contains(message),
-            "expected `{message}` for this source, got: {error}"
-        );
-    }
+fn test_value_set_builtins_take_string_lists_and_keep_keys() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+function show(array $r): void { foreach ($r as $k => $v) { echo $k, "=", $v, ","; } echo "\n"; }
+show(array_diff(["a", "b", "c", "b"], ["b"]));
+show(array_intersect(["a", "b", "c", "b"], ["c", "b"]));
+show(array_diff([10, 20, 30, 40], [20]));
+show(array_intersect([10, 20, 30, 40], [40, 20]));
+show(array_diff(["k" => "v", "j" => "w", 7 => "v"], ["w"]));
+$d = array_diff([10, 20, 30], [20]);
+var_dump(isset($d[1]), $d[2] ?? "missing");
+"#,
+    );
+    assert!(out.success, "stdout={:?}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        out.stdout,
+        "0=a,2=c,\n1=b,2=c,3=b,\n0=10,2=30,3=40,\n1=20,3=40,\nk=v,7=v,\nbool(false)\nint(30)\n"
+    );
+    assert!(out.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", out.stderr);
 }
 
-/// Verifies the refusal of BOXED elements did not take the typed cases with it.
+/// Verifies the value-set builtins compare boxed values by their string rendering, as PHP's
+/// `(string) $a === (string) $b` does (AIC #245).
 ///
-/// `array_diff`, `array_intersect` and `array_unique` refuse a boxed source because they would
-/// compare cell addresses (see `test_error_value_comparing_builtins_refuse_boxed_elements`).
-/// The refusal has to be narrow: an `array<int>` slot IS the value, so raw comparison is the
-/// right one, and these three must keep working. `array_reverse` and `array_merge` share the
-/// element gate but never compare, so they still accept a boxed array — that is why the
-/// refusal sits at each comparing builtin rather than in the gate.
+/// Mixed lists used to be refused (`compares boxed elements by identity`): the native helpers
+/// compared cell addresses. `1`, `"1"`, `1.0` and `true` render alike while `"01"` and `"1.0"`
+/// do not, `null`, `false` and `""` render alike, a `Stringable` object renders through
+/// `__toString()`, and an object without one throws PHP's `Error`.
+#[test]
+fn test_value_set_builtins_compare_mixed_values_by_string() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+final class Tag {
+    public function __construct(private string $name) {}
+    public function __toString(): string { return $this->name; }
+}
+echo json_encode(array_diff([1, "1", "01", "1.0", 1.0, 1.5, "1.5", true, false, null, ""], ["1", ""])), "\n";
+echo json_encode(array_intersect([1, "1", "01", "1.0", 1.0, 1.5, "1.5", true, false, null, ""], [1])), "\n";
+echo json_encode(array_diff([1, "b", 3, 4], [3, "z"])), "\n";
+echo json_encode(array_intersect([1, "b", 3, 4], [3, "z", "1"])), "\n";
+echo json_encode(array_unique([1, "1", 2, 2.0, "x", "x"])), "\n";
+echo json_encode(array_unique([0.1 + 0.2, 0.3, -0.0, 0.0, 1.0, "1"])), "\n";
+echo json_encode(array_diff([new Tag("a"), new Tag("b"), "c"], ["a", new Tag("c")])), "\n";
+echo json_encode(array_diff_assoc(["x", "y", "z"], [1 => "y", 2 => "Z"])), "\n";
+echo json_encode(array_intersect_assoc(["a" => "1", "b" => 2, 0 => "z"], ["a" => 1, "b" => "3", 0 => "z"])), "\n";
+try {
+    array_diff([new ArrayIterator([])], ["x"]);
+} catch (Error $e) {
+    echo get_class($e), ": ", $e->getMessage(), "\n";
+}
+"#,
+    );
+    assert!(out.success, "stdout={:?}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        out.stdout,
+        concat!(
+            "{\"2\":\"01\",\"3\":\"1.0\",\"5\":1.5,\"6\":\"1.5\"}\n",
+            "{\"0\":1,\"1\":\"1\",\"4\":1,\"7\":true}\n",
+            "{\"0\":1,\"1\":\"b\",\"3\":4}\n",
+            "{\"0\":1,\"2\":3}\n",
+            "{\"0\":1,\"2\":2,\"4\":\"x\"}\n",
+            "{\"0\":0.30000000000000004,\"2\":-0,\"3\":0,\"4\":1}\n",
+            "{\"1\":{}}\n",
+            "{\"0\":\"x\",\"2\":\"z\"}\n",
+            "{\"a\":\"1\",\"0\":\"z\"}\n",
+            "Error: Object of class ArrayIterator could not be converted to string\n",
+        )
+    );
+    assert!(out.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", out.stderr);
+}
+
+/// Verifies the set builtins take operands declared only `array`: parameters, a promoted
+/// property, a class constant and a static property (AIC #245).
+///
+/// A declared `array` is neither a list nor a hash to the checker, so `array_diff()` and
+/// `array_intersect()` answered `first argument must be array`, `array_unique()` `argument must
+/// be array` and the `_assoc` pair `must be associative arrays`. `array_diff_key()` and
+/// `array_intersect_key()` already had a prelude for it, which a parameter missed: the
+/// checker resolves signatures lazily, so the prelude function had none yet when the caller's
+/// body was checked.
+#[test]
+fn test_set_builtins_take_operands_declared_array() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+final class Fleet {
+    private const array ALL = ["V1", "V2", "V3"];
+    public static array $sold = ["V2"];
+    public function __construct(public array $vins) {}
+    public function missing(array $seen): array { return array_diff($this->vins, $seen); }
+    public function unsold(): array { return array_diff(self::ALL, self::$sold); }
+}
+function diff(array $a, array $b): array { return array_diff($a, $b); }
+function both(array $a, array $b): array { return array_intersect($a, $b); }
+function uniq(array $a): array { return array_unique($a); }
+function dkey(array $a, array $b): array { return array_diff_key($a, $b); }
+function ikey(array $a, array $b): array { return array_intersect_key($a, $b); }
+function dassoc(array $a, array $b): array { return array_diff_assoc($a, $b); }
+function iassoc(array $a, array $b): array { return array_intersect_assoc($a, $b); }
+$fleet = new Fleet(["V1", "V2", "V3"]);
+echo json_encode($fleet->missing(["V2"])), json_encode($fleet->unsold()), "\n";
+echo json_encode(diff([1, 2, 3], [2])), json_encode(both(["a", "b"], ["b"])), json_encode(uniq([1, "1", 2])), "\n";
+echo json_encode(dkey(["a" => 1, "b" => 2], ["a" => 0])), json_encode(ikey(["a" => 1, "b" => 2], ["a" => 0])), "\n";
+echo json_encode(dassoc(["a" => "1", "b" => 2], ["a" => 1])), json_encode(iassoc(["a" => "1", "b" => 2], ["a" => 1])), "\n";
+"#,
+    );
+    assert!(out.success, "stdout={:?}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(
+        out.stdout,
+        concat!(
+            "{\"0\":\"V1\",\"2\":\"V3\"}{\"0\":\"V1\",\"2\":\"V3\"}\n",
+            "{\"0\":1,\"2\":3}{\"1\":\"b\"}{\"0\":1,\"2\":2}\n",
+            "{\"b\":2}{\"a\":1}\n",
+            "{\"b\":2}{\"a\":\"1\"}\n",
+        )
+    );
+    assert!(out.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", out.stderr);
+}
+
+/// Verifies repeated value-set calls over strings, boxed values and objects release every
+/// rendering and result (AIC #245). The native `_assoc` helper leaked about a dozen blocks a
+/// call on x86_64; the prelude it now goes through leaks none.
+#[test]
+fn test_value_set_builtins_release_renderings_in_a_loop() {
+    let out = compile_and_run_with_heap_debug(
+        r#"<?php
+final class Tag {
+    public function __construct(private string $name) {}
+    public function __toString(): string { return $this->name; }
+}
+function diff(array $a, array $b): array { return array_diff($a, $b); }
+$total = 0;
+for ($n = 0; $n < 20; $n++) {
+    $s = ["a" . $n, "b", "c" . $n];
+    $total += count(array_diff($s, ["b"])) + count(array_intersect($s, ["b", "c" . $n]));
+    $total += count(array_unique([$n, (string) $n, "z", "z"])) + count(diff($s, ["c" . $n]));
+    $total += count(array_diff([new Tag("t" . $n), "x"], ["x"]));
+    $total += count(array_diff_assoc(["a", "b" . $n], [1 => "b"]));
+    $total += count(array_intersect_assoc(["k" => "v" . $n, "j" => 1], ["k" => "v" . $n, "j" => "1"]));
+}
+echo $total, "\n";
+"#,
+    );
+    assert!(out.success, "stdout={:?}\nstderr={}", out.stdout, out.stderr);
+    assert_eq!(out.stdout, "260\n");
+    assert!(out.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", out.stderr);
+}
+
+/// Verifies typed lists still answer PHP's values through `array_diff`, `array_intersect` and
+/// `array_unique`, and that `array_reverse` and `array_merge`, which share the 8-byte element
+/// gate but never compare, still accept a boxed array.
 #[test]
 fn test_value_comparing_builtins_still_accept_typed_elements() {
     let out = compile_and_run(

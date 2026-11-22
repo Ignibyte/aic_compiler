@@ -18,6 +18,9 @@
 //!   `Array<Mixed>`, because the runtime key kind is only known once the box is opened. This
 //!   matches `count()`, which has always accepted `Mixed`. The backend unboxes and dispatches
 //!   on the runtime tag, raising PHP's `TypeError` when the box does not hold an array.
+//!   A union with an array member (`array|false`, a builtin's or an inferred return) lowers as
+//!   the same boxed cell and is accepted the same way, as `array_values()`, `array_flip()` and
+//!   `in_array()` accept it; a union with no array member stays a compile error.
 //! - EIR resolves key storage from its actual operand after reference/call coercions.
 //!   Boxed receivers and promotable Mixed-element arrays need boxed int-or-string keys.
 //! - Arity (exactly 1 argument) is validated by the registry's `check_arity` before
@@ -28,6 +31,7 @@ use crate::builtins::semantics::{
     runtime_fn_semantics, BuiltinResultType, BuiltinSemanticInput, BuiltinSemantics,
 };
 use crate::errors::CompileError;
+use crate::types::checker::builtins::arrays::boxed_value_may_hold_array;
 use crate::types::PhpType;
 
 builtin! {
@@ -63,10 +67,11 @@ fn eir_result_type(input: &BuiltinSemanticInput<'_>) -> PhpType {
 /// Returns the key-array type for an `array_keys` call.
 ///
 /// An indexed array produces `Array<Int>`; an associative array produces
-/// `Array<key>`; `Mixed` and the declared-array storage union produce `Array<Mixed>` because
-/// their runtime key kind is known only once the box is opened. Every other argument type is
-/// rejected. The argument is re-inferred here to drive the return type; the registry already
-/// inferred it once for side effects, and arity is pre-validated by the registry.
+/// `Array<key>`; `Mixed`, a union with an array member and the declared-array storage union
+/// produce `Array<Mixed>` because their runtime key kind is known only once the box is opened.
+/// Every other argument type is rejected. The argument is re-inferred here to drive the return
+/// type; the registry already inferred it once for side effects, and arity is pre-validated by
+/// the registry.
 fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     let ty = cx.checker.infer_type(&cx.args[0], cx.env)?;
     if ty.is_php_array() {
@@ -92,7 +97,7 @@ fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
             Ok(PhpType::Array(Box::new(PhpType::Mixed)))
         }
         PhpType::AssocArray { key, .. } => Ok(PhpType::Array(key)),
-        PhpType::Mixed => Ok(PhpType::Array(Box::new(PhpType::Mixed))),
+        _ if boxed_value_may_hold_array(&ty) => Ok(PhpType::Array(Box::new(PhpType::Mixed))),
         _ => Err(CompileError::new(
             cx.span,
             "array_keys() argument must be array",

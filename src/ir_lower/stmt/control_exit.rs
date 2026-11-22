@@ -106,6 +106,7 @@ pub(super) fn lower_return(ctx: &mut LoweringContext<'_, '_>, value_expr: Option
     } else {
         emit_null_value(ctx, Some(span))
     };
+    let value = crate::ir_lower::expr::bind_declared_union_return(ctx, value, span);
     let value = coerce_to_return_type(ctx, value, Some(span));
     let value = acquire_borrowed_return_value(ctx, value, span);
     let value = acquire_returned_this(ctx, value_expr, value, span);

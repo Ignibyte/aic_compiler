@@ -77,6 +77,9 @@ pub(super) fn emit_aarch64_output(emitter: &mut Emitter) {
     emitter.instruction("str x0, [x9]");                                        // store the (inert) implicit-flush flag
     emitter.instruction("ret");                                                 // return to Rust
 
+    label_c_global(emitter, "__elephc_eval_flush");
+    emitter.instruction("b __rt_flush");                                        // run the compiled flush(), which returns straight to Rust
+
     label_c_global(emitter, "__elephc_eval_ob_start_ex");
     emitter.instruction("cbz x0, __elephc_eval_ob_start_ex_default");           // a zero has-handler flag selects the default handler
     crate::codegen::abi::emit_symbol_address(emitter, "x0", "__rt_ob_eval_trampoline"); // eval handlers invoke through the installed magician hook

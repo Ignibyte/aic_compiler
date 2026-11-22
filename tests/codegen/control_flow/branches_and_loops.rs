@@ -515,6 +515,86 @@ echo $x, "\n";
     );
 }
 
+/// Verifies that a `break` nested in an `if`, an `else` or a `try` of a falling-through switch
+/// case still reaches the statements after the switch.
+#[test]
+fn test_nested_break_in_a_falling_through_switch_case_reaches_the_tail() {
+    let out = compile_and_run(
+        r#"<?php
+function viaIf(int $k): string {
+    switch ($k) {
+        case 0:
+            if ($k === 0) {
+                break;
+            }
+        default:
+            echo "d";
+    }
+    return "after";
+}
+function viaElse(int $k): string {
+    switch ($k) {
+        case 0:
+            if ($k > 0) {
+                echo "x";
+            } else {
+                break;
+            }
+            echo "y";
+            break;
+        default:
+            echo "d";
+    }
+    return "tail";
+}
+function viaTry(int $k): string {
+    switch ($k) {
+        case 0:
+            try {
+                break;
+            } finally {
+                echo "f";
+            }
+        default:
+            echo "d";
+    }
+    return "end";
+}
+echo viaIf(0), "|", viaIf(1), "|", viaElse(0), "|", viaElse(1), "|", viaTry(0), "|", viaTry(1), "\n";
+"#,
+    );
+    assert_eq!(out, "after|dafter|tail|dtail|fend|dend\n");
+}
+
+/// Verifies a loop whose body ends in `return` still reaches the code after it through an
+/// earlier `break`, in each loop form, and through a `break 2` out of a `switch`.
+#[test]
+fn test_break_before_a_returning_loop_body_reaches_the_code_after_the_loop() {
+    let out = compile_and_run(
+        r#"<?php
+function viaWhile(bool $c): string { while (true) { if ($c) { break; } return "r"; } return "after"; }
+function viaFor(bool $c): string { for (;;) { if ($c) { break; } return "r"; } return "after"; }
+function viaDo(bool $c): string { do { if ($c) { break; } return "r"; } while (true); return "after"; }
+function viaDoCond(bool $c, int $n): string { do { if ($c) { break; } return "r"; } while ($n > 0); return "after"; }
+function viaSwitch(int $k): string {
+    while (true) {
+        switch ($k) {
+            case 0:
+                break 2;
+            default:
+                echo "d";
+        }
+        return "r";
+    }
+    return "after";
+}
+echo viaWhile(true), viaWhile(false), "|", viaFor(true), viaFor(false), "|", viaDo(true), viaDo(false), "|";
+echo viaDoCond(true, 1), viaDoCond(false, 1), "|", viaSwitch(0), viaSwitch(1), "\n";
+"#,
+    );
+    assert_eq!(out, "afterr|afterr|afterr|afterr|afterdr\n");
+}
+
 /// A `mixed` switch matches `case null` with PHP's loose comparison while other cases are
 /// present. The null case value used to reach `loose_eq` as a pointer type, so the backend
 /// refused the whole program (#1994).

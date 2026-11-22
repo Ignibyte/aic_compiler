@@ -13,6 +13,8 @@ sidebar:
 | [`ini_get()`](./web/ini_get.md) | `(string $option): mixed` | `mixed` | ✓ | - |
 | [`ini_get_all()`](./web/ini_get_all.md) | `(?string $extension = null, bool $details = true): array|false` | `array|false` | ✓ | - |
 | [`ini_set()`](./web/ini_set.md) | `(string $option, string|int|float|bool|null $value): string|false` | `string|false` | ✓ | - |
+| [`is_uploaded_file()`](./web/is_uploaded_file.md) | `(string $filename): bool` | `bool` | ✓ | - |
+| [`move_uploaded_file()`](./web/move_uploaded_file.md) | `(string $from, string $to): bool` | `bool` | ✓ | - |
 | [`session_abort()`](./web/session_abort.md) | `(): bool` | `bool` | ✓ | - |
 | [`session_cache_expire()`](./web/session_cache_expire.md) | `(?int $value = null): mixed` | `mixed` | ✓ | - |
 | [`session_cache_limiter()`](./web/session_cache_limiter.md) | `(?string $value = null): mixed` | `mixed` | ✓ | - |

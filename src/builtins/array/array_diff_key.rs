@@ -32,6 +32,17 @@ builtin! {
 /// argument once for side effects. The result preserves the first-operand array shape.
 fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     let ty1 = cx.checker.infer_type(&cx.args[0], cx.env)?;
+    let ty2 = cx.checker.infer_type(&cx.args[1], cx.env)?;
+    // Two concrete hashes take the native helper. Any other array operand (a declared `array`, a
+    // boxed `array_filter()` result, a list) retargets the call to the key-set prelude, which
+    // takes any PHP array and answers a declared `array`.
+    let hash = |ty: &PhpType| matches!(ty.codegen_repr(), PhpType::AssocArray { .. });
+    let array = crate::key_set_prelude::is_array_operand;
+    if !(hash(&ty1) && hash(&ty2)) && array(&ty1) && array(&ty2) {
+        if let Some(ty) = crate::key_set_prelude::retarget(cx, crate::key_set_prelude::DIFF) {
+            return Ok(ty);
+        }
+    }
     if !matches!(ty1, PhpType::Array(_) | PhpType::AssocArray { .. }) {
         return Err(CompileError::new(
             cx.span,

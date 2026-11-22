@@ -324,6 +324,9 @@ impl CounterProof {
                     Op::PhpRelCmp => {
                         proof.comparisons.insert(id);
                     }
+                    // A declared scalar argument check only reads the value, and its lowering
+                    // accepts the raw integer a proven counter becomes.
+                    Op::ScalarArgumentGuard => {}
                     // The lowering replay may already have narrowed the bound test while the
                     // slot was still integer; the range proof below keeps that test justified.
                     Op::ICmp => {}

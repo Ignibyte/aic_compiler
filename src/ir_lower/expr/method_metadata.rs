@@ -18,6 +18,60 @@ pub(in crate::ir_lower) fn method_signature(
     method_signature_for_receiver_type(ctx, &ctx.builder.value_php_type(object), method)
 }
 
+/// Returns `sig` with every by-value parameter an override reachable from `object`'s class or
+/// interface binds in other storage widened to `mixed`, so the argument keeps its source form.
+///
+/// Such a call dispatches on the runtime class in codegen, and each implementation binds the
+/// argument by its own signature. A conversion to the declared signature here would hand the
+/// wider override a converted value: `null` as `""`, `7` as `7.0`.
+pub(in crate::ir_lower) fn widen_diverging_override_params(
+    ctx: &LoweringContext<'_, '_>,
+    object: crate::ir::ValueId,
+    method: &str,
+    mut sig: FunctionSig,
+) -> FunctionSig {
+    let object_ty = ctx.builder.value_php_type(object);
+    let Some((class_name, _)) = singular_object_class(&object_ty) else {
+        return sig;
+    };
+    let overrides = crate::types::diverging_overrides(
+        ctx.classes,
+        ctx.interfaces,
+        class_name,
+        &php_symbol_key(method),
+    );
+    for index in overrides.iter().flat_map(|diverging| diverging.params.iter().copied()) {
+        if sig.ref_params.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        if let Some((_, param_ty)) = sig.params.get_mut(index) {
+            *param_ty = PhpType::Mixed;
+        }
+    }
+    sig
+}
+
+/// Returns whether an override reachable from `class_name` returns `method`'s result in other
+/// storage than `class_name`'s signature reads it (`?int` narrowed to `int`, or an untyped
+/// override returning a string where the base returns an int).
+///
+/// Such a call answers boxed `mixed`: codegen calls each such override by the receiver's
+/// runtime class and boxes its result by its own signature, and boxes the declared one too.
+pub(in crate::ir_lower) fn diverging_override_returns(
+    ctx: &LoweringContext<'_, '_>,
+    class_name: &str,
+    method: &str,
+) -> bool {
+    crate::types::diverging_overrides(
+        ctx.classes,
+        ctx.interfaces,
+        class_name.trim_start_matches('\\'),
+        &php_symbol_key(method),
+    )
+    .iter()
+    .any(|diverging| diverging.returns)
+}
+
 /// Returns the checked signature for an instance method call on a receiver of `object_ty`.
 ///
 /// The type-level core of `method_signature`, for callers that know the receiver's type but have
@@ -245,6 +299,11 @@ pub(super) fn method_call_result_type_for_receiver_type(
         }
         return fallback_expr_type(expr);
     };
+    if let Some((receiver_name, _)) = singular_object_class(object_ty) {
+        if diverging_override_returns(ctx, receiver_name, method) {
+            return PhpType::Mixed;
+        }
+    }
     let return_ty = if let Some((receiver_name, _)) = singular_object_class(object_ty) {
         instance_method_late_static_return_for_ir(ctx, receiver_name, &php_symbol_key(method))
             .map(|return_type| late_static_return_type_for_ir(ctx, &return_type, receiver_name))

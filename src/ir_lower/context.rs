@@ -147,6 +147,45 @@ pub(crate) struct CallArgumentEvaluationOwner {
 pub(crate) struct CallArgumentEvaluationScope {
     pub expression_depth: usize,
     pub owners: Vec<CallArgumentEvaluationOwner>,
+    /// The user callee whose declared scalar parameters check a `mixed` argument at run time;
+    /// `None` for builtin, extern and dynamic calls, which keep their own binding rules.
+    pub callee: Option<ArgumentCallee>,
+    /// The implementations an instance call selects between by the receiver's runtime class,
+    /// when some override binds a parameter in other storage than the declared signature.
+    pub dispatch: Option<ArgumentDispatch>,
+}
+
+/// Names a user callee for the run-time scalar argument check.
+#[derive(Debug, Clone)]
+pub(crate) struct ArgumentCallee {
+    /// The name php-src prints before `(): Argument #N`, such as `f` or `C::m`.
+    pub display: String,
+}
+
+/// The implementations of an instance call whose overrides bind some parameters in other
+/// storage than the receiver's declared signature; each checks those arguments by its own.
+#[derive(Debug, Clone)]
+pub(crate) struct ArgumentDispatch {
+    /// The receiver whose runtime class selects the implementation.
+    pub receiver: crate::ir::ValueId,
+    /// The parameter indexes some override binds in other storage.
+    pub params: Vec<usize>,
+    /// One branch per concrete class with such an override, most derived first: the first
+    /// class the receiver is an instance of selects its branch.
+    pub branches: Vec<ArgumentDispatchBranch>,
+    /// The implementation every other class runs, or `None` when there are several.
+    pub fallback: Option<ArgumentDispatchBranch>,
+}
+
+/// One implementation an [`ArgumentDispatch`] selects.
+#[derive(Debug, Clone)]
+pub(crate) struct ArgumentDispatchBranch {
+    /// The class an `instanceof` test selects the branch by.
+    pub class_name: String,
+    /// The implementation php-src names in an argument `TypeError`.
+    pub callee: ArgumentCallee,
+    /// The implementation's signature.
+    pub sig: crate::types::FunctionSig,
 }
 
 /// Staging for one `$target = &call()`, recorded while its source expression is lowered.
@@ -451,6 +490,10 @@ pub(crate) struct LoweringContext<'m, 'f> {
     array_conversions: HashMap<String, PhpType>,
     /// Whether the current statement lowering is a disposable discovery pass.
     speculating: bool,
+    /// While set, the next array read lowers without the missing-key warning (the bucket read of
+    /// a fallen-open nested append, which PHP auto-vivifies silently). That read clears it, so
+    /// its receiver and key still warn.
+    quiet_array_reads: bool,
     pub return_type: IrType,
     pub return_php_type: PhpType,
     /// `true` when the function SOURCE declares a return type, as opposed to one inferred
@@ -652,6 +695,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
             foreach_int_key_locals: HashSet::new(),
             array_conversions: HashMap::new(),
             speculating: false,
+            quiet_array_reads: false,
             return_type,
             return_php_type,
             return_type_is_declared: false,
@@ -793,6 +837,11 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
             .any(|names| names.contains(name))
     }
 
+    /// Returns whether a `try` handler in this function is active where lowering is now.
+    pub(crate) fn has_active_try_handler(&self) -> bool {
+        !self.try_loop_depths.is_empty()
+    }
+
     /// Drops the innermost active `try` handler's record.
     pub(crate) fn pop_try_loop_depth(&mut self) {
         self.try_loop_depths.pop();
@@ -902,9 +951,10 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
             .insert(closure_name.to_string(), format!("{{closure:{context}:{line}}}"));
     }
 
-    /// Takes the label recorded by [`Self::register_closure_display_name`] for `closure_name`.
-    pub(crate) fn take_closure_display_name(&mut self, closure_name: &str) -> Option<String> {
-        self.closure_display_names.remove(closure_name)
+    /// Reads the label recorded by [`Self::register_closure_display_name`] for `closure_name`:
+    /// the closure's own body takes it, and so does a direct call naming its callee.
+    pub(crate) fn closure_display_name(&self, closure_name: &str) -> Option<String> {
+        self.closure_display_names.get(closure_name).cloned()
     }
 
     /// Interns a string literal or metadata name in the module data pool.
@@ -1155,6 +1205,18 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
     /// Sets speculative-lowering mode and returns its previous value.
     pub(crate) fn set_speculating(&mut self, speculating: bool) -> bool {
         std::mem::replace(&mut self.speculating, speculating)
+    }
+
+    /// Returns whether the next array read lowers without the missing-key warning, and clears
+    /// the setting so the reads inside it (its receiver, its key) warn as usual.
+    pub(crate) fn take_quiet_array_read(&mut self) -> bool {
+        std::mem::take(&mut self.quiet_array_reads)
+    }
+
+    /// Sets whether the next array read lowers without the missing-key warning, and returns the
+    /// previous setting so the caller can restore it.
+    pub(crate) fn set_quiet_array_reads(&mut self, quiet: bool) -> bool {
+        std::mem::replace(&mut self.quiet_array_reads, quiet)
     }
 
     /// Updates only the flow-sensitive PHP type fact for a local.
@@ -1428,6 +1490,69 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
             .collect::<Vec<_>>();
         locals.sort_by_key(|(slot, _)| *slot);
         locals.into_iter().map(|(_, name)| name).collect()
+    }
+
+    /// Returns whether an already-lowered `store_local` writes this non-parameter slot.
+    ///
+    /// Such a slot may hold an owner on a path that is not definitely initialized — a conditional
+    /// arm wrote it before the merge. Non-parameter slots start at zero, so releasing the occupant
+    /// before an overwrite is safe on the path where that arm never ran.
+    fn slot_has_store_owner(&self, slot: LocalSlotId) -> bool {
+        let function = self.builder.function();
+        slot.as_raw() as usize >= function.params.len()
+            && function.instructions.iter().any(|inst| {
+                inst.op == Op::StoreLocal && inst.immediate == Some(Immediate::LocalSlot(slot))
+            })
+    }
+
+    /// Returns whether an already-lowered `store_local` of this non-parameter slot can reach the
+    /// block being lowered.
+    ///
+    /// The search runs backwards over the edges built so far, handler entries included, so an
+    /// exclusive arm (the other operand of a ternary) does not count, while an `if` arm that merged
+    /// into this path, or a `catch` an earlier `try` reached, does.
+    fn slot_has_reaching_store_owner(&self, slot: LocalSlotId) -> bool {
+        let Some(current) = self.builder.insertion_block() else {
+            return false;
+        };
+        let function = self.builder.function();
+        if (slot.as_raw() as usize) < function.params.len() {
+            return false;
+        }
+        let stores: HashSet<BlockId> = function.blocks.iter()
+            .filter(|block| block.instructions.iter().any(|id| {
+                let inst = &function.instructions[id.as_raw() as usize];
+                inst.op == Op::StoreLocal && inst.immediate == Some(Immediate::LocalSlot(slot))
+            }))
+            .map(|block| block.id)
+            .collect();
+        if stores.is_empty() {
+            return false;
+        }
+        // A handler is entered from the block that pushed it, as the EIR validator links it.
+        let mut predecessors: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+        for block in &function.blocks {
+            for next in block.terminator.as_ref().map(crate::ir_passes::successors).unwrap_or_default() {
+                predecessors.entry(next).or_default().push(block.id);
+            }
+            for id in &block.instructions {
+                let inst = &function.instructions[id.as_raw() as usize];
+                if let (Op::TryPushHandler, Some(Immediate::I64(token))) = (inst.op, &inst.immediate) {
+                    predecessors.entry(BlockId::from_raw(*token as u32)).or_default().push(block.id);
+                }
+            }
+        }
+        let mut pending = vec![current];
+        let mut seen = HashSet::new();
+        while let Some(block) = pending.pop() {
+            if stores.contains(&block) {
+                return true;
+            }
+            if seen.insert(block) {
+                pending.extend(predecessors.get(&block).into_iter().flatten().copied());
+            }
+        }
+        false
     }
 
     /// Replaces the definitely-initialized local set after branch lowering or merge analysis.
@@ -2030,6 +2155,18 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         &self.owner_name
     }
 
+    /// Name php-src gives this body in a boundary `TypeError`: a closure's
+    /// `{closure:<context>:<line>}` label, otherwise [`Self::owner_name`].
+    pub(crate) fn diagnostic_owner_name(&self) -> String {
+        let function = self.builder.function();
+        function
+            .flags
+            .is_closure
+            .then(|| function.display_name.clone())
+            .flatten()
+            .unwrap_or_else(|| self.owner_name.clone())
+    }
+
     /// Returns a deterministic EIR function name for the next closure literal in this body.
     pub(crate) fn next_closure_name(&mut self) -> String {
         let name = format!(
@@ -2583,13 +2720,15 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         }
         // A loop-carried slot can exist globally without being definitely initialized
         // on this CFG path. An earlier eval barrier can likewise reload a future PHP local
-        // before lowering reaches its first syntactic store. Release either runtime occupant
-        // before overwriting it.
+        // before lowering reaches its first syntactic store, and a conditional arm lowered
+        // earlier may have written the slot (`if ($c) { $e = new A(); }` before a store the
+        // merge does not split). Release any such runtime occupant before overwriting it.
         if !uses_global
             && local_kind_uses_plain_store_cleanup(previous_kind)
             && previous_slot.is_some_and(|slot| !self.initialized_slots.contains(&slot))
             && (!self.loop_stack.is_empty()
-                || (previous_kind == LocalKind::PhpLocal && self.eval_barrier_active))
+                || (previous_kind == LocalKind::PhpLocal && self.eval_barrier_active)
+                || previous_slot.is_some_and(|slot| self.slot_has_reaching_store_owner(slot)))
         {
             self.release_stored_local_value_before_overwrite(name, slot, &widened_storage_type, span);
         }
@@ -3252,11 +3391,7 @@ impl<'m, 'f> LoweringContext<'m, 'f> {
         self.clear_fiber_start_sig(name);
         self.reset_array_pointer_cursor(name);
         let storage = self.builder.local_php_type(slot);
-        let function = self.builder.function();
-        let has_store_owner = slot.as_raw() as usize >= function.params.len()
-            && function.instructions.iter().any(|inst| {
-                inst.op == Op::StoreLocal && inst.immediate == Some(Immediate::LocalSlot(slot))
-            });
+        let has_store_owner = self.slot_has_store_owner(slot);
         // The same liveness test `store_local` applies before overwriting a slot: release the
         // occupant when this path definitely wrote it, and also when a loop back-edge can carry a
         // previous iteration's value into a slot straight-line flow has not initialized yet.
@@ -5905,12 +6040,14 @@ pub(crate) fn type_expr_to_php_type(type_expr: &TypeExpr) -> PhpType {
         // arrive uninstantiated, its head is the class it denotes — conservative metadata,
         // which is all this fallback promises.
         TypeExpr::GenericClass { name, .. } => named_type_expr_to_php_type(name.as_str()),
-        TypeExpr::Nullable(inner) => {
-            PhpType::Union(vec![PhpType::Void, type_expr_to_php_type(inner)])
-        }
-        TypeExpr::Union(members) => {
-            PhpType::Union(members.iter().map(type_expr_to_php_type).collect())
-        }
+        // The checker's own normalizer, so a closure's `?array` is the flat
+        // `array<mixed>|array<mixed, mixed>|null` a function's is, not a union nested in one.
+        TypeExpr::Nullable(inner) => crate::types::normalize_union_members(
+            vec![type_expr_to_php_type(inner), PhpType::Void],
+        ),
+        TypeExpr::Union(members) => crate::types::normalize_union_members(
+            members.iter().map(type_expr_to_php_type).collect(),
+        ),
         // An intersection value is an object pointer; type it as its first member.
         TypeExpr::Intersection(members) => members
             .first()

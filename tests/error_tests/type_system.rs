@@ -57,10 +57,12 @@ fn test_nested_spread_literal_merges_type_in_linear_time() {
     let mixed_list = PhpType::Array(Box::new(PhpType::Mixed));
     assert_eq!(checked.global_env.get("a"), Some(&mixed_list));
     assert_eq!(checked.global_env.get("b"), Some(&mixed_list));
-    // A hash spread makes each level a hash, and joining a hash with the `[]` arm (or with the
-    // `array<never>` left of `??`) widens to `mixed`; spreading `mixed` keeps it a hash.
-    assert_eq!(checked.global_env.get("c"), Some(&PhpType::Mixed));
-    assert_eq!(checked.global_env.get("d"), Some(&PhpType::Mixed));
+    // A hash spread makes each level a hash. Upstream widens a hash joined with the `[]` arm (or
+    // with the `array<never>` left of `??`) to `mixed`; the fork merges `[]` into any array shape
+    // (35a34cc4f), so every level stays a `mixed`-keyed hash.
+    let mixed_hash = PhpType::AssocArray { key: Box::new(PhpType::Mixed), value: Box::new(PhpType::Mixed) };
+    assert_eq!(checked.global_env.get("c"), Some(&mixed_hash));
+    assert_eq!(checked.global_env.get("d"), Some(&mixed_hash));
     assert!(
         elapsed < std::time::Duration::from_secs(30),
         "nested spread literal typing took {elapsed:?}"
@@ -340,21 +342,22 @@ fn test_error_union_typed_local_rejects_invalid_initializer() {
     expect_error("<?php int|string $value = 1.5;", "cannot initialize $value");
 }
 
-/// Verifies a boxed `mixed` value cannot enter an object parameter without a runtime tag check.
+/// Verifies a boxed `mixed` value still cannot enter an `iterable` parameter: its raw-pointer
+/// storage is not the boxed cell, so the run-time `array`/class boundary guard does not cover it.
 #[test]
-fn test_error_mixed_rejected_at_object_parameter_boundary() {
+fn test_error_mixed_rejected_at_iterable_parameter_boundary() {
     expect_error(
-        "<?php final class Box {} function take(Box $box): void {} function relay(mixed $value): void { take($value); }",
-        "Function 'take' parameter $box expects Box, got mixed",
+        "<?php function take(iterable $items): void {} function relay(mixed $value): void { take($value); }",
+        "Function 'take' parameter $items expects iterable, got mixed",
     );
 }
 
-/// Verifies a boxed `mixed` value cannot leave a function through an array return boundary.
+/// Verifies a boxed `mixed` value still cannot leave a function through an `iterable` return.
 #[test]
-fn test_error_mixed_rejected_at_array_return_boundary() {
+fn test_error_mixed_rejected_at_iterable_return_boundary() {
     expect_error(
-        "<?php function relay(mixed $value): array { return $value; }",
-        "Function 'relay' return type expects array, got mixed",
+        "<?php function relay(mixed $value): iterable { return $value; }",
+        "Function 'relay' return type expects iterable, got mixed",
     );
 }
 

@@ -362,3 +362,32 @@ eval($source);
 "#);
     assert_eq!(out, "3:4|1");
 }
+
+/// A Mixed pattern or subject (a foreach key or value of an untyped array, a `mixed`
+/// parameter) is converted to an owned string for `preg_match()`, `preg_match_all()` and
+/// `preg_split()`, and released after the call.
+#[test]
+fn preg_mixed_pattern_and_subject_are_converted_and_released() {
+    let out = compile_and_run_with_heap_debug(r#"<?php
+/** @param array<string, string> $sums */
+function ok(array $sums): bool {
+    foreach ($sums as $name => $sum) {
+        if (!is_string($name) || !is_string($sum)
+            || preg_match('/^[a-z.]+$/', $name) !== 1 || preg_match('/^[0-9a-f]{4}$/', $sum) !== 1) {
+            return false;
+        }
+    }
+    return true;
+}
+function parts(mixed $pattern, mixed $subject): string {
+    $n = preg_match_all($pattern, $subject, $m);
+    return $n . ':' . implode(',', $m[0]) . ':' . implode('+', preg_split($pattern, $subject));
+}
+for ($i = 0; $i < 3; $i++) {
+    echo ok(['a.js' => 'beef']) ? 'y' : 'n', ok(['A.js' => 'beef']) ? 'y' : 'n', '|', parts('/,/', 'a,b,c'), "\n";
+}
+"#);
+    assert!(out.success, "{}", out.stderr);
+    assert_eq!(out.stdout, "yn|2:,,,:a+b+c\n".repeat(3));
+    assert!(out.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", out.stderr);
+}

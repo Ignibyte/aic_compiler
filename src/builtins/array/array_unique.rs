@@ -10,6 +10,10 @@
 //!   That shape is a hash, which is why an indexed input returns
 //!   `AssocArray { key: Int, value: T }` rather than the input type echoed back.
 //! - An associative input already records its keys and comes back unchanged.
+//! - PHP compares the values as `(string) $a === (string) $b`. The native helpers compare by
+//!   value only int, string and bool elements (int and string hash values); any other array
+//!   operand (boxed values, floats, objects, nested arrays, a declared `array`) is retargeted
+//!   to the key-set prelude's `__elephc_array_unique()`, which answers a declared `array`.
 //! - Arity (exactly 1 argument) is validated by the registry's `check_arity` before
 //!   the hook fires; the inline arity check from the legacy arm is not reproduced here.
 
@@ -37,6 +41,12 @@ builtin! {
 /// inferred it once for side effects, and arity is pre-validated.
 fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     let ty = cx.checker.infer_type(&cx.args[0], cx.env)?;
+    if crate::key_set_prelude::is_array_operand(&ty) && !native_compares_by_value(&ty) {
+        let helper = crate::key_set_prelude::VALUE_UNIQUE;
+        if let Some(ty) = crate::key_set_prelude::retarget(cx, helper) {
+            return Ok(ty);
+        }
+    }
     match ty {
         PhpType::Array(elem) => Ok(PhpType::AssocArray {
             key: Box::new(PhpType::Int),
@@ -47,5 +57,21 @@ fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
             cx.span,
             "array_unique() argument must be array",
         )),
+    }
+}
+
+/// Whether the native dedup helpers compare `ty`'s elements as PHP does: indexed int, string and
+/// bool slots (or an empty literal's), and int or string hash values. Others they compare by
+/// slot bits or pointer, or refuse.
+fn native_compares_by_value(ty: &PhpType) -> bool {
+    match ty {
+        PhpType::Array(elem) => matches!(
+            elem.codegen_repr(),
+            PhpType::Int | PhpType::Str | PhpType::Bool | PhpType::Void | PhpType::Never
+        ),
+        PhpType::AssocArray { value, .. } => {
+            matches!(value.codegen_repr(), PhpType::Int | PhpType::Str)
+        }
+        _ => false,
     }
 }

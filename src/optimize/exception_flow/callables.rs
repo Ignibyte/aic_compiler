@@ -109,6 +109,91 @@ pub(super) fn collect_object_reference_entry_checks(
     }
 }
 
+/// Collects boundary parameter positions and boundary returns from declaration hints when
+/// checker metadata is unavailable to the pass.
+pub(super) fn collect_boundary_checks(
+    stmts: &[Stmt],
+    functions: &mut HashMap<String, Vec<bool>>,
+    static_methods: &mut HashMap<String, Vec<bool>>,
+    instance_methods: &mut HashMap<String, Vec<bool>>,
+    returns: &mut HashSet<String>,
+) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::FunctionDecl { name, params, return_type, .. } => {
+                if let Some(positions) = boundary_hint_positions(params) {
+                    functions.insert(name.clone(), positions);
+                }
+                if return_type.as_ref().is_some_and(return_hint_checks_a_value) {
+                    returns.insert(name.clone());
+                }
+            }
+            StmtKind::ClassDecl { name, methods, .. }
+            | StmtKind::InterfaceDecl { name, methods, .. }
+            | StmtKind::TraitDecl { name, methods, .. } => {
+                for method in methods {
+                    let key = method_effect_key(name, &method.name);
+                    if let Some(positions) = boundary_hint_positions(&method.params) {
+                        if method.is_static {
+                            static_methods.insert(key.clone(), positions);
+                        } else {
+                            instance_methods.insert(key.clone(), positions);
+                        }
+                    }
+                    if method.return_type.as_ref().is_some_and(return_hint_checks_a_value) {
+                        returns.insert(key);
+                    }
+                }
+            }
+            StmtKind::NamespaceBlock { body, .. } => collect_boundary_checks(
+                body, functions, static_methods, instance_methods, returns,
+            ),
+            _ => {}
+        }
+    }
+}
+
+/// Positions of by-value parameters whose hint checks a `mixed` argument; `None` for none.
+fn boundary_hint_positions(
+    params: &[(String, Option<TypeExpr>, Option<crate::parser::ast::Expr>, bool)],
+) -> Option<Vec<bool>> {
+    let positions: Vec<bool> = params
+        .iter()
+        .map(|(_, hint, _, by_ref)| !*by_ref && hint.as_ref().is_some_and(hint_checks_a_mixed_value))
+        .collect();
+    positions.contains(&true).then_some(positions)
+}
+
+/// Returns whether a parameter or return hint is an `array` or class boundary, alone, nullable
+/// or in a union, which checks a `mixed` value at run time.
+fn hint_checks_a_mixed_value(hint: &TypeExpr) -> bool {
+    match hint {
+        TypeExpr::Named(name) => !matches!(
+            name.as_str().to_ascii_lowercase().as_str(),
+            "mixed" | "callable" | "closure" | "string" | "void" | "int" | "float" | "bool"
+                | "null" | "iterable" | "self" | "static" | "never" | "false" | "true"
+        ),
+        TypeExpr::Nullable(inner) => hint_checks_a_mixed_value(inner),
+        TypeExpr::Union(members) => members.iter().any(hint_checks_a_mixed_value),
+        _ => false,
+    }
+}
+
+/// Returns whether a return hint checks the returned value at run time: an `array` or class
+/// boundary, or a nullable scalar or a union with a scalar member (`?int`, `int|string`).
+fn return_hint_checks_a_value(hint: &TypeExpr) -> bool {
+    let scalar = |member: &TypeExpr| {
+        matches!(member, TypeExpr::Int | TypeExpr::Float | TypeExpr::Str | TypeExpr::Bool
+            | TypeExpr::False)
+    };
+    hint_checks_a_mixed_value(hint)
+        || match hint {
+            TypeExpr::Nullable(inner) => scalar(inner),
+            TypeExpr::Union(members) => members.len() > 1 && members.iter().any(scalar),
+            _ => false,
+        }
+}
+
 /// Finds parameter hints that can reject a `Class|false` / `Class|null` argument.
 ///
 /// A class-typed parameter runs the union guard at the call boundary whether it is by-value

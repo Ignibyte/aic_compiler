@@ -152,6 +152,8 @@ fn parse_stmt_dispatch(
     span: Span,
 ) -> Result<Stmt, CompileError> {
     match &tokens[*pos].0 {
+        // PHP's empty statement. A `?>` close tag lowers to `;`, so `<?php ?>`,
+        // `<?= $x; ?>` and `<?php endforeach; ?>` all put one where a statement stands.
         Token::Semicolon => {
             *pos += 1;
             Ok(Stmt::new(StmtKind::Synthetic(Vec::new()), span))

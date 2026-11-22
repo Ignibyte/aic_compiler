@@ -9,6 +9,8 @@
 //! - Discovery changes no instructions; replay emits ordinary Mixed reads and preserves PHP tags.
 //! - A counter whose checked seed (`$j = $i + 1`) was proven integer replays with that seed
 //!   recorded as `int` (`LoweringContext::int_seed_bindings`), like an ordinary `$j = 0` seed.
+//! - A scalar read of a Mixed slot that another scalar type can reach on some CFG path (a
+//!   `break` out of a loop's `if`, a loop that runs zero times) replays as a Mixed read too.
 
 use std::collections::{HashMap, HashSet};
 
@@ -76,6 +78,76 @@ fn loop_carried(ctx: &LoweringContext<'_, '_>) -> HashMap<String, HashSet<usize>
     bindings
 }
 
+/// Returns Mixed-storage bindings whose scalar read another scalar store can reach.
+///
+/// Lowering types a read from the flow-sensitive type at its point, which a loop takes from the end
+/// of its body. A store on another path into the same Mixed slot — the `$x = 2.5; break;` arm of an
+/// `if`, the `$x = 1` seed of a loop that runs zero times — then reaches a read that unboxes as the
+/// wrong scalar (`int(2)` for `2.5`, `float(1)` for `1`). A forward pass over explicit CFG edges
+/// tracks the scalar kinds each slot's stores can hold; a read whose kind differs from one that
+/// reaches it is replayed as a Mixed read, which keeps the stored PHP tag.
+fn mismatched_scalar_reads(ctx: &LoweringContext<'_, '_>) -> HashMap<String, HashSet<usize>> {
+    let function = ctx.builder.function();
+    let slots: HashSet<_> = function.locals.iter()
+        .filter(|local| local.kind == LocalKind::PhpLocal && local.php_type.codegen_repr() == PhpType::Mixed)
+        .map(|local| local.id).collect();
+    if slots.is_empty() { return HashMap::new(); }
+    let mut entries: Vec<Option<HashMap<LocalSlotId, Vec<PhpType>>>> = vec![None; function.blocks.len()];
+    entries[function.entry.as_raw() as usize] = Some(HashMap::new());
+    let mut pending = vec![function.entry];
+    let mut mismatched = HashSet::new();
+    while let Some(block) = pending.pop() {
+        let Some(mut kinds) = entries[block.as_raw() as usize].clone() else { continue; };
+        for &id in &function.blocks[block.as_raw() as usize].instructions {
+            let inst = &function.instructions[id.as_raw() as usize];
+            let Some(Immediate::LocalSlot(slot)) = inst.immediate else { continue; };
+            if !slots.contains(&slot) { continue; }
+            if inst.op == Op::StoreLocal {
+                let stored = inst.operands.first().and_then(|&value| function.value(value))
+                    .and_then(|value| scalar_kind(&value.php_type));
+                kinds.insert(slot, stored.into_iter().collect());
+            } else if inst.op == Op::LoadLocal && matches!(inst.result_type, IrType::I64 | IrType::F64) {
+                if let Some(read) = scalar_kind(&inst.result_php_type) {
+                    if kinds.get(&slot).is_some_and(|reaching| reaching.iter().any(|kind| *kind != read)) {
+                        mismatched.insert(slot);
+                    }
+                }
+            }
+        }
+        for next in successors(function, block) {
+            let entry = &mut entries[next.as_raw() as usize];
+            let changed = match entry {
+                None => { *entry = Some(kinds.clone()); true }
+                Some(existing) => {
+                    let mut changed = false;
+                    for (slot, incoming) in &kinds {
+                        let known = existing.entry(*slot).or_default();
+                        for kind in incoming {
+                            if !known.contains(kind) { known.push(kind.clone()); changed = true; }
+                        }
+                    }
+                    changed
+                }
+            };
+            if changed { pending.push(next); }
+        }
+    }
+    let mut bindings: HashMap<String, HashSet<usize>> = HashMap::new();
+    for slot in mismatched {
+        let Some((name, ordinal)) = binding(ctx, slot) else { continue; };
+        if !ctx.is_ref_bound_local(&name) && !ctx.local_uses_global_storage(&name) {
+            bindings.entry(name).or_default().insert(ordinal);
+        }
+    }
+    bindings
+}
+
+/// Returns the scalar representation a store or read carries, or `None` for anything boxed.
+fn scalar_kind(php_type: &PhpType) -> Option<PhpType> {
+    let repr = php_type.codegen_repr();
+    matches!(repr, PhpType::Int | PhpType::Float | PhpType::Bool | PhpType::Void).then_some(repr)
+}
+
 /// Follows assignment ownership wrappers to arithmetic that can promote to a PHP float.
 fn numeric_writer(function: &Function, writers: &HashMap<LocalSlotId, Vec<ValueId>>, value: ValueId) -> bool {
     let mut pending = vec![value];
@@ -137,7 +209,10 @@ pub(crate) fn lower_body(
         super::integer_local_contracts::conditional_declarations(body);
     let checkpoint = ctx.snapshot();
     lower_stmts(ctx, body);
-    let scalar_force = loop_carried(ctx);
+    let mut scalar_force = loop_carried(ctx);
+    for (name, bindings) in mismatched_scalar_reads(ctx) {
+        scalar_force.entry(name).or_default().extend(bindings);
+    }
     let sites = ctx.numeric_closure_sites.clone();
     let tracked = ctx.numeric_tracked_locals.clone();
     let params = ctx

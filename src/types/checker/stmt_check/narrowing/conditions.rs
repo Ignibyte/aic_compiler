@@ -174,6 +174,7 @@ impl Checker {
             }
             self.guard_narrowings(right, &right_env)?
         };
+        let right_operand = right;
         let left: HashMap<_, _> = left_guards.into_iter().map(|guard| (guard.var.clone(), guard)).collect();
         let right: HashMap<_, _> = right_guards.into_iter().map(|guard| (guard.var.clone(), guard)).collect();
         let mut keys: Vec<_> = left.keys().chain(right.keys()).cloned().collect();
@@ -181,6 +182,7 @@ impl Checker {
         keys.dedup();
         let mut guards = Vec::with_capacity(keys.len());
         for var in keys {
+            let keeps_left = preserves_left || self.right_operand_keeps_local_guard(right_operand, &var);
             let left = left.get(&var);
             let right = right.get(&var);
             let original = env.get(&var).cloned().unwrap_or_else(|| {
@@ -189,7 +191,7 @@ impl Checker {
             });
             let left_true = left.map_or(&original, |guard| &guard.then_ty);
             let left_false = left.map_or(&original, |guard| &guard.else_ty);
-            let evaluated_left = if !preserves_left { &original }
+            let evaluated_left = if !keeps_left { &original }
                 else if *op == BinOp::And { left_true } else { left_false };
             let right_true = right.map_or(evaluated_left, |guard| &guard.then_ty);
             let right_false = right.map_or(evaluated_left, |guard| &guard.else_ty);
@@ -199,7 +201,7 @@ impl Checker {
                 (self.join_guard_alternatives(&original, left_true, right_true), right_false.clone())
             };
             if then_ty != else_ty {
-                guards.push(GuardNarrowing { var, then_ty, else_ty });
+                guards.push(GuardNarrowing { var, then_ty, else_ty, current_ty: original });
             }
         }
         Ok(guards)
@@ -226,6 +228,50 @@ impl Checker {
         } else {
             joined
         }
+    }
+
+    /// Returns whether a guard on the plain local `var` still holds once `right` has run: the
+    /// local is not reachable by a reference, global or by-ref capture, and `right` writes no
+    /// such name. A method call or comparison in `right` (`$x instanceof C && $x->size() > 2`)
+    /// cannot rebind the caller's local, so the left guard's type is still the local's own.
+    fn right_operand_keeps_local_guard(&self, right: &Expr, var: &str) -> bool {
+        !Self::narrowed_place_key_is_property(var)
+            && self.local_binding_is_unaliased(var)
+            && expr_cannot_rebind_local(right, var, &|callee, index| match callee {
+                RebindCallee::Function(name) => self.function_param_is_by_value(name, index),
+                RebindCallee::Method(method) => self.method_param_is_by_value(method, index),
+            })
+    }
+
+    /// Returns whether every instance method named `method` that a class or interface
+    /// declares takes the argument at `index` by value. PHP binds a caller's local by
+    /// reference only through a declared `&` parameter, so when no same-named method declares
+    /// one there, the call cannot rebind the local whatever its receiver. A name no class
+    /// declares (a magic `__call` target) answers no.
+    fn method_param_is_by_value(&self, method: &str, index: usize) -> bool {
+        let key = crate::names::php_symbol_key(method);
+        let mut signatures = self
+            .classes
+            .values()
+            .filter_map(|class| class.methods.get(&key))
+            .chain(self.interfaces.values().filter_map(|interface| interface.methods.get(&key)))
+            .peekable();
+        signatures.peek().is_some()
+            && signatures.all(|signature| signature.ref_params.get(index).is_some_and(|by_ref| !by_ref))
+    }
+
+    /// Returns whether the declared parameter at `index` of the user function or builtin
+    /// `name` takes its argument by value. An unknown callee, a by-reference parameter and a
+    /// position past the declared ones (a variadic tail) all answer no.
+    fn function_param_is_by_value(&self, name: &str, index: usize) -> bool {
+        let ref_params = match self.functions.get(name) {
+            Some(signature) => &signature.ref_params,
+            None => match crate::builtins::registry::lookup(name) {
+                Some(def) => &def.ref_params,
+                None => return false,
+            },
+        };
+        ref_params.get(index).is_some_and(|by_ref| !by_ref)
     }
 
     /// Proves a later operand cannot overwrite an earlier guard's binding or run user code.
@@ -265,5 +311,54 @@ impl Checker {
             }
             _ => false,
         }
+    }
+}
+
+/// The callee of a call whose arguments may pass a guarded local by reference.
+#[derive(Clone, Copy)]
+enum RebindCallee<'a> {
+    /// A function, by its written name.
+    Function(&'a str),
+    /// An instance method, by its name alone.
+    Method(&'a str),
+}
+
+/// Returns whether evaluating `expr` cannot rebind the unaliased local `var`: it is built only
+/// from literals, reads, comparisons and arithmetic, property reads, and calls that are not
+/// `extract()` and hand `var` itself only to a parameter `by_value(callee, position)` proves
+/// takes it by value (a by-reference parameter could rebind it).
+/// Anything else, an assignment or an increment included, counts as a possible write.
+fn expr_cannot_rebind_local(expr: &Expr, var: &str, by_value: &dyn Fn(RebindCallee<'_>, usize) -> bool) -> bool {
+    let arguments_keep = |callee: Option<RebindCallee<'_>>, args: &[Expr]| {
+        args.iter().enumerate().all(|(index, arg)| match &arg.kind {
+            ExprKind::Variable(name) if name == var => {
+                callee.is_some_and(|callee| by_value(callee, index))
+            }
+            _ => expr_cannot_rebind_local(arg, var, by_value),
+        })
+    };
+    match &expr.kind {
+        ExprKind::Variable(_) | ExprKind::This | ExprKind::Null | ExprKind::BoolLiteral(_)
+        | ExprKind::IntLiteral(_) | ExprKind::FloatLiteral(_) | ExprKind::StringLiteral(_)
+        | ExprKind::ConstRef(_) | ExprKind::ClassConstant { .. } => true,
+        ExprKind::BinaryOp { left, right, .. } => {
+            expr_cannot_rebind_local(left, var, by_value) && expr_cannot_rebind_local(right, var, by_value)
+        }
+        ExprKind::Not(inner) | ExprKind::Negate(inner) | ExprKind::ErrorSuppress(inner) => {
+            expr_cannot_rebind_local(inner, var, by_value)
+        }
+        ExprKind::InstanceOf { value, .. } => expr_cannot_rebind_local(value, var, by_value),
+        ExprKind::PropertyAccess { object, .. } | ExprKind::NullsafePropertyAccess { object, .. } => {
+            expr_cannot_rebind_local(object, var, by_value)
+        }
+        ExprKind::MethodCall { object, method, args } | ExprKind::NullsafeMethodCall { object, method, args } => {
+            expr_cannot_rebind_local(object, var, by_value)
+                && arguments_keep(Some(RebindCallee::Method(method.as_str())), args)
+        }
+        ExprKind::FunctionCall { name, args } => {
+            crate::names::php_symbol_key(name.as_str()) != "extract"
+                && arguments_keep(Some(RebindCallee::Function(name.as_str())), args)
+        }
+        _ => false,
     }
 }

@@ -2189,3 +2189,22 @@ var_dump($fresh->level->name);
         )
     );
 }
+
+/// Verifies a ternary or `match` yielding enum cases inside a function keeps them enum cases:
+/// backed and pure enums, returned directly and stored in a local first.
+#[test]
+fn test_ternary_and_match_of_enum_cases_inside_a_function() {
+    let out = compile_and_run(
+        r#"<?php
+declare(strict_types=1);
+enum Status: string { case Open = 'open'; case Shut = 'shut'; }
+enum Side { case Left; case Right; }
+function f(int $i): Status { return $i % 2 === 0 ? Status::Open : Status::Shut; }
+function g(int $i): Status { return match ($i % 2) { 0 => Status::Open, default => Status::Shut }; }
+function h(int $i): Status { $s = match ($i % 2) { 0 => Status::Open, default => Status::Shut }; return $s; }
+function p(bool $l): Side { return $l ? Side::Left : Side::Right; }
+echo f(2)->value, ' ', f(1)->value, '|', g(2)->value, ' ', g(1)->value, '|', h(2)->value, ' ', h(1)->value, '|', p(true)->name, ' ', p(false)->name, "\n";
+"#,
+    );
+    assert_eq!(out, "open shut|open shut|open shut|Left Right\n");
+}

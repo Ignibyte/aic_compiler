@@ -22,6 +22,8 @@
 //!   sequence (no progress, output empty) stops to avoid a spin — acceptable
 //!   for whole-string writes of complete text.
 //! - The close helper `iconv_close`s the descriptor and clears the handle.
+//! - The attach lowering refuses a descriptor past `fd_tables::FD_TABLE_SLOTS`,
+//!   and both helpers treat such a descriptor as having no transcoder attached.
 //! - The init block is spliced INLINE (entered with rsp 16-aligned), so on
 //!   x86_64 it reserves `sub rsp, 24` (push rbp + 24 ≡ 0 mod 16) to keep rsp
 //!   16-aligned at the libc calls; the call-entered helpers use `sub rsp, 64`.
@@ -160,6 +162,7 @@ fn emit_arm64<F>(
     // Frame: [0]=fd [8]=retlen [16]=inbuf [24]=inleft [32]=outbuf [40]=outleft.
     // ================================================================
     emitter.label(fwrite_label);
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", &format!("{}_no_slot", fwrite_label));
     emitter.instruction("sub sp, sp, #64");                                     // helper frame
     emitter.instruction("stp x29, x30, [sp, #48]");                             // save frame pointer and return address
     emitter.instruction("add x29, sp, #48");                                    // establish the helper frame pointer
@@ -205,6 +208,9 @@ fn emit_arm64<F>(
     emitter.instruction("ldp x29, x30, [sp, #48]");                             // restore frame pointer and return address
     emitter.instruction("add sp, sp, #64");                                     // release the helper frame
     emitter.instruction("ret");                                                 // return the bytes-consumed count
+    emitter.label(&format!("{}_no_slot", fwrite_label));
+    emitter.instruction("mov x0, #0");                                          // a descriptor with no table slot has no filter: nothing written
+    emitter.instruction("ret");                                                 // return zero bytes consumed
 
     // ================================================================
     // iconv close helper. Input: x0 = fd. Closes the iconv descriptor.
@@ -212,6 +218,7 @@ fn emit_arm64<F>(
     emitter.label(close_label);
     emitter.instruction("sub sp, sp, #16");                                     // helper frame: [0]=fd [8]=x30
     emitter.instruction("str x30, [sp, #8]");                                   // save the return address
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", &format!("{}_done", close_label));
     abi::emit_symbol_address(emitter, "x9", "_iconv_handles");
     emitter.instruction("ldr x1, [x9, x0, lsl #3]");                            // load this descriptor's iconv_t
     emitter.instruction(&format!("cbz x1, {}_done", close_label));              // nothing attached: nothing to close
@@ -291,6 +298,7 @@ fn emit_x86_64<F>(
     // Frame: [-8]=fd [-16]=retlen [-24]=inbuf [-32]=inleft [-40]=outbuf [-48]=outleft.
     // ================================================================
     emitter.label(fwrite_label);
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", &format!("{}_no_slot", fwrite_label));
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer
     emitter.instruction("mov rbp, rsp");                                        // establish the helper frame pointer
     emitter.instruction("sub rsp, 64");                                         // helper frame (0 mod 16: aligned at the libc calls)
@@ -332,6 +340,9 @@ fn emit_x86_64<F>(
     emitter.instruction("add rsp, 64");                                         // release the helper frame
     emitter.instruction("pop rbp");                                             // restore the caller frame pointer
     emitter.instruction("ret");                                                 // return the bytes-consumed count
+    emitter.label(&format!("{}_no_slot", fwrite_label));
+    emitter.instruction("xor eax, eax");                                        // a descriptor with no table slot has no filter: nothing written
+    emitter.instruction("ret");                                                 // return zero bytes consumed
 
     // ================================================================
     // iconv close helper. Input: rdi = fd. Closes the iconv descriptor.
@@ -340,6 +351,7 @@ fn emit_x86_64<F>(
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer
     emitter.instruction("mov rbp, rsp");                                        // establish the helper frame pointer
     emitter.instruction("sub rsp, 16");                                         // helper frame: [-8]=fd
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", &format!("{}_done", close_label));
     abi::emit_symbol_address(emitter, "r9", "_iconv_handles"); // iconv handle table base
     emitter.instruction("mov rsi, QWORD PTR [r9 + rdi*8]");                     // load this descriptor's iconv_t
     emitter.instruction("test rsi, rsi");                                       // anything attached?

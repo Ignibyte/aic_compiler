@@ -348,6 +348,8 @@ fn validate_instruction_result(
 /// the immutable-local pass proves that the named scalar slot cannot change.
 /// Physical property initialization additionally allocates owned reference cells.
 /// A named `prop_set` additionally admits exactly the packed field store effects.
+/// A Mixed `+`, `-` or `*` additionally admits exactly `MAY_THROW`, attached when an operand may
+/// hold an array, which the operator runtime entry unites or refuses with a `TypeError`.
 #[cfg(test)]
 fn validate_instruction_effects(
     inst_id: InstId,
@@ -400,9 +402,18 @@ fn validate_instruction_effects_with_operand(
     let packed_field_store_refinement = inst.op == Op::PropSet
         && matches!(inst.immediate, Some(Immediate::Data(_)))
         && inst.effects == Op::PropSet.packed_field_access_effects();
+    let array_operator_refinement = inst.op == Op::MixedNumericBinop
+        && matches!(
+            inst.immediate,
+            Some(Immediate::MixedNumericOp(
+                crate::ir::MixedNumericOp::Add | crate::ir::MixedNumericOp::Sub | crate::ir::MixedNumericOp::Mul
+            ))
+        )
+        && inst.effects == expected | Effects::MAY_THROW;
     if !inst.op.allows_effect_refinement()
         && !immutable_local_refinement
         && !packed_field_store_refinement
+        && !array_operator_refinement
         && inst.effects != expected
     {
         return Err(ValidationError::EffectMismatch {
@@ -672,6 +683,7 @@ fn validate_instruction_immediate(
         | PackedFieldMixedToFloat
         | PackedFieldMixedToBool
         | ReturnBoundaryMixedToInt
+        | ReturnBoundaryMixedGuard
         | PropertyBoundaryCheckedToInt
         | PropInitialized
         | StaticPropInitialized
@@ -732,6 +744,9 @@ fn validate_instruction_immediate(
         }),
         TypePredicate => require_immediate(inst_id, inst, "type predicate", |imm| {
             matches!(imm, Imm::TypePredicate(_))
+        }),
+        ScalarArgumentGuard => require_immediate(inst_id, inst, "scalar argument check", |imm| {
+            matches!(imm, Imm::ScalarArgumentCheck(_))
         }),
         GcControl => require_immediate(inst_id, inst, "GC control selector", |imm| {
             matches!(imm, Imm::I64(value) if crate::ir::GcControlOp::from_i64(*value).is_some())

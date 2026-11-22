@@ -61,6 +61,9 @@ impl Checker {
             | StmtKind::StaticPropertyArrayAssign { .. })).then(|| self.snapshot_flow_exit(env));
         let outer_strict_types = self.strict_types;
         self.strict_types = stmt.strict_types;
+        // The statement's profile, as the lowering and the optimizer install it, so a builtin's
+        // shared validation reads the same `strict_types` the checker is applying here.
+        let _profile = crate::source::scoped_parse_mode(stmt.profile());
         let result = crate::strict_php::with_source_mode(stmt.source_mode, || {
             self.check_stmt_in_current_source_mode(stmt, env)
         });

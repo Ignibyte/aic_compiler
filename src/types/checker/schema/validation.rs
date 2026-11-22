@@ -446,6 +446,75 @@ pub(crate) fn validate_signature_compatibility(
     Ok(())
 }
 
+/// Refuses a declared scalar parameter of `child_sig` that does not accept every value the
+/// matching declared parameter of `parent_sig` accepts, as PHP refuses it at compile time.
+///
+/// PHP's parameter contravariance is a subtype rule, not a coercion rule: `float` does not
+/// accept `int` there, so `m(int $i)` cannot be overridden or implemented as `m(float $i)`.
+/// Only types made of `int`, `float`, `string`, `bool`, `false`, `null` and `mixed` are judged;
+/// `verb` is `override` or `implement`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn validate_scalar_parameter_contravariance(
+    checker: &Checker,
+    span: crate::span::Span,
+    owner_name: &str,
+    method_name: &str,
+    child_sig: &FunctionSig,
+    parent_sig: &FunctionSig,
+    kind: &str,
+    verb: &str,
+) -> Result<(), CompileError> {
+    let regular = crate::types::call_args::regular_param_count(child_sig)
+        .min(crate::types::call_args::regular_param_count(parent_sig));
+    for index in 0..regular {
+        let (Some((name, child_ty)), Some((_, parent_ty))) =
+            (child_sig.params.get(index), parent_sig.params.get(index))
+        else {
+            continue;
+        };
+        if !child_sig.declared_params.get(index).copied().unwrap_or(false)
+            || !parent_sig.declared_params.get(index).copied().unwrap_or(false)
+            || !is_scalar_contract_type(child_ty)
+            || !is_scalar_contract_type(parent_ty)
+        {
+            continue;
+        }
+        if !checker.type_accepts(child_ty, parent_ty) {
+            return Err(CompileError::new(
+                span,
+                &format!(
+                    "Cannot {} {} {}::{} with incompatible parameter ${} of type {} ({} accepts {})",
+                    verb,
+                    kind,
+                    owner_name,
+                    method_name,
+                    name,
+                    child_ty,
+                    if verb == "override" { "parent" } else { "interface" },
+                    parent_ty
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Returns whether `ty` is built only from `int`, `float`, `string`, `bool`, `false`, `null` and
+/// `mixed`, the types whose parameter subtyping the checker's `type_accepts` decides exactly.
+fn is_scalar_contract_type(ty: &PhpType) -> bool {
+    match ty {
+        PhpType::Int
+        | PhpType::Float
+        | PhpType::Str
+        | PhpType::Bool
+        | PhpType::False
+        | PhpType::Void
+        | PhpType::Mixed => true,
+        PhpType::Union(members) => members.iter().all(is_scalar_contract_type),
+        _ => false,
+    }
+}
+
 /// Returns `true` if `actual` is a compatible declared return type for `expected`.
 /// Allows `PhpType::Never` (unreachable) as a wildcard match. Otherwise delegates to
 /// `checker.type_accepts(expected, actual)` for standard subtype checking.
@@ -582,6 +651,11 @@ pub(crate) fn validate_override_signature(
         parent_declaration_is_source && method.span.line != 0,
         false,
     )?;
+    if parent_declaration_is_source && method.span.line != 0 {
+        validate_scalar_parameter_contravariance(
+            checker, method.span, class_name, &method.name, &child_sig, parent_sig, kind, "override",
+        )?;
+    }
     if parent_sig.declared_return && !child_sig.declared_return {
         return Err(CompileError::new(
             method.span,

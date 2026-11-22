@@ -791,3 +791,170 @@ echo $s, $is[0], $a[1], $h["k"], "\n";
         out.stderr
     );
 }
+
+/// A `match (true)` arm guarded by `$v instanceof A` reads `$v` as `A`, so a
+/// property that only `A` declares is read from `A` instead of the declared
+/// `A|B` union. Before the fix the arm's inference failed silently and the
+/// function returned the checker's `int` placeholder (`int(0)` twice).
+#[test]
+fn test_match_true_instanceof_narrows_declared_union_arm() {
+    let out = compile_and_run(
+        r#"<?php
+class A { public $n = 'a'; }
+class B { public $m = 'b'; }
+function an(A|B $v) {
+    return match (true) {
+        $v instanceof A => $v->n,
+        default => 'z',
+    };
+}
+var_dump(an(new A), an(new B));
+"#,
+    );
+    assert_eq!(out, "string(1) \"a\"\nstring(1) \"z\"\n");
+}
+
+/// An untyped parameter that joins two classes (and null) gets the same
+/// per-arm narrowing: each arm reads the property its own class declares.
+/// Before the fix this failed to compile with "Undefined property: A::m".
+#[test]
+fn test_match_true_instanceof_narrows_untyped_joined_param_arms() {
+    let out = compile_and_run(
+        r#"<?php
+class A { public $n = 'a'; }
+class B { public $m = 'b'; }
+function g($v, $d = null) {
+    return match (true) {
+        $v instanceof A => $v->n,
+        $v instanceof B => $v->m,
+        default => 'd',
+    };
+}
+var_dump(g(new A), g(new B), g(null, 'x'));
+"#,
+    );
+    assert_eq!(out, "string(1) \"a\"\nstring(1) \"b\"\nstring(1) \"d\"\n");
+}
+
+/// Control (also passes without the narrowing): an arm that writes the
+/// guarded variable is inferred without the narrowing, so the reassignment
+/// keeps its own type.
+#[test]
+fn test_match_true_instanceof_arm_that_writes_the_variable_is_not_narrowed() {
+    let out = compile_and_run(
+        r#"<?php
+class A { public $n = 'a'; }
+class B { public $m = 'b'; }
+function w(A|B $v) {
+    return match (true) {
+        $v instanceof A => ($v = new B) instanceof B ? 'reassigned' : 'x',
+        default => 'z',
+    };
+}
+var_dump(w(new A), w(new B));
+"#,
+    );
+    assert_eq!(out, "string(10) \"reassigned\"\nstring(1) \"z\"\n");
+}
+
+/// An arm that passes the narrowed parameter to a method typed with the arm's
+/// class sees the narrowing. Before the fix the bare `$x` argument counted as
+/// a possible by-reference write, the arm was left un-narrowed, and the call
+/// failed to compile with "Method T::a parameter $a expects A, got Thing".
+#[test]
+fn test_match_true_instanceof_narrows_a_parameter_passed_to_a_typed_method() {
+    let out = compile_and_run(
+        r#"<?php
+interface Thing {}
+final class A implements Thing { public function __construct(public string $n) {} }
+final class B implements Thing { public function __construct(public int $v) {} }
+final class T {
+    public function a(A $a): string { return 'a:' . $a->n; }
+    public function b(B $b): string { return 'b:' . $b->v; }
+    public function pick(Thing $x): string {
+        return match (true) {
+            $x instanceof A => $this->a($x),
+            $x instanceof B => $this->b($x),
+            default => '?',
+        };
+    }
+}
+$t = new T();
+echo $t->pick(new A('x')), ' ', $t->pick(new B(3)), "\n";
+"#,
+    );
+    assert_eq!(out, "a:x b:3\n");
+}
+
+/// A local bound from the parameter, passed to a typed function and to a
+/// static method, gets the same narrowing.
+#[test]
+fn test_match_true_instanceof_narrows_a_local_passed_to_a_function_and_a_static_method() {
+    let out = compile_and_run(
+        r#"<?php
+interface Thing {}
+final class A implements Thing { public function __construct(public string $n) {} }
+final class B implements Thing { public function __construct(public int $v) {} }
+final class Box { public static function of(B $b): string { return 'b:' . $b->v; } }
+function fa(A $a): string { return 'a:' . $a->n; }
+function pick(Thing $t): string {
+    $x = $t;
+    return match (true) {
+        $x instanceof A => fa($x),
+        $x instanceof B => Box::of($x),
+        default => '?',
+    };
+}
+echo pick(new A('y')), ' ', pick(new B(4)), "\n";
+"#,
+    );
+    assert_eq!(out, "a:y b:4\n");
+}
+
+/// A by-reference parameter that replaces the narrowed value writes it after
+/// every argument was read, so the arm still compiles and the caller sees the
+/// replacement, as in PHP.
+#[test]
+fn test_match_true_instanceof_narrowed_local_passed_by_reference() {
+    let out = compile_and_run(
+        r#"<?php
+interface Thing {}
+final class A implements Thing { public function __construct(public string $n) {} }
+function swap(A &$a): string { $old = $a->n; $a = new A('new'); return $old; }
+function run(Thing $t): string {
+    $x = $t;
+    $r = match (true) {
+        $x instanceof A => swap($x),
+        default => '?',
+    };
+    return $r . ' ' . ($x instanceof A ? $x->n : '-');
+}
+echo run(new A('old')), "\n";
+"#,
+    );
+    assert_eq!(out, "old new\n");
+}
+
+/// A `match (true)` arm guarded by a PROPERTY `instanceof` that reassigns the
+/// property inside the arm reads the new value: the arm is not narrowed to the
+/// guard's class, so `$h->p->m()` after `($h->p = new B())` resolves against
+/// the declared `mixed` property instead of failing with "Undefined method: A::m".
+#[test]
+fn test_match_true_instanceof_property_guard_rewritten_in_arm_is_not_narrowed() {
+    let out = compile_and_run(
+        r#"<?php
+class A {}
+class B { public function m() { return "B::m"; } }
+class Holder { public mixed $p; }
+function keep($x) { return ""; }
+$h = new Holder();
+$h->p = new A();
+$r = match (true) {
+    $h->p instanceof A => keep($h->p = new B()) . $h->p->m(),
+    default => "none",
+};
+var_dump($r);
+"#,
+    );
+    assert_eq!(out, "string(4) \"B::m\"\n");
+}

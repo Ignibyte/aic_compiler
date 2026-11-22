@@ -140,7 +140,7 @@ pub(super) fn op_is_value_only_consumer(op: Op) -> bool {
             // Numeric/string/mixed conversions.
             | IToF | FToI | IToStr | FToStr | BoolToStr | StrToI | StrToF | StrToNumber
             | ResourceToStr | Cast | MixedBox | MixedUnbox | MixedCastBool | MixedCastInt
-            | MixedCastFloat | MixedCastString | ReturnBoundaryMixedToInt
+            | MixedCastFloat | MixedCastString | ReturnBoundaryMixedToInt | ScalarArgumentGuard
             | PropertyBoundaryCheckedToInt
             // String value operations.
             | StrConcat | StrAppend | StrLen | StrPersist | StrCharAt | StrInterpolate | StrIncDec

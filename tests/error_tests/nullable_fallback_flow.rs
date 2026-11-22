@@ -131,12 +131,15 @@ fn test_nullable_fallback_flow_r52_foreach_entry_precision() {
 }
 
 /// Foreach binding retirement cannot expose an obsolete object type in an outer handler.
+///
+/// A `mixed` element from an `array` parameter reaches the class parameter as `mixed`, which the
+/// fork checks at run time (`types::mixed_boundaries`), so the `return` exit iterates a literal.
 #[test]
 fn test_nullable_fallback_flow_r51_foreach_retirement_admission() {
     for (params, iteration) in [
         ("", "foreach ([1] as $e) { break; }"),
         ("", "foreach ([7 => 'v'] as $e => $v) { break; }"),
-        ("array $xs", "foreach ($xs as $e) { return; }"),
+        ("", "foreach ([1] as $e) { return; }"),
         ("", "$xs = [1]; foreach ($xs as &$e) { break; }"),
     ] {
         let source = format!("<?php class D {{ public function __destruct() {{ throw new Exception('d'); }} }} function need(D $x): void {{}} function run({params}): void {{ $e = new D(); try {{ {iteration} }} catch (Exception $c) {{ need($e); }} }}");
@@ -320,11 +323,15 @@ fn test_nullable_fallback_flow_r46_guarded_array_mutations() {
 }
 
 /// Arbitrary reference writes still erase an array guard when they can replace its value.
+///
+/// The fork checks a `mixed` value at a declared `array` return at run time
+/// (`types::mixed_boundaries`), so the erased guard is observed through an `iterable` return,
+/// which still refuses `mixed` at compile time.
 #[test]
 fn test_nullable_fallback_flow_r46_array_reference_invalidations() {
     for effect in ["settype($a, 'string');", "replaceValue($a);"] {
-        let source = format!("<?php function replaceValue(mixed &$a): void {{ $a = null; }} function run(?array $a): array {{ if ($a === null) return []; sort($a); {effect} return $a; }}");
-        expect_error(&source, "return type expects array");
+        let source = format!("<?php function replaceValue(mixed &$a): void {{ $a = null; }} function run(?array $a): iterable {{ if ($a === null) return []; sort($a); {effect} return $a; }}");
+        expect_error(&source, "return type expects iterable");
     }
 }
 

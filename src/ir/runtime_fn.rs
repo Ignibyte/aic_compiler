@@ -230,6 +230,7 @@ pub enum RuntimeFnId {
     Fdatasync,
     Feof,
     Fflush,
+    Flush,
     Fgetc,
     Fgetcsv,
     Fgets,
@@ -916,6 +917,8 @@ pub enum RuntimeFnId {
     Passthru,
     PhpUname,
     Phpversion,
+    PregLastError,
+    PregLastErrorMsg,
     PregMatch,
     PregMatchAll,
     PregReplace,
@@ -1081,7 +1084,13 @@ impl RuntimeFnId {
             RuntimeFnId::ArrayValues if arg_types.first().is_some_and(PhpType::is_php_array) => {
                 PhpType::Array(Box::new(PhpType::Mixed))
             }
-            RuntimeFnId::ArrayMerge if arg_types.iter().any(PhpType::is_php_array) => {
+            RuntimeFnId::ArrayMerge
+                if arg_types.len() != 2
+                    || !crate::builtins::array_merge_takes_indexed_fast_path(
+                        &arg_types[0],
+                        &arg_types[1],
+                    ) =>
+            {
                 PhpType::php_array()
             }
             RuntimeFnId::ArrayValues => match arg_types.first().map(PhpType::codegen_repr) {
@@ -1460,7 +1469,10 @@ impl RuntimeFnId {
                     | crate::ir::Effects::ALLOC_HEAP.bits()
                     | crate::ir::Effects::MAY_THROW.bits(),
             ),
-            RuntimeFnId::ArrayMerge | RuntimeFnId::ArrayReverse | RuntimeFnId::ArrayValues => crate::ir::Effects::from_bits_retain(
+            // `array_keys()` joins them: its boxed receiver (`mixed`, `array|false`) raises PHP's
+            // `TypeError` on a non-array tag, so it neither is pure nor can be discarded.
+            RuntimeFnId::ArrayKeys
+            | RuntimeFnId::ArrayMerge | RuntimeFnId::ArrayReverse | RuntimeFnId::ArrayValues => crate::ir::Effects::from_bits_retain(
                 crate::ir::Effects::READS_HEAP.bits()
                     | crate::ir::Effects::ALLOC_HEAP.bits()
                     | crate::ir::Effects::REFCOUNT_OP.bits()
@@ -1489,7 +1501,6 @@ impl RuntimeFnId {
             RuntimeFnId::ArrayIntersectKey |
             RuntimeFnId::ArrayIsList |
             RuntimeFnId::ArrayKeyExists |
-            RuntimeFnId::ArrayKeys |
             RuntimeFnId::ArrayMergeRecursive |
             RuntimeFnId::ArrayReplace |
             RuntimeFnId::ArrayReplaceRecursive |
@@ -1613,6 +1624,8 @@ impl RuntimeFnId {
             | RuntimeFnId::Defined
             | RuntimeFnId::JsonLastError
             | RuntimeFnId::JsonLastErrorMsg
+            | RuntimeFnId::PregLastError
+            | RuntimeFnId::PregLastErrorMsg
             | RuntimeFnId::DateDefaultTimezoneGet
             | RuntimeFnId::ObGetLevel => crate::ir::Effects::READS_GLOBAL,
             RuntimeFnId::SplAutoloadExtensions => crate::ir::Effects::from_bits_retain(
@@ -2453,6 +2466,7 @@ impl RuntimeFnId {
     ///
     /// `Getmypid` qualifies because its wrapper has no parameters to adapt and returns a plain
     /// integer: `$name = "getmypid"; $name()` and `call_user_func($name)` must reach it like PHP.
+    /// `Flush` likewise takes nothing and returns null.
     pub const fn runtime_callable_supported(self) -> bool {
         if matches!(self, Self::MbEreg | Self::MbEregi | Self::MbParseStr) { return false; }
         if self.uses_mbstring_runtime() { return true; }
@@ -2463,6 +2477,7 @@ impl RuntimeFnId {
                 | RuntimeFnId::ArrayProduct
                 | RuntimeFnId::CloneWith
                 | RuntimeFnId::Count
+                | RuntimeFnId::Flush
                 | RuntimeFnId::Getmypid
                 | RuntimeFnId::MemoryGetAllocations
                 | RuntimeFnId::MemoryGetFrees
@@ -2497,8 +2512,8 @@ impl RuntimeFnId {
                         | PhpType::Void
                 )
             }),
-            RuntimeFnId::ArraySum | RuntimeFnId::ArrayProduct | RuntimeFnId::Getmypid
-            | RuntimeFnId::Gettype | RuntimeFnId::InArray
+            RuntimeFnId::ArraySum | RuntimeFnId::ArrayProduct | RuntimeFnId::Flush
+            | RuntimeFnId::Getmypid | RuntimeFnId::Gettype | RuntimeFnId::InArray
             | RuntimeFnId::MemoryGetAllocations
             | RuntimeFnId::MemoryGetFrees
             | RuntimeFnId::MemoryGetPeakUsage
@@ -3158,6 +3173,13 @@ impl RuntimeFnId {
                 | RuntimeFnId::StrIreplace
                 // Repetition uses separate concat storage and cannot alias its subject.
                 | RuntimeFnId::StrRepeat
+                // `__rt_sprintf` (and `__rt_vsprintf` through it) formats into its own concat
+                // reservation and never hands back the format string. The default
+                // `MayAliasArguments` bucket suppressed the release of an owned format
+                // temporary, so a format read from a variable or an array element leaked one
+                // string per call, and `var_export()` of a float leaked its probe formats.
+                | RuntimeFnId::Sprintf
+                | RuntimeFnId::Vsprintf
                 // Wire bytes occupy concat storage, never an operand's allocation. This also
                 // keeps temporary inputs pinned while serialization hooks can unwind.
                 | RuntimeFnId::Serialize
@@ -3309,6 +3331,7 @@ impl RuntimeFnId {
             RuntimeFnId::Fdatasync => "fdatasync",
             RuntimeFnId::Feof => "feof",
             RuntimeFnId::Fflush => "fflush",
+            RuntimeFnId::Flush => "flush",
             RuntimeFnId::Fgetc => "fgetc",
             RuntimeFnId::Fgetcsv => "fgetcsv",
             RuntimeFnId::Fgets => "fgets",
@@ -3866,6 +3889,8 @@ impl RuntimeFnId {
             RuntimeFnId::Passthru => "passthru",
             RuntimeFnId::PhpUname => "php_uname",
             RuntimeFnId::Phpversion => "phpversion",
+            RuntimeFnId::PregLastError => "preg_last_error",
+            RuntimeFnId::PregLastErrorMsg => "preg_last_error_msg",
             RuntimeFnId::PregMatch => "preg_match",
             RuntimeFnId::PregMatchAll => "preg_match_all",
             RuntimeFnId::PregReplace => "preg_replace",

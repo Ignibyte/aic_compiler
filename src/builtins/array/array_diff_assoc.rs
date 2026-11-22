@@ -12,6 +12,11 @@
 //! - `check` reproduces the legacy rule: both arguments must be associative arrays or
 //!   indexed arrays of scalars, and the result is the two-input hash result type. A
 //!   check hook is required because the return type depends on the inferred arguments.
+//! - PHP compares the values as `(string) $a === (string) $b`. The native helper refuses
+//!   string lists and a declared `array`, and on x86_64 leaks its renderings and copies, so
+//!   `check` retargets every call on two array operands to the key-set prelude's
+//!   `__elephc_array_diff_assoc()`, which answers a declared `array`. Without the
+//!   prelude the rule above stands.
 
 use crate::builtins::spec::BuiltinCheckCtx;
 use crate::errors::CompileError;
@@ -25,7 +30,8 @@ builtin! {
     ),
 }
 
-/// Validates both arguments are hash-compatible arrays and returns the merged hash type.
+/// Retargets a call on two arrays to the prelude, or validates both arguments are
+/// hash-compatible arrays and returns the merged hash type.
 ///
 /// Arity (exactly 2 args) is pre-validated by `check_arity`. Both arguments are
 /// re-inferred here to drive the return type; the registry already inferred every
@@ -37,6 +43,12 @@ fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     let ty2 = cx.checker.infer_type(&cx.args[1], cx.env)?;
     let accepted =
         |t: &PhpType| matches!(t, PhpType::AssocArray { .. }) || t.is_scalar_indexed_array();
+    let array = crate::key_set_prelude::is_array_operand;
+    if array(&ty1) && array(&ty2) {
+        if let Some(ty) = crate::key_set_prelude::retarget(cx, crate::key_set_prelude::ASSOC_DIFF) {
+            return Ok(ty);
+        }
+    }
     if !accepted(&ty1) || !accepted(&ty2) {
         return Err(CompileError::new(
             cx.span,

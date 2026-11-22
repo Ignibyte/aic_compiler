@@ -25,6 +25,7 @@ pub(super) fn emit_platform_runtime(emitter: &mut Emitter, features: RuntimeFeat
     // Preserve host status handling and shared mbstring MIME metadata for header operations.
     io::emit_http_response_code(emitter, features.web);
     io::emit_header(emitter, features.web, mbstring);
+    io::emit_flush(emitter, features.web, mbstring);
     io::emit_cstr(emitter);
     io::emit_disk_space(emitter);
     io::emit_fopen(emitter);

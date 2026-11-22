@@ -191,3 +191,25 @@ fn test_this_property_element_increment_retains_php_incdec() {
     assert!(matches!(&array.kind, ExprKind::PropertyAccess { object, property }
         if matches!(object.kind, ExprKind::This) && property == "arr"));
 }
+
+/// Verifies `<?php ;` parses to one empty statement, as PHP's grammar allows.
+#[test]
+fn test_empty_statement_parses() {
+    let stmts = parse_source("<?php ;");
+    assert_eq!(stmts.len(), 1);
+    assert!(matches!(&stmts[0].kind, StmtKind::Synthetic(body) if body.is_empty()));
+    assert!(!parse_fails("<?php if (1); echo 1;"));
+}
+
+/// Verifies a `;` before the first case parses in both switch forms, as `<?php switch ($x): ?>`
+/// lowers to `switch ($x): ;`.
+#[test]
+fn test_switch_accepts_semicolon_before_first_case() {
+    for source in [
+        "<?php switch ($x): ; case 1: echo 1; break; endswitch;",
+        "<?php switch ($x) { ; case 1: echo 1; }",
+    ] {
+        let stmts = parse_source(source);
+        assert!(matches!(&stmts[0].kind, StmtKind::Switch { .. }), "{source}");
+    }
+}

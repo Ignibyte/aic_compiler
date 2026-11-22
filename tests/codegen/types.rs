@@ -35,6 +35,12 @@ mod type_annotations;
 mod nullable_array_merge;
 #[path = "types/narrowing.rs"]
 mod narrowing;
+#[path = "types/mixed_boundaries.rs"]
+mod mixed_boundaries;
+#[path = "types/union_returns.rs"]
+mod union_returns;
+#[path = "types/scalar_arguments.rs"]
+mod scalar_arguments;
 mod nullable_fallback_flow;
 #[path = "types/narrowed_object_arguments.rs"]
 mod narrowed_object_arguments;

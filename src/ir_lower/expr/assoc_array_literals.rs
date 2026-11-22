@@ -197,6 +197,20 @@ pub(super) fn assoc_array_literal_type_for_ir(
     }
 }
 
+/// Maps an associative-literal value type to the representation a hash entry can hold.
+///
+/// A hash cannot store an inline `{payload, tag}` tagged scalar — value type 11 already means a
+/// PHP reference set — so such a value is boxed as Mixed, which the insertion path
+/// (`materialize_hash_mixed_value_*`) already does. Keeping the EIR value type Mixed is what
+/// keeps every consumer (reads, `isset`, iteration) consistent with the storage.
+fn assoc_hash_storage_type(ty: PhpType) -> PhpType {
+    if ty.codegen_repr() == PhpType::TaggedScalar {
+        PhpType::Mixed
+    } else {
+        ty
+    }
+}
+
 /// Returns the best EIR storage value type for one associative-array literal value.
 ///
 /// A value whose own storage is the inline tagged scalar (`int|null`) is boxed: a hash entry has
@@ -464,7 +478,13 @@ pub(in crate::ir_lower) fn property_access_expr_type_for_ir(
             .find(|field| field.name == property)
             .map(|field| field.php_type.codegen_repr());
     }
-    let class_name = instance_callable_object_class(ctx, object)?;
+    // A receiver that does not resolve to one class (a `foreach` element of an untyped array, a
+    // `mixed` value) or a property the class does not declare (`__get`) reads as `mixed`: that is
+    // what `prop_get` produces. Leaving it unknown let a caller fall back to the syntactic `int`,
+    // and `['q' => $entry->q]` stored every string into an int-valued hash as 0.
+    let Some(class_name) = instance_callable_object_class(ctx, object) else {
+        return Some(PhpType::Mixed);
+    };
     let normalized = class_name.trim_start_matches('\\');
     if is_builtin_stdclass_name(normalized) {
         return Some(PhpType::Mixed);
@@ -472,12 +492,16 @@ pub(in crate::ir_lower) fn property_access_expr_type_for_ir(
     if let Some(property_ty) = runtime_property_type_override(ctx, normalized, property) {
         return Some(normalize_value_php_type(property_ty));
     }
-    let class_info = ctx.classes.get(normalized)?;
-    class_info
-        .properties
-        .iter()
-        .find(|(name, _)| name == property)
-        .map(|(_, ty)| normalize_value_php_type(ty.codegen_repr()))
+    let Some(class_info) = ctx.classes.get(normalized) else {
+        return Some(PhpType::Mixed);
+    };
+    Some(
+        class_info
+            .properties
+            .iter()
+            .find(|(name, _)| name == property)
+            .map_or(PhpType::Mixed, |(_, ty)| normalize_value_php_type(ty.codegen_repr())),
+    )
 }
 
 /// Returns the declared property result type plus `null` when a nullsafe receiver may be null.
@@ -548,5 +572,5 @@ pub(super) fn nullsafe_method_call_expr_type_for_ir(
 
 /// Merges associative-array value types for EIR storage metadata.
 pub(crate) fn merge_ir_assoc_value_type(left: PhpType, right: PhpType) -> PhpType {
-    ir_array_storage_type(PhpType::widen_array_branch_element(left, right))
+    assoc_hash_storage_type(ir_array_storage_type(PhpType::widen_array_branch_element(left, right)))
 }

@@ -9,16 +9,13 @@
 
 use super::*;
 
-/// Splice return typing must not accept a non-array receiver or arbitrary Mixed array returns.
+/// Splice return typing must not accept a non-array receiver. (A `mixed` value returned as
+/// `array` is checked at run time instead; `types::mixed_boundaries` covers that.)
 #[test]
 fn test_error_declared_array_splice_keeps_non_array_boundaries_checked() {
     expect_error(
         "<?php $values = 7; array_splice($values, 0, 1);",
         "array_splice() first argument must be array",
-    );
-    expect_error(
-        "<?php function notAnArray(mixed $value): array { return $value; } notAnArray(7);",
-        "return type expects",
     );
 }
 
@@ -208,12 +205,13 @@ fn test_error_array_slice_preserve_keys_boxed_source() {
     );
 }
 
-/// Verifies that error array merge wrong args.
+/// Verifies that a non-array operand among more than two `array_merge()` arguments is still
+/// rejected once the call is folded into pairwise merges.
 #[test]
-fn test_error_array_merge_wrong_args() {
+fn test_error_array_merge_rejects_a_non_array_among_many() {
     expect_error(
-        "<?php $a = [1]; array_merge($a);",
-        "array_merge() takes exactly 2 arguments",
+        "<?php $a = [1]; array_merge($a, 5, [2]);",
+        "array_merge() second argument must be array",
     );
 }
 
@@ -823,12 +821,15 @@ fn test_indexed_array_unrelated_object_values_widen_to_mixed() {
     );
 }
 
-/// Verifies `array_map()` rejects object elements until its callback runtime supports them.
+/// Verifies `array_map()` accepts a list of objects: it maps through the boxed-array path.
 #[test]
-fn test_error_array_map_rejects_object_elements() {
-    expect_error(
-        "<?php final class Box {} $items = [new Box()]; array_map(static fn(Box $box): Box => $box, $items);",
-        "array_map() does not yet support object array elements",
+fn test_array_map_accepts_object_elements() {
+    assert!(
+        check_source(
+            "<?php final class Box {} $items = [new Box()]; array_map(static fn(Box $box): Box => $box, $items);"
+        )
+        .is_ok(),
+        "array_map() over a list of objects should type-check",
     );
 }
 
@@ -1190,12 +1191,14 @@ array_walk($w, function ($v) { echo strlen($v); });
     );
 }
 
-/// Verifies contextual callback typing does not silence real errors: an integer element type
-/// still rejects a string-only builtin applied to the inherited parameter.
+/// Verifies contextual callback typing does not silence real errors: in a strict file an
+/// integer element type still rejects a string-only builtin applied to the inherited parameter
+/// (a weak file converts the integer, as php-src does).
 #[test]
 fn test_array_callback_contextual_typing_still_rejects_wrong_element_use() {
     expect_error(
         r#"<?php
+declare(strict_types=1);
 $w = [3, 1, 2];
 usort($w, fn($a, $b) => strlen($a) <=> strlen($b));
 "#,

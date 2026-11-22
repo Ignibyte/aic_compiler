@@ -37,43 +37,6 @@ echo "end of script\n";
     assert_eq!(out, "end of script\ndestruct c\ndestruct a\ndestruct b\n");
 }
 
-/// A destructor fires at function scope exit, before control returns to the
-/// caller's following statement.
-#[test]
-fn test_destruct_on_scope_exit() {
-    let out = compile_and_run(
-        r#"<?php
-class Logger {
-    public function __destruct() {
-        echo "destroyed\n";
-    }
-}
-function run() {
-    $x = new Logger();
-    echo "inside\n";
-}
-run();
-echo "after\n";
-"#,
-    );
-    assert_eq!(out, "inside\ndestroyed\nafter\n");
-}
-
-/// A top-level object's destructor runs at program end, after main's body.
-#[test]
-fn test_destruct_at_program_end() {
-    let out = compile_and_run(
-        r#"<?php
-class Logger {
-    public function __destruct() { echo "bye\n"; }
-}
-$x = new Logger();
-echo "main\n";
-"#,
-    );
-    assert_eq!(out, "main\nbye\n");
-}
-
 /// The object a narrowed receiver's call returns is destructed like any other: a method the
 /// receiver's static interface does not declare dispatches through a boxed `Mixed` result,
 /// and that box owns the returned object, whether the result is chained, bound or discarded.
@@ -112,6 +75,43 @@ echo "end\n";
         "destruct a+chained\ndestruct a\na+chained\ndestruct b+bound\ndestruct b\nb+bound\n\
          destruct c+discarded\nafter discard\ndestruct c\nend\n"
     );
+}
+
+/// A destructor fires at function scope exit, before control returns to the
+/// caller's following statement.
+#[test]
+fn test_destruct_on_scope_exit() {
+    let out = compile_and_run(
+        r#"<?php
+class Logger {
+    public function __destruct() {
+        echo "destroyed\n";
+    }
+}
+function run() {
+    $x = new Logger();
+    echo "inside\n";
+}
+run();
+echo "after\n";
+"#,
+    );
+    assert_eq!(out, "inside\ndestroyed\nafter\n");
+}
+
+/// A top-level object's destructor runs at program end, after main's body.
+#[test]
+fn test_destruct_at_program_end() {
+    let out = compile_and_run(
+        r#"<?php
+class Logger {
+    public function __destruct() { echo "bye\n"; }
+}
+$x = new Logger();
+echo "main\n";
+"#,
+    );
+    assert_eq!(out, "main\nbye\n");
 }
 
 /// `unset($x)` releasing the last reference runs the destructor immediately.

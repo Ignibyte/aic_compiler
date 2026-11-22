@@ -11,6 +11,8 @@
 //!   `PREG_SET_ORDER`, `PREG_OFFSET_CAPTURE`, and `PREG_UNMATCHED_AS_NULL`.
 //! - `preg_match()` returns PHP `int|false`. The runtime uses `-1` for an invalid
 //!   pattern or the removed `/e` modifier; that path leaves `$matches` untouched.
+//!   `-2` reports a `/u` subject that is not valid UTF-8, and `$matches` is written.
+//! - `preg_last_error()` reads `_preg_last_error`, which each regex helper resets on entry.
 //! - Every `preg_replace_callback()` callback uses the descriptor ABI adapter, including
 //!   literal names whose PHP array parameter has boxed storage.
 //! - `preg_split()` forces boxed Mixed element slots so dynamic flags cannot mismatch layout.
@@ -234,6 +236,31 @@ pub(crate) fn lower_preg_replace_callback(
         abi::emit_pop_call_operand_owner(ctx.emitter);
     }
     callback_target.release_env(ctx, env_bytes);
+    super::store_if_result(ctx, inst)
+}
+
+/// Lowers `preg_last_error()` by reading the error code the last `preg_*` helper stored.
+pub(crate) fn lower_preg_last_error(
+    ctx: &mut FunctionContext<'_>,
+    inst: &Instruction,
+) -> Result<()> {
+    super::ensure_arg_count(inst, "preg_last_error", 0)?;
+    abi::emit_load_symbol_to_reg(
+        ctx.emitter,
+        abi::int_result_reg(ctx.emitter),
+        "_preg_last_error",
+        0,
+    );
+    super::store_if_result(ctx, inst)
+}
+
+/// Lowers `preg_last_error_msg()` through the runtime message lookup table.
+pub(crate) fn lower_preg_last_error_msg(
+    ctx: &mut FunctionContext<'_>,
+    inst: &Instruction,
+) -> Result<()> {
+    super::ensure_arg_count(inst, "preg_last_error_msg", 0)?;
+    abi::emit_call_label(ctx.emitter, "__rt_preg_last_error_msg");
     super::store_if_result(ctx, inst)
 }
 
@@ -627,16 +654,17 @@ fn matches_local_slot(ctx: &FunctionContext<'_>, value: ValueId) -> Result<Local
 /// Boxes the count returned by `preg_match`/`preg_match_all` as PHP `int|false`.
 ///
 /// The runtime returns `-1` when compilation or flag validation fails, and when
-/// `preg_match()` sees the removed `/e` modifier. Every real count is non-negative.
-/// The EIR result is a union, so its representation is a Mixed cell and the raw
-/// count must be boxed before storage.
+/// `preg_match()` sees the removed `/e` modifier. It returns `-2` when a `/u` subject
+/// is not valid UTF-8: PHP still writes `$matches` on that path. Every real count is
+/// non-negative. The EIR result is a union, so its representation is a Mixed cell and
+/// the raw count must be boxed before storage.
 fn box_count_or_false(ctx: &mut FunctionContext<'_>) -> Result<()> {
     let false_label = ctx.next_label("preg_count_false");
     let done_label = ctx.next_label("preg_count_done");
     match ctx.emitter.target.arch {
         Arch::AArch64 => {
-            ctx.emitter.instruction("cmn x0, #1");                              // compare the count against the failure sentinel
-            ctx.emitter.instruction(&format!("b.eq {}", false_label));          // -1 boxes PHP false
+            ctx.emitter.instruction("cmp x0, #0");                              // compare the count against the negative failure sentinels
+            ctx.emitter.instruction(&format!("b.lt {}", false_label));          // -1 and -2 box PHP false
             crate::codegen::emit_box_current_value_as_mixed(ctx.emitter, &PhpType::Int);
             ctx.emitter.instruction(&format!("b {}", done_label));              // skip the false arm
             ctx.emitter.label(&false_label);
@@ -647,8 +675,8 @@ fn box_count_or_false(ctx: &mut FunctionContext<'_>) -> Result<()> {
             ctx.emitter.label(&done_label);
         }
         Arch::X86_64 => {
-            ctx.emitter.instruction("cmp rax, -1");                             // compare the count against the failure sentinel
-            ctx.emitter.instruction(&format!("je {}", false_label));            // -1 boxes PHP false
+            ctx.emitter.instruction("cmp rax, 0");                              // compare the count against the negative failure sentinels
+            ctx.emitter.instruction(&format!("jl {}", false_label));            // -1 and -2 box PHP false
             crate::codegen::emit_box_current_value_as_mixed(ctx.emitter, &PhpType::Int);
             ctx.emitter.instruction(&format!("jmp {}", done_label));            // skip the false arm
             ctx.emitter.label(&false_label);
@@ -710,6 +738,8 @@ fn box_split_or_false(ctx: &mut FunctionContext<'_>) -> Result<()> {
 /// PHP leaves a caller-supplied `$matches` variable untouched when pattern compilation fails
 /// or `preg_match()` sees the removed `/e` modifier. The runtime reports that path with a `-1`
 /// count and a fresh empty array, so the lowering drops the array instead of writing it.
+/// A `/u` subject that is not valid UTF-8 returns `-2`: PHP writes the empty result there,
+/// so that array is stored like a successful one.
 fn store_matches_array_on_success(
     ctx: &mut FunctionContext<'_>,
     slot: LocalSlotId,

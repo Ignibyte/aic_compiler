@@ -204,13 +204,33 @@ impl Checker {
                 default,
             } => {
                 self.infer_type(subject, env)?;
+                let subject_is_true = matches!(subject.kind, ExprKind::BoolLiteral(true));
                 let mut result_ty: Option<PhpType> = None;
                 let mut arm_types: Vec<(&Expr, PhpType)> = Vec::new();
                 for (conditions, result) in arms {
                     for c in conditions {
                         self.infer_type(c, env)?;
                     }
-                    let ty = self.match_arm_result_type(result, env)?;
+                    // `match (true) { $x instanceof X => <arm>, ... }`: the arm only runs when its
+                    // single condition is `=== true`, so it gets the same then-branch narrowing a
+                    // ternary gives (`$x->prop` on a joined `A|B` union is read from `A`). The
+                    // else narrowing is not chained into later arms: a non-bool condition that is
+                    // not `=== true` need not be falsy. An arm that writes the variable keeps the
+                    // un-narrowed type, as before. Only plain locals are narrowed: a property
+                    // place (`$h->p instanceof A`) can be rewritten by an assignment anywhere in
+                    // the arm, which the local write check does not see.
+                    let narrowed = match conditions.as_slice() {
+                        [condition] if subject_is_true => self
+                            .guard_narrowing(condition, env)?
+                            .filter(|guard| match_arm_may_narrow(result, &guard.var))
+                            .map(|guard| {
+                                let mut arm_env = env.clone();
+                                arm_env.insert(guard.var, guard.then_ty);
+                                arm_env
+                            }),
+                        _ => None,
+                    };
+                    let ty = self.match_arm_result_type(result, narrowed.as_ref().unwrap_or(env))?;
                     arm_types.push((result, ty.clone()));
                     result_ty = Some(match result_ty {
                         Some(acc) => merge_match_arm_result_type(self, acc, ty),
@@ -379,4 +399,37 @@ impl Checker {
 /// path; everything else (arrays, objects, buffers, pointers) reaches this diagnostic.
 fn increment_type_error(name: &str, ty: &PhpType) -> String {
     format!("Cannot increment/decrement ${} of type {}", name, ty)
+}
+
+/// Returns whether a `match (true)` arm may see its `instanceof` guard's then-narrowing of `key`.
+///
+/// Only a plain local qualifies, and only when the arm cannot write it before it reads it. A
+/// property place (the synthetic `\x01` key of `$h->p`) is left un-narrowed: an assignment such
+/// as `($h->p = new B())` inside the arm replaces the value behind it, and the local write check
+/// cannot see that store.
+pub(super) fn match_arm_may_narrow(result: &Expr, key: &str) -> bool {
+    !Checker::narrowed_place_key_is_property(key)
+        && (!crate::ir_lower::expr_writes_local(result, key)
+            || arm_is_call_reading_local(result, key))
+}
+
+/// Returns whether an arm is one call whose receiver and arguments only read the local `key`.
+///
+/// The write check counts a bare `$x` argument as a write whenever it cannot tell that the
+/// parameter is by value, as for a user function or a method. Such a write happens inside the
+/// callee, after every argument has been evaluated, and the call is the arm's last step, so
+/// `$x instanceof A => $this->a($x)` reads `$x` only while the guard still holds.
+fn arm_is_call_reading_local(result: &Expr, key: &str) -> bool {
+    let reads_only =
+        |args: &[Expr]| args.iter().all(|arg| !crate::ir_lower::expr_writes_local(arg, key));
+    match &result.kind {
+        ExprKind::FunctionCall { args, .. }
+        | ExprKind::StaticMethodCall { args, .. }
+        | ExprKind::NewObject { args, .. } => reads_only(args),
+        ExprKind::MethodCall { object, args, .. }
+        | ExprKind::NullsafeMethodCall { object, args, .. } => {
+            !crate::ir_lower::expr_writes_local(object, key) && reads_only(args)
+        }
+        _ => false,
+    }
 }

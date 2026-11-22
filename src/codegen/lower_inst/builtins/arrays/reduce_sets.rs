@@ -93,9 +93,10 @@ pub(crate) fn lower_array_merge(ctx: &mut FunctionContext<'_>, inst: &Instructio
     super::super::ensure_arg_count(inst, "array_merge", 2)?;
     let first = expect_operand(inst, 0)?;
     let second = expect_operand(inst, 1)?;
-    if ctx.value_php_type(first)?.codegen_repr() == PhpType::Mixed
-        || ctx.value_php_type(second)?.codegen_repr() == PhpType::Mixed
-    {
+    if !crate::builtins::array_merge_takes_indexed_fast_path(
+        &ctx.value_php_type(first)?,
+        &ctx.value_php_type(second)?,
+    ) {
         return super::boxed_merge::lower_boxed_array_merge(ctx, inst, first, second);
     }
     let elem_ty = compatible_eight_byte_indexed_array_element_type(

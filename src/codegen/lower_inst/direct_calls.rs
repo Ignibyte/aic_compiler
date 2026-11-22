@@ -43,6 +43,24 @@ pub(super) fn lower_direct_call(ctx: &mut FunctionContext<'_>, inst: &Instructio
     // bool coercion folds `0`/`""`/`[]` into `false`; php throws the argument `TypeError`
     // naming what was given. The guards run in source order, before materialization.
     for (index, (param, operand)) in callee.params.iter().zip(&inst.operands).enumerate() {
+        if let Some(boundary) = param.php_type.mixed_boundary() {
+            if !param.by_ref && ctx.value_php_type(*operand)? == PhpType::Mixed {
+                let base_name = function_name.split('<').next().unwrap_or(&function_name);
+                super::mixed_boundary_guard::emit_mixed_boundary_guard(
+                    ctx,
+                    *operand,
+                    &boundary,
+                    &format!(
+                        "{base_name}(): Argument #{} (${}) must be of type {}, ",
+                        index + 1,
+                        param.name,
+                        boundary.php_type_name()
+                    ),
+                    "given",
+                )?;
+            }
+            continue;
+        }
         if param.php_type != PhpType::False {
             continue;
         }
@@ -509,6 +527,19 @@ pub(super) fn emit_literal_declared_parameter_guards(
     callable_name: &str,
 ) -> Result<()> {
     for (index, ((name, declared), value)) in parameters.iter().zip(operands).enumerate() {
+        if let Some(boundary) = declared.mixed_boundary() {
+            if ctx.value_php_type(*value)? == PhpType::Mixed {
+                let prefix = format!(
+                    "{callable_name}(): Argument #{} (${name}) must be of type {}, ",
+                    index + 1,
+                    boundary.php_type_name(),
+                );
+                super::mixed_boundary_guard::emit_mixed_boundary_guard(
+                    ctx, *value, &boundary, &prefix, "given",
+                )?;
+            }
+            continue;
+        }
         if !matches!(declared, PhpType::False | PhpType::Void) {
             continue;
         }

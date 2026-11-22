@@ -72,6 +72,7 @@ fn emit_close_loaded_stream_fd(ctx: &mut FunctionContext<'_>) {
     abi::emit_call_label(ctx.emitter, "__rt_user_filter_close_fd");
     match ctx.emitter.target.arch {
         Arch::AArch64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x0", &native_close_label);
             abi::emit_symbol_address(ctx.emitter, "x9", "_stream_read_filters");
             ctx.emitter.instruction("strb wzr, [x9, x0]");                      // clear any read filter before the descriptor can be reused
             abi::emit_symbol_address(ctx.emitter, "x9", "_stream_write_filters");
@@ -86,6 +87,7 @@ fn emit_close_loaded_stream_fd(ctx: &mut FunctionContext<'_>) {
             ctx.emitter.instruction("mov x0, #1");                              // return true when the stream close succeeded
         }
         Arch::X86_64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "rax", &native_close_label);
             abi::emit_symbol_address(ctx.emitter, "r9", "_stream_read_filters"); // read-filter table base
             ctx.emitter.instruction("mov BYTE PTR [r9 + rax], 0");              // clear any read filter before the descriptor can be reused
             abi::emit_symbol_address(ctx.emitter, "r9", "_stream_write_filters"); // write-filter table base

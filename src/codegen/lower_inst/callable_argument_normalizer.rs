@@ -28,7 +28,7 @@ pub(in crate::codegen) fn emit_callable_argument_normalizer(
     shared: &mut SharedCodegenState,
 ) -> Result<()> {
     let function = helper_function(CALLABLE_ARGUMENT_NORMALIZER, PhpType::Callable);
-    let layout = frame::layout_for_function(&function, emitter.target, false, false, false);
+    let layout = frame::layout_for_function(&function, emitter.target, false, false, false, false);
     let saved_nested_offset = layout.frame_size - 8;
     let frame_size = layout.frame_size + 16;
     let mut ctx = FunctionContext::new(

@@ -1,3 +1,9 @@
+> **AIC compiler.** This is [Ignibyte](https://github.com/Ignibyte)'s fork of elephc, the compiler the
+> [AIC framework](https://github.com/Ignibyte/aic-nextgen) builds its native site with: upstream `main`
+> plus the fixes and features AIC needs that upstream does not have yet. [FIXES.md](FIXES.md) lists each
+> one and its upstream pull request, and the list shrinks as upstream takes them. [FORK.md](FORK.md)
+> says how to build it and how the fork is kept. Everything below is upstream's README.
+
 <p align="center">
   <img src="assets/logo-mark.png" alt="elephc logo" width="130">
 </p>

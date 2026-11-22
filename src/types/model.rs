@@ -13,6 +13,48 @@ use std::collections::HashMap;
 use std::fmt;
 use super::ScalarWidth;
 
+/// What a declared parameter or return type accepts from a boxed `mixed` value that only a
+/// run-time check can verify (see [`PhpType::mixed_boundary`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct MixedBoundary {
+    /// Either runtime array shape, indexed or hash.
+    pub(crate) arrays: bool,
+    /// `null`.
+    pub(crate) null: bool,
+    /// Objects that are instances of one of these classes or interfaces.
+    pub(crate) classes: Vec<String>,
+    /// Every object, as the bare `object` type declares.
+    pub(crate) any_object: bool,
+}
+
+impl MixedBoundary {
+    /// Adds an object member: the bare `object` type is the class with an empty name.
+    fn add_object(&mut self, name: &str) {
+        if name.is_empty() {
+            self.any_object = true;
+        } else {
+            self.classes.push(name.to_string());
+        }
+    }
+
+    /// Spells the declared type the way php-src's `TypeError` does: the classes in declaration
+    /// order, then `array`, then `null`, joined by `|`; a single member with `null` is `?X`.
+    pub(crate) fn php_type_name(&self) -> String {
+        let mut members: Vec<&str> = self.classes.iter().map(String::as_str).collect();
+        if self.any_object {
+            members.push("object");
+        }
+        if self.arrays {
+            members.push("array");
+        }
+        match (members.as_slice(), self.null) {
+            ([only], true) => format!("?{only}"),
+            (_, true) => format!("{}|null", members.join("|")),
+            (_, false) => members.join("|"),
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 #[allow(dead_code)] // Callable used in match arms, constructed when closures are added
 /// PHP runtime type.
@@ -95,6 +137,55 @@ impl PhpType {
             && members.iter().any(|member| matches!(member, Self::Array(value) if **value == Self::Mixed))
             && members.iter().any(|member| matches!(member, Self::AssocArray { key, value }
                 if **key == Self::Mixed && **value == Self::Mixed)))
+    }
+
+    /// Describes what this DECLARED parameter or return type accepts from a boxed `mixed` value,
+    /// when only a run-time check can decide it: either array shape, `null`, and objects of the
+    /// named classes. `None` for every other declaration, scalars included (they have their own
+    /// cast funnels), and for `iterable`, whose raw-pointer storage the boxed cell does not share.
+    pub(crate) fn mixed_boundary(&self) -> Option<MixedBoundary> {
+        let mut boundary = MixedBoundary::default();
+        let members = match self {
+            Self::Object(name) => {
+                boundary.add_object(name);
+                return Some(boundary);
+            }
+            Self::Union(members) => members,
+            _ => return None,
+        };
+        for member in members {
+            match member {
+                Self::Array(value) if **value == Self::Mixed => boundary.arrays = true,
+                Self::AssocArray { key, value } if **key == Self::Mixed && **value == Self::Mixed => {
+                    boundary.arrays = true;
+                }
+                Self::Void => boundary.null = true,
+                Self::Object(name) => boundary.add_object(name),
+                _ => return None,
+            }
+        }
+        (boundary.arrays || boundary.any_object || !boundary.classes.is_empty()).then_some(boundary)
+    }
+
+    /// Returns whether this DECLARED return type is a union with a scalar member that a returned
+    /// value must be checked and bound against at run time (`int|string`, `?int`, `false|string`).
+    ///
+    /// Every member must be one the union return guard can test: the scalars, `null`, either
+    /// array shape and named classes. `iterable`, `callable` and `static` members leave the
+    /// declaration to the existing return coercions.
+    pub(crate) fn checks_scalar_union(&self) -> bool {
+        let Self::Union(members) = self else {
+            return false;
+        };
+        let scalar = |member: &PhpType| {
+            matches!(member, Self::Int | Self::Float | Self::Str | Self::Bool | Self::False)
+        };
+        let supported = |member: &PhpType| {
+            scalar(member)
+                || matches!(member, Self::Void | Self::Array(_) | Self::AssocArray { .. })
+                || matches!(member, Self::Object(class) if !class.eq_ignore_ascii_case("static"))
+        };
+        members.iter().any(scalar) && members.iter().all(supported)
     }
 
     /// Returns whether an array slot can safely hold a managed live reference for `array_push`.
@@ -241,6 +332,20 @@ impl PhpType {
         )
     }
 
+    /// Returns whether `codegen_repr()` lowers this type to `TaggedScalar`, without building the
+    /// lowered type: the container guards below ask it of their element type, and lowering a
+    /// deeply nested array type (`[[[...]]]`) at every level cloned each subtree again.
+    fn lowers_to_tagged_scalar(&self) -> bool {
+        match self {
+            PhpType::TaggedScalar => true,
+            PhpType::Union(members) => {
+                crate::codegen::sentinels::null_repr_is_tagged()
+                    && nullable_int_union_members(members)
+            }
+            _ => false,
+        }
+    }
+
     /// Lower high-level checker-only types to the runtime representation used by codegen.
     /// `Iterable` keeps its own runtime shape (raw heap pointer dispatched via the heap-kind tag),
     /// so it is no longer collapsed to `Mixed` here.
@@ -257,6 +362,17 @@ impl PhpType {
                 nullable_pointer_union_member(members).expect("checked above")
             }
             PhpType::Union(_) => PhpType::Mixed,
+            // A hash entry has no `?int` payload (`TaggedScalar`): `hash_set` boxes such a value
+            // into a Mixed cell, so the hash itself is Mixed-valued and reads unbox from there.
+            PhpType::AssocArray { key, value } if value.lowers_to_tagged_scalar() => {
+                PhpType::AssocArray { key: key.clone(), value: Box::new(PhpType::Mixed) }
+            }
+            // The same holds for an indexed array's elements: a `?int` element is stored boxed,
+            // so a reader that only knows the array as `mixed` sees an int or a null, not raw
+            // payload words it would take for a string.
+            PhpType::Array(value) if value.lowers_to_tagged_scalar() => {
+                PhpType::Array(Box::new(PhpType::Mixed))
+            }
             PhpType::False => PhpType::Bool,
             PhpType::Resource(_) => PhpType::Int,
             PhpType::Never => PhpType::Void, // never should not be materialized; fallback to void sentinel

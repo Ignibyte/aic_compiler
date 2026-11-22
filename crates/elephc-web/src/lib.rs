@@ -22,6 +22,7 @@ mod request_state;
 mod server;
 mod session;
 mod trans_sid;
+mod uploads;
 mod worker;
 mod process;
 
@@ -45,10 +46,15 @@ pub use request_state::{
 };
 
 // Re-exported so the compiled `--web` runtime routines (`__rt_header`,
-// `__rt_http_response_code`) can link against the response-control setters.
+// `__rt_http_response_code`, `__rt_flush`) can link against the response-control setters.
 pub use request_state::{
-    elephc_web_handle_uncaught_exception, elephc_web_header, elephc_web_set_status,
+    elephc_web_flush, elephc_web_handle_uncaught_exception, elephc_web_header,
+    elephc_web_set_status,
 };
+
+// Re-exported so the compiled `--web` web prelude's upload functions link against the
+// per-request upload registry.
+pub use uploads::{elephc_web_upload_forget, elephc_web_upload_is, elephc_web_upload_register};
 
 // Re-exported so the compiled `--web` web prelude can link against all session
 // C-ABI bridge symbols defined in `session/` (state, file I/O, ID generation,

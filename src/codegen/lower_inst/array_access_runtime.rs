@@ -69,6 +69,16 @@ pub(super) fn lower_runtime_call(ctx: &mut FunctionContext<'_>, inst: &Instructi
                 crate::codegen::sentinels::emit_tagged_scalar_null(ctx.emitter);
                 return store_if_result(ctx, inst);
             }
+            // A boxed Mixed/union value reaching a `?int` boundary is unboxed exactly as a
+            // loaded `?int` argument is (`coerce_loaded_value_to_tagged_scalar`): `__rt_mixed_unbox`
+            // then its payload/tag are placed in the tagged-scalar result registers. Without this a
+            // `?int` return of a Mixed value (`return ["k" => $n]["k"];`) was rejected here
+            // (#1561 review).
+            PhpType::Mixed | PhpType::Union(_) => {
+                load_value_to_first_int_arg(ctx, value)?;
+                emit_mixed_result_as_tagged_scalar(ctx);
+                return store_if_result(ctx, inst);
+            }
             other => {
                 return Err(CodegenIrError::unsupported(format!(
                     "runtime_call from PHP type {:?} to PHP type TaggedScalar",
@@ -368,7 +378,8 @@ pub(in crate::codegen) fn lower_runtime_object_method_call(
     )?;
     let caller_stack_pad_bytes = direct_call_stack_pad_bytes(ctx, call_args.overflow_bytes);
     abi::emit_reserve_temporary_stack(ctx.emitter, caller_stack_pad_bytes);
-    emit_direct_resolved_method_call(ctx, &target)?;
+    // An implicit call (`(string)`, `count()`) still runs a subclass's override.
+    emit_resolved_method_call(ctx, &target)?;
     abi::emit_release_temporary_stack(ctx.emitter, caller_stack_pad_bytes);
     abi::emit_release_temporary_stack(ctx.emitter, call_args.overflow_bytes);
     store_runtime_object_call_result(ctx, inst, &target.return_ty)?;

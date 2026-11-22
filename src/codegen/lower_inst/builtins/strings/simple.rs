@@ -13,13 +13,19 @@ use super::*;
 /// PHP's default `htmlspecialchars()` flags: `ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML401`.
 const HTML_ESCAPE_DEFAULT_FLAGS: i64 = 3 | 8;
 
+/// An internal flag bit, unused by PHP's `ENT_*` flags: the runtime copies bytes >= 0x80 as they are instead of
+/// checking them as UTF-8. Set when `$encoding` is not UTF-8, or is not known at compile time.
+const HTML_ESCAPE_RAW_BYTES: i64 = 65536;
+
 /// Lowers `htmlspecialchars()` / `htmlentities()` — escapes the subject string (operand 0).
 /// `name` is the calling builtin's PHP name, used in argument-coercion diagnostics.
 ///
 /// The `flags` argument (operand 1) reaches `__rt_htmlspecialchars` in the third argument
 /// register: its quote bits choose which quotes are escaped, and its doctype bits choose
-/// `&apos;` over `&#039;` (#645). Omitted, it is PHP's default. `encoding` and `double_encode`
-/// are accepted but not applied.
+/// `&apos;` over `&#039;` (#645). Omitted, it is PHP's default. Under UTF-8 (no `encoding`, or a
+/// literal `UTF-8`) the runtime checks multibyte sequences and applies `ENT_IGNORE` and
+/// `ENT_SUBSTITUTE`; any other `encoding` keeps the bytes as they are. `double_encode` is
+/// accepted but not applied.
 pub(crate) fn lower_html_escape(
     ctx: &mut FunctionContext<'_>,
     inst: &Instruction,
@@ -33,6 +39,12 @@ pub(crate) fn lower_html_escape(
     } else {
         abi::emit_load_int_immediate(ctx.emitter, result_reg, HTML_ESCAPE_DEFAULT_FLAGS);
     }
+    if !html_escape_encoding_is_utf8(ctx, inst)? {
+        match ctx.emitter.target.arch {
+            Arch::AArch64 => ctx.emitter.instruction(&format!("orr {result_reg}, {result_reg}, #{HTML_ESCAPE_RAW_BYTES}")),
+            Arch::X86_64 => ctx.emitter.instruction(&format!("or {result_reg}, {HTML_ESCAPE_RAW_BYTES}")),
+        }
+    }
     abi::emit_push_reg(ctx.emitter, result_reg);
     let ptr_reg = string_ptr_reg(ctx);
     let len_reg = string_len_reg(ctx);
@@ -44,6 +56,19 @@ pub(crate) fn lower_html_escape(
     abi::emit_pop_reg(ctx.emitter, flags_reg);
     abi::emit_call_label(ctx.emitter, "__rt_htmlspecialchars");
     store_if_result(ctx, inst)
+}
+
+/// Returns whether an `htmlspecialchars()` / `htmlentities()` call escapes UTF-8: no `encoding`
+/// argument, or a literal one PHP reads as UTF-8 (`UTF-8` or `utf8` in any case). An empty literal is
+/// PHP's `default_charset`, UTF-8. A computed encoding is not known here, so its bytes are kept.
+fn html_escape_encoding_is_utf8(ctx: &FunctionContext<'_>, inst: &Instruction) -> Result<bool> {
+    let Some(encoding) = inst.operands.get(2).copied() else {
+        return Ok(true);
+    };
+    let Some(literal) = super::super::shared::maybe_const_string_operand(ctx, encoding)? else {
+        return Ok(false);
+    };
+    Ok(matches!(literal.to_ascii_lowercase().as_str(), "" | "utf-8" | "utf8"))
 }
 
 /// Lowers `grapheme_strrev()` and boxes its `string|false` result as `Mixed`.

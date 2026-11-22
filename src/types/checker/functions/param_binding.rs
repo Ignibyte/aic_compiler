@@ -65,6 +65,12 @@ impl Checker {
         if !by_ref && *expected == PhpType::Void && actual.codegen_repr() == PhpType::Mixed {
             return Ok(());
         }
+        // php checks a `mixed` argument for an `array`, `?array` or class-typed parameter at run
+        // time. The call-site guard does the same: it unboxes the value and throws the
+        // parameter's `TypeError` for any other runtime type before the callee is entered.
+        if !by_ref && actual == &PhpType::Mixed && expected.mixed_boundary().is_some() {
+            return Ok(());
+        }
 
         if Self::types_compatible(expected, actual) || self.type_accepts(expected, actual) {
             return Ok(());

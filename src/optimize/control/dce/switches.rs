@@ -536,7 +536,17 @@ pub(super) fn dce_switch_stmt_with_tail(
     // A `break` / `continue` in the tail targets a loop around the switch; inside a case or
     // default body the same statement would target the switch itself, so such a tail stays
     // after the switch as well.
-    if default.is_none() || block_contains_loop_exit(&tail) {
+    //
+    // Sinking rewrites only a body's terminal `break`. A `break` nested under an `if` or `try`
+    // also leaves the switch for the tail, and would skip every copy of it: in
+    // `case 0: if ($c) { break; } default: echo 'd';` the tail moved into `default` alone.
+    let has_nested_switch_exit = cases
+        .iter()
+        .map(|(_, body)| body)
+        .chain(default.iter())
+        .flatten()
+        .any(crate::termination::stmt_may_leave_current_switch_from_nested);
+    if default.is_none() || block_contains_loop_exit(&tail) || has_nested_switch_exit {
         let mut stmts = dce_switch_stmt(subject, cases, default, span, guards);
         stmts.extend(tail);
         return stmts;

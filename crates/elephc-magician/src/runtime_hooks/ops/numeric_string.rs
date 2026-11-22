@@ -337,6 +337,12 @@ macro_rules! impl_numeric_string_ops {
         Ok(())
     }
 
+    /// Runs the compiled runtime's `flush()` through the generated bridge.
+    fn flush(&mut self) -> Result<(), EvalStatus> {
+        unsafe { __elephc_eval_flush() };
+        Ok(())
+    }
+
     };
 }
 

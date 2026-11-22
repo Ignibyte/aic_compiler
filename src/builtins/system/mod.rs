@@ -12,7 +12,8 @@
 //!   mktime, gmmktime, hrtime, getdate, localtime, date_default_timezone_get/set,
 //!   __elephc_mktime_raw, __elephc_gmmktime_raw, __elephc_strtotime_raw,
 //!   putenv, http_response_code, header, phpversion, exec, shell_exec, system, passthru,
-//!   json_last_error, json_last_error_msg, serialize, preg_match_all, preg_replace.
+//!   json_last_error, json_last_error_msg, serialize, preg_last_error, preg_last_error_msg,
+//!   preg_match_all, preg_replace.
 //! - Check-hook builtins: microtime (literal-dependent return type), strtotime
 //!   (returns Union(Int, Bool)), getenv (returns Union(Str, False) or Mixed), php_uname (validates
 //!   arg type), define (side-effect: registers constant type), defined (validates literal),
@@ -147,6 +148,8 @@ pub mod php_uname;
 pub mod phpversion;
 pub mod posix_setpgid;
 pub mod posix_setsid;
+pub mod preg_last_error;
+pub mod preg_last_error_msg;
 pub mod preg_match;
 pub mod preg_match_all;
 pub mod preg_replace;

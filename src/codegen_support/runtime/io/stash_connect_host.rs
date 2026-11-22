@@ -28,9 +28,9 @@ use crate::codegen_support::{abi, emit::Emitter, platform::Arch};
 ///
 /// Inputs (AArch64): x0 = fd, x1 = address pointer, x2 = address length.
 /// (x86_64): rdi = fd, rsi = address pointer, rdx = address length. Output:
-/// x0 / rax = fd (unchanged). When `fd < 0` or `fd >= 256` the helper is a no-op
-/// passthrough so failed connects and out-of-range descriptors never touch the
-/// table.
+/// x0 / rax = fd (unchanged). When `fd < 0` or `fd >= FD_TABLE_SLOTS` the helper is
+/// a no-op passthrough so failed connects and out-of-range descriptors never touch
+/// the table.
 pub fn emit_stash_connect_host(emitter: &mut Emitter) {
     if emitter.target.arch == Arch::X86_64 {
         emit_stash_connect_host_linux_x86_64(emitter);
@@ -48,11 +48,8 @@ pub fn emit_stash_connect_host(emitter: &mut Emitter) {
     emitter.instruction("add x29, sp, #32");                                    // establish the helper frame pointer
     emitter.instruction("str x0, [sp, #0]");                                    // save the fd for the table index and return value
 
-    // -- range-check the fd: only descriptors 0..256 get a table slot --
-    emitter.instruction("cmp x0, #0");                                          // is the fd negative (failed connect)?
-    emitter.instruction("b.lt __rt_sch_done");                                  // negative fd → passthrough, no stash
-    emitter.instruction("cmp x0, #256");                                        // is the fd within the table bound?
-    emitter.instruction("b.ge __rt_sch_done");                                  // out-of-range fd → passthrough, no stash
+    // -- range-check the fd: only descriptors 0..FD_TABLE_SLOTS get a table slot --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "x0", "__rt_sch_done");
 
     // -- strip a leading "scheme://" by scanning for "://" --
     emitter.instruction("mov x9, #0");                                          // host start offset within the address
@@ -130,11 +127,8 @@ fn emit_stash_connect_host_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("sub rsp, 16");                                         // spill slot for the fd across str_persist
     emitter.instruction("mov QWORD PTR [rbp - 8], rdi");                        // save the fd for the table index and return value
 
-    // -- range-check the fd: only descriptors 0..256 get a table slot --
-    emitter.instruction("cmp rdi, 0");                                          // is the fd negative (failed connect)?
-    emitter.instruction("jl __rt_sch_done_x86");                                // negative fd → passthrough, no stash
-    emitter.instruction("cmp rdi, 256");                                        // is the fd within the table bound?
-    emitter.instruction("jge __rt_sch_done_x86");                               // out-of-range fd → passthrough, no stash
+    // -- range-check the fd: only descriptors 0..FD_TABLE_SLOTS get a table slot --
+    crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(emitter, "rdi", "__rt_sch_done_x86");
 
     // -- strip a leading "scheme://" by scanning for "://" (rsi=ptr, rdx=len) --
     emitter.instruction("xor r9, r9");                                          // host start offset within the address

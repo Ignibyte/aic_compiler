@@ -279,6 +279,8 @@ pub enum Immediate {
     HeapKind(IrHeapKind),
     MixedTag(u8),
     TypePredicate(PhpTypePredicate),
+    /// The message prefix, declared scalar and binding mode of a `ScalarArgumentGuard`.
+    ScalarArgumentCheck(ScalarArgumentCheck),
     MixedNumericOp(MixedNumericOp),
     /// Ordered add/sub/mul operations in an unboxed checked numeric chain.
     CheckedNumericChain(Box<CheckedNumericChainImmediate>),
@@ -523,6 +525,37 @@ impl PropertyFetchMode {
     pub const fn is_read(self) -> bool {
         matches!(self, Self::Read)
     }
+}
+
+/// The declared scalar parameter type a `ScalarArgumentGuard` checks a value against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ScalarGuardTarget {
+    Int,
+    Float,
+    Bool,
+    /// Emitted for a strict caller only; a weak caller's `string` also takes a `Stringable`.
+    Str,
+}
+
+impl ScalarGuardTarget {
+    /// Returns the stable textual spelling used by the EIR printer.
+    pub const fn as_eir(self) -> &'static str {
+        match self {
+            Self::Int => "int",
+            Self::Float => "float",
+            Self::Bool => "bool",
+            Self::Str => "string",
+        }
+    }
+}
+
+/// What a `ScalarArgumentGuard` checks: the `TypeError` message prefix, the declared scalar,
+/// and whether the CALLER's file binds strictly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScalarArgumentCheck {
+    pub prefix: DataId,
+    pub target: ScalarGuardTarget,
+    pub strict: bool,
 }
 
 /// PHP runtime type category tested by the backend-neutral `TypePredicate` opcode.
@@ -1223,6 +1256,24 @@ pub enum Op {
     /// (`"f(): Return value must be of type int, "`), to which codegen appends the runtime
     /// type word and `" returned"`. Result: `I64`.
     ReturnBoundaryMixedToInt,
+    /// Verifies a boxed `Mixed` value reaching a DECLARED `array`, `?array` or class-typed
+    /// return, the way php-src does at run time: an array, `null` or an instance of a declared
+    /// class passes, and every other runtime type throws a catchable `TypeError`. It only reads
+    /// the value; the ordinary return coercion that follows hands the cell, or for an exact
+    /// class its unboxed object, to the caller. Operand: the Mixed value. Immediate: data id of
+    /// the message prefix (`"f(): Return value must be of type array, "`), to which codegen
+    /// appends the runtime type word and `" returned"`. The declared type is the function's own
+    /// `return_php_type`. No result.
+    ReturnBoundaryMixedGuard,
+    /// Verifies a `mixed` argument bound to a DECLARED `int`, `float` or `bool` parameter of a
+    /// user callee, the check php-src performs when the callee receives it. A strict caller
+    /// accepts the exact type (and an int for a float); a weak caller also accepts what PHP
+    /// coerces: a bool, a finite in-range float or an int-coercible numeric string for `int`,
+    /// a bool or a numeric string for `float`, any scalar for `bool`. Everything else throws a
+    /// catchable `TypeError`. It only reads the value; the call's ordinary argument conversion
+    /// follows. Operand: the value (boxed Mixed, or a raw scalar after folding or counter
+    /// scalarization). Immediate: `ScalarArgumentCheck`. No result.
+    ScalarArgumentGuard,
     /// Narrows a checked integer add/sub/mul result stored into a DECLARED `int` property.
     /// The operand can only hold an int or the float promoted by overflow (boxed Mixed, or a
     /// raw I64/F64 after constant folding): an int forwards, a float inside `[-2^63, 2^63)`
@@ -1618,7 +1669,7 @@ impl Op {
             StrEq | StrCmp | StrLooseEq | StrictEq | StrictNotEq | InstanceOf => E::READS_HEAP,
             EnumBackingStringToInt | EnumBackingMixedToInt | PackedFieldMixedToInt
             | PackedFieldMixedToFloat | PackedFieldMixedToBool | ReturnBoundaryMixedToInt
-            | PropertyBoundaryCheckedToInt => {
+            | ReturnBoundaryMixedGuard | ScalarArgumentGuard | PropertyBoundaryCheckedToInt => {
                 E::READS_HEAP | E::ALLOC_HEAP | E::MAY_THROW
             }
             EvalFunctionExists | EvalClassExists | EvalConstantExists => E::READS_GLOBAL,
@@ -1951,6 +2002,8 @@ impl Op {
             PackedFieldMixedToFloat => "packed_field_mixed_to_float",
             PackedFieldMixedToBool => "packed_field_mixed_to_bool",
             ReturnBoundaryMixedToInt => "return_boundary_mixed_to_int",
+            ReturnBoundaryMixedGuard => "return_boundary_mixed_guard",
+            ScalarArgumentGuard => "scalar_argument_guard",
             PropertyBoundaryCheckedToInt => "property_boundary_checked_to_int",
             ClassConstant => "class_constant",
             ScopedConstantGet => "scoped_constant_get",

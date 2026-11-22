@@ -557,6 +557,12 @@ are excluded. Physical arity and reference flags must match the signature; the
 receiver at operand zero is excluded and only by-value argument positions qualify.
 This records storage observations without changing call effects or dispatch.
 
+The same replay also reads a `mixed` local as `mixed` where a store of another scalar
+kind can reach a scalar read along an explicit CFG edge that the end of the loop body
+does not show: a `break` or `continue` out of an `if` or `try` arm, or the entry seed of
+a loop that runs zero times (`numeric_storage.rs::mismatched_scalar_reads()`). Without
+it the read took the body's last flow-sensitive type and unboxed `2.5` as `int(2)`.
+
 Within that storage trial only, method arguments are detached as scalar copies
 and unchanged integer join parameters are folded before loop/range analysis.
 Every parallel incoming edge must agree on the same non-self value with identical

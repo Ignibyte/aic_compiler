@@ -448,7 +448,9 @@ pub(super) fn coerce_scalar_arg_to_param_storage(
     let by_reference = sig.ref_params.get(index).copied().unwrap_or(false);
     if !by_reference {
         if let PhpType::Object(class_name) = param_ty {
-        {
+        // The bare `object` type (an empty class name) accepts every object; the codegen's
+        // mixed boundary guard checks a `mixed` argument there (fork carry).
+        if !class_name.is_empty() {
             let source_ty = ctx.builder.value_php_type(value.value);
             // A union-typed local is stored in a boxed Mixed slot, so its IR type no longer
             // names the `Class|false` alternative. Recover the checker's static type from the
@@ -515,7 +517,16 @@ pub(super) fn coerce_scalar_arg_to_param_storage(
         return unbox_iterable_param_storage(ctx, value, Some(arg.span));
     }
     if param_ty == PhpType::Str && matches!(source_ty, PhpType::Mixed | PhpType::Union(_)) {
-        return coerce_to_string(ctx, value, arg);
+        // A checked parameter is bound after every argument is evaluated, by
+        // `coerce_operands_to_params`, which must still see the unconverted value.
+        let checked = argument_callee(ctx).is_some()
+            && scalar_argument_guards::checked_scalar_parameter(
+                sig, index, &ctx.builder.value_php_type(value.value),
+            ).is_some();
+        if !checked {
+            return coerce_to_string(ctx, value, arg);
+        }
+        return value;
     }
     if bindable {
         if let Some(cast) = crate::types::param_binding::scalar_param_cast(&param_ty, &source_ty) {
@@ -794,8 +805,28 @@ pub(super) fn coerce_operands_to_params(
 ) -> Vec<crate::ir::ValueId> {
     let regular_param_count = crate::types::call_args::regular_param_count(sig);
     let limit = operands.len().min(regular_param_count);
+    let callee = argument_callee(ctx);
+    let checked = (0..limit)
+        .map(|index| callee.as_ref().and_then(|_| {
+            scalar_argument_guards::checked_scalar_parameter(
+                sig, index, &ctx.builder.value_php_type(operands[index]),
+            )
+        }))
+        .collect::<Vec<_>>();
+    // An override binding a parameter in other storage checks it by the body that runs.
+    let dispatch = callee.is_none().then(|| argument_dispatch(ctx)).flatten();
+    let dispatched = (0..limit)
+        .map(|index| dispatch.as_ref().is_some_and(|dispatch| {
+            !sig.ref_params.get(index).copied().unwrap_or(false)
+                && dispatched_argument_guards::dispatched_argument_needs_check(
+                    dispatch, index, &ctx.builder.value_php_type(operands[index]),
+                )
+        }))
+        .collect::<Vec<_>>();
     let needs_coercion = (0..limit)
-        .map(|index| operand_needs_param_coercion(ctx, sig, &operands, index))
+        .map(|index| checked[index].is_some()
+            || dispatched[index]
+            || operand_needs_param_coercion(ctx, sig, &operands, index))
         .collect::<Vec<_>>();
     if needs_coercion.iter().any(|needs_coercion| *needs_coercion) {
         // Source evaluation has completed, but any parameter conversion below can throw.
@@ -818,6 +849,20 @@ pub(super) fn coerce_operands_to_params(
             continue;
         };
         let value = operands[index];
+        if let (Some(dispatch), true) = (dispatch.as_ref(), dispatched[index]) {
+            let bound =
+                dispatched_argument_guards::bind_dispatched_argument(ctx, dispatch, index, value);
+            operands[index] = root_evaluated_call_argument(ctx, bound, Span::dummy()).value;
+            continue;
+        }
+        if let (Some(callee), Some(declared)) = (callee.as_ref(), checked[index].as_ref()) {
+            if let Some(bound) = scalar_argument_guards::bind_scalar_argument(
+                ctx, callee, sig, index, declared, value,
+            ) {
+                operands[index] = root_evaluated_call_argument(ctx, bound, Span::dummy()).value;
+                continue;
+            }
+        }
         let operand_ty = ctx.builder.value_php_type(value).codegen_repr();
         let param_ty = param_ty.codegen_repr();
         if param_ty == PhpType::Float && matches!(operand_ty, PhpType::Int | PhpType::Bool) {
@@ -1125,7 +1170,8 @@ pub(super) fn lower_args_with_signature_options_for_capture(
     capture_output_index: Option<(usize, PhpType)>,
 ) -> Vec<crate::ir::ValueId> {
     let Some(sig) = sig else {
-        return lower_args(ctx, args);
+        let operands = lower_args(ctx, args);
+        return dispatched_argument_guards::bind_unsigned_dispatched_operands(ctx, args, operands);
     };
     let literal_bound = rewrite_literal_param_bindings(sig, args);
     let args = literal_bound.as_deref().unwrap_or(args);

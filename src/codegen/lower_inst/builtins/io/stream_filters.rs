@@ -80,6 +80,7 @@ pub(super) fn lower_zlib_deflate_stream_filter_attach(
     let fwrite_label = ctx.next_label("zlib_deflate_fwrite");
     let close_label = ctx.next_label("zlib_deflate_close");
     let skip_label = ctx.next_label("zlib_deflate_skip_helpers");
+    let no_slot = emit_fd_slot_guard(ctx);
     match ctx.emitter.target.arch {
         Arch::AArch64 => crate::codegen::stream_filters::zlib::emit_arm64(
             ctx.emitter,
@@ -96,6 +97,7 @@ pub(super) fn lower_zlib_deflate_stream_filter_attach(
             level,
         ),
     }
+    emit_fd_slot_guard_false(ctx, &no_slot);
     store_if_result(ctx, inst)
 }
 
@@ -160,6 +162,7 @@ pub(super) fn lower_bzip2_compress_stream_filter_attach(
     let fwrite_label = ctx.next_label("bz2_compress_fwrite");
     let close_label = ctx.next_label("bz2_compress_close");
     let skip_label = ctx.next_label("bz2_compress_skip_helpers");
+    let no_slot = emit_fd_slot_guard(ctx);
     match ctx.emitter.target.arch {
         Arch::AArch64 => crate::codegen::stream_filters::bzip2::emit_compress_arm64(
             ctx.emitter,
@@ -178,6 +181,7 @@ pub(super) fn lower_bzip2_compress_stream_filter_attach(
             work_factor,
         ),
     }
+    emit_fd_slot_guard_false(ctx, &no_slot);
     store_if_result(ctx, inst)
 }
 
@@ -355,7 +359,9 @@ pub(super) fn lower_iconv_stream_filter_attach(
             emit_iconv_read_transform_for_current_fd(ctx, &from_sym, &to_sym);
             ctx.emitter.instruction(&format!("b {}", after_label));             // skip the write-filter attach path
             ctx.emitter.label(&write_label);
+            let no_slot = emit_fd_slot_guard(ctx);
             emit_iconv_write_transform_for_current_fd(ctx, &from_sym, &to_sym, option_bits);
+            emit_fd_slot_guard_false(ctx, &no_slot);
             ctx.emitter.label(&after_label);
         }
         Arch::X86_64 => {
@@ -368,7 +374,9 @@ pub(super) fn lower_iconv_stream_filter_attach(
             emit_iconv_read_transform_for_current_fd(ctx, &from_sym, &to_sym);
             ctx.emitter.instruction(&format!("jmp {}", after_label));           // skip the write-filter attach path
             ctx.emitter.label(&write_label);
+            let no_slot = emit_fd_slot_guard(ctx);
             emit_iconv_write_transform_for_current_fd(ctx, &from_sym, &to_sym, option_bits);
+            emit_fd_slot_guard_false(ctx, &no_slot);
             ctx.emitter.label(&after_label);
         }
     }
@@ -447,20 +455,32 @@ pub(crate) fn lower_stream_filter_remove(
         ctx.emitter.instruction("mov rdi, rax");                                // pass the descriptor to the user-filter teardown helper
     }
     abi::emit_call_label(ctx.emitter, "__rt_user_filter_release_fd");
+    let no_slot = ctx.next_label("sfr_no_fd_slot");
+    let done = ctx.next_label("sfr_done");
     match ctx.emitter.target.arch {
         Arch::AArch64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "x0", &no_slot);
             abi::emit_symbol_address(ctx.emitter, "x9", "_stream_read_filters");
             ctx.emitter.instruction("strb wzr, [x9, x0]");                      // clear the read-direction filter slot for this descriptor
             abi::emit_symbol_address(ctx.emitter, "x9", "_stream_write_filters");
             ctx.emitter.instruction("strb wzr, [x9, x0]");                      // clear the write-direction filter slot for this descriptor
             ctx.emitter.instruction("mov x0, #1");                              // return true after removing the filter state
+            ctx.emitter.instruction(&format!("b {}", done));                    // skip the no-slot result
+            ctx.emitter.label(&no_slot);
+            ctx.emitter.instruction("mov x0, #0");                              // a descriptor with no table slot has no filter to remove
+            ctx.emitter.label(&done);
         }
         Arch::X86_64 => {
+            crate::codegen_support::fd_tables::emit_branch_if_fd_out_of_table(ctx.emitter, "rax", &no_slot);
             abi::emit_symbol_address(ctx.emitter, "r9", "_stream_read_filters"); // read-filter table base
             ctx.emitter.instruction("mov BYTE PTR [r9 + rax], 0");              // clear the read-direction filter slot for this descriptor
             abi::emit_symbol_address(ctx.emitter, "r9", "_stream_write_filters"); // write-filter table base
             ctx.emitter.instruction("mov BYTE PTR [r9 + rax], 0");              // clear the write-direction filter slot for this descriptor
             ctx.emitter.instruction("mov eax, 1");                              // return true after removing the filter state
+            ctx.emitter.instruction(&format!("jmp {}", done));                  // skip the no-slot result
+            ctx.emitter.label(&no_slot);
+            ctx.emitter.instruction("xor eax, eax");                            // a descriptor with no table slot has no filter to remove
+            ctx.emitter.label(&done);
         }
     }
     store_if_result(ctx, inst)

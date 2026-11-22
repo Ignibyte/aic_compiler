@@ -355,11 +355,15 @@ fn try_emit_direct_closure_wrapper(
     let Some(closure) = capture_free_closure(ctx, callback)? else {
         return Ok(None);
     };
+    // The wrapper hands the closure's result to the helper as it is, so the closure itself must
+    // return the boxed `Mixed` cell the helper stores: a declared `string` or `int` return would
+    // be read as a cell.
     if closure.params.len() != 1
         || closure.params[0].by_ref
         || closure.params[0].variadic
         || closure.flags.is_generator
         || closure.flags.is_fiber_wrapper
+        || closure.return_php_type.codegen_repr() != PhpType::Mixed
     {
         return Ok(None);
     }

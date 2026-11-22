@@ -230,11 +230,13 @@ impl Checker {
                 let then_ty = self.with_conditional_flow_arm(&mut flow, &mut then_env,
                     |checker, env| checker.with_flow_narrowings(&guards, true, env,
                         |checker, env| checker.infer_type_with_assignment_effects(then_expr, env)))?;
+                let then_ty = branch_value_type(then_expr, then_ty);
                 merge_array_storage_effects(env, &then_env);
                 merge_array_storage_effects(&mut else_env, &then_env);
                 let else_ty = self.with_conditional_flow_arm(&mut flow, &mut else_env,
                     |checker, env| checker.with_flow_narrowings(&guards, false, env,
                         |checker, env| checker.infer_type_with_assignment_effects(else_expr, env)))?;
+                let else_ty = branch_value_type(else_expr, else_ty);
                 merge_array_storage_effects(env, &else_env);
                 self.finish_conditional_flow(flow, env);
                 // A `throw` arm types as `null` here, so the buffer merge skips it by its shape,
@@ -789,6 +791,16 @@ fn type_may_be_pdo_statement(ty: &PhpType) -> bool {
         PhpType::Object(class) => class.trim_start_matches('\\') == "PDOStatement",
         PhpType::Union(members) => members.iter().any(type_may_be_pdo_statement),
         _ => false,
+    }
+}
+
+/// Returns the type a branch contributes to a ternary result: a `throw` arm yields no value, so it
+/// is `Never` (the other side's type stands), not the `Void` its checker type shares with `null`.
+fn branch_value_type(branch: &Expr, ty: PhpType) -> PhpType {
+    if matches!(branch.kind, ExprKind::Throw(_)) {
+        PhpType::Never
+    } else {
+        ty
     }
 }
 

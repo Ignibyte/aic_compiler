@@ -339,6 +339,7 @@ Browse by category: [Array](./builtins/array.md) · [Buffer](./builtins/buffer.m
 | [`finfo_open()`](./builtins/io/finfo_open.md) | `(int $flags = 0, ?string $magic_database = null): finfo|false` | `finfo|false` | ✓ | ✓ |
 | [`finfo_set_flags()`](./builtins/io/finfo_set_flags.md) | `(finfo $finfo, int $flags): bool` | `bool` | ✓ | ✓ |
 | [`flock()`](./builtins/io/flock.md) | `(resource $stream, int $operation, bool $would_block = null): bool` | `bool` | ✓ | ✓ |
+| [`flush()`](./builtins/io/flush.md) | `(): void` | `void` | ✓ | ✓ |
 | [`fopen()`](./builtins/io/fopen.md) | `(string $filename, string $mode, bool $use_include_path = false, mixed $context = null): mixed` | `mixed` | ✓ | ✓ |
 | [`fpassthru()`](./builtins/io/fpassthru.md) | `(resource $stream): int` | `int` | ✓ | ✓ |
 | [`fprintf()`](./builtins/io/fprintf.md) | `(resource $stream, string $format, ...$values): int` | `int` | ✓ | ✓ |
@@ -1075,6 +1076,8 @@ Browse by category: [Array](./builtins/array.md) · [Buffer](./builtins/buffer.m
 | [`ini_get()`](./builtins/web/ini_get.md) | `(string $option): mixed` | `mixed` | ✓ | - |
 | [`ini_get_all()`](./builtins/web/ini_get_all.md) | `(?string $extension = null, bool $details = true): array|false` | `array|false` | ✓ | - |
 | [`ini_set()`](./builtins/web/ini_set.md) | `(string $option, string|int|float|bool|null $value): string|false` | `string|false` | ✓ | - |
+| [`is_uploaded_file()`](./builtins/web/is_uploaded_file.md) | `(string $filename): bool` | `bool` | ✓ | - |
+| [`move_uploaded_file()`](./builtins/web/move_uploaded_file.md) | `(string $from, string $to): bool` | `bool` | ✓ | - |
 | [`session_abort()`](./builtins/web/session_abort.md) | `(): bool` | `bool` | ✓ | - |
 | [`session_cache_expire()`](./builtins/web/session_cache_expire.md) | `(?int $value = null): mixed` | `mixed` | ✓ | - |
 | [`session_cache_limiter()`](./builtins/web/session_cache_limiter.md) | `(?string $value = null): mixed` | `mixed` | ✓ | - |

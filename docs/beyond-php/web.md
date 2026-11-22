@@ -102,8 +102,9 @@ every request and readable inside any function scope (no `global` needed):
 - **`$_FILES`** — `multipart/form-data` file uploads, each as
   `['name' => …, 'type' => …, 'tmp_name' => …, 'error' => 0, 'size' => …]`. The
   upload is written to a temp file at `tmp_name`; read it with
-  `file_get_contents()`, or move it with `rename()` after validating the upload.
-  `move_uploaded_file()` and `is_uploaded_file()` are currently unavailable.
+  `file_get_contents()`, or move it with `move_uploaded_file()`, which accepts
+  only this request's uploads (`is_uploaded_file()` asks the same question). As
+  in PHP, an upload the handler did not move is deleted when the request ends.
 - **`$_COOKIE`** — the `Cookie` request header parsed into a string-keyed array
   (values percent-decoded).
 - **`$_REQUEST`** — `$_GET` overlaid with `$_POST` (POST wins on key collision),
@@ -167,7 +168,9 @@ In the default `worker` model, calling `header()` (or `setcookie()`) **after**
 producing output is accepted because the whole response is buffered until the
 handler returns. In `pool` and `request`, output streams immediately: the first
 body byte commits status and headers, and later header/status mutations are
-ignored with PHP-style "headers already sent" diagnostics.
+ignored with PHP-style "headers already sent" diagnostics. `flush()` commits them
+the same way without writing a body, so the client gets the status and headers
+before a slow handler produces output (see `examples/web-flush/`).
 
 ```php
 <?php

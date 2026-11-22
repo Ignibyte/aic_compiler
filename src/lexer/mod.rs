@@ -11,6 +11,7 @@
 //!   identifier, as PHP 8 lexes the whole name as one token (see `qualified_names`).
 
 mod cursor;
+mod inline_html;
 mod literals;
 /// Rewrites reserved words that are segments of a qualified name into identifiers.
 mod qualified_names;

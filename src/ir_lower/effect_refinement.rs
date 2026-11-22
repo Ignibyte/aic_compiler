@@ -145,6 +145,12 @@ fn summarize_function(function: &Function, context: &RefinementContext<'_>) -> E
     };
     // Literal false and null signatures have throwing guards even when their bodies are empty.
     effects |= literal_parameter_guard_effects(function.params.iter().map(|parameter| &parameter.php_type));
+    // So has a by-value `array`, `?array` or class parameter, which checks a `mixed` argument.
+    if function.params.iter().any(|parameter| {
+        !parameter.by_ref && parameter.name != "this" && parameter.php_type.mixed_boundary().is_some()
+    }) {
+        effects |= Effects::READS_HEAP | Effects::ALLOC_HEAP | Effects::MAY_THROW | Effects::MAY_DEOPT;
+    }
     for instruction in &function.instructions {
         // Scratch offsets and the operand-owner chain are private to this frame.
         // Keep instruction effects so intra-function passes retain and order bookkeeping.
