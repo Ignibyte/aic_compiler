@@ -3197,7 +3197,7 @@ echo fread($conn, 16);
 fn test_stream_socket_accept_timeout_returns_false() {
     // With no client connecting, stream_socket_accept() must respect the
     // timeout and return false instead of blocking forever. 0 seconds
-    // (poll) is the strictest test of the select() gate.
+    // (poll) is the strictest test of the poll() gate.
     let out = compile_and_run(
         r#"<?php
 $srv = stream_socket_server("tcp://127.0.0.1:54933");
@@ -3206,6 +3206,35 @@ echo is_bool($conn) ? "timeout" : "got_conn";
 "#,
     );
     assert_eq!(out, "timeout");
+}
+
+/// Verifies `stream_socket_accept()` with a timeout sees a listening socket above descriptors 63
+/// and 127. It waited with a two-word `select` set, so a server that had opened about sixty files
+/// timed out on a connection already pending. PHP waits with `poll`, which has no such limit.
+#[test]
+fn test_stream_socket_accept_timeout_on_high_descriptors() {
+    let out = compile_and_run(
+        r#"<?php
+$held = [];
+foreach ([70, 140] as $count) {
+    while (count($held) < $count) {
+        $held[] = fopen("/dev/null", "r");
+    }
+    $server = stream_socket_server("tcp://127.0.0.1:0");
+    $client = stream_socket_client("tcp://" . stream_socket_get_name($server, false));
+    $peer = stream_socket_accept($server, 2);
+    if ($peer === false) {
+        echo "missed ";
+        continue;
+    }
+    fwrite($client, "x");
+    echo fread($peer, 1), " ";
+    $idle = @stream_socket_accept($server, 0);
+    echo $idle === false ? "idle" : "accepted", "\n";
+}
+"#,
+    );
+    assert_eq!(out, "x idle\nx idle\n");
 }
 
 /// Verifies compiled PHP output for stream socket accept peer name inet.

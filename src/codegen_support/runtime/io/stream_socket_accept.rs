@@ -11,9 +11,10 @@
 //!   user passed a `&$peer_name` variable.
 //!
 //! Key details:
-//! - When `timeout_us >= 0` the helper gates `accept()` behind a single-fd
-//!   `select()` (macOS) / `pselect6()` (Linux). A timeout (`select` returns
-//!   0) lowers to a -1 result that the builtin boxes as PHP `false`.
+//! - When `timeout_us >= 0` the helper gates `accept()` behind a one-entry
+//!   `poll()` (macOS) / `ppoll()` (Linux), as php-src does, so any descriptor
+//!   number works. A timeout (`poll` returns 0) lowers to a -1 result that the
+//!   builtin boxes as PHP `false`.
 //! - The captured `sockaddr` is dispatched on its family byte and rendered
 //!   through `__rt_format_sockaddr_in` (IPv4) or
 //!   `__rt_format_sockaddr_unix` (Unix-domain). Anything else (AF_INET6
@@ -61,10 +62,10 @@ pub fn emit_stream_socket_accept(emitter: &mut Emitter) {
     //   [24)       saved timeout_us
     //   [32..160)  sockaddr buffer (sockaddr_in / sockaddr_un / sockaddr_in6 fit)
     //   [160)      addrlen (4 + 4 pad)
-    //   [168)      fd_set word 0 (covers fds 0..63)
-    //   [176)      fd_set word 1 (covers fds 64..127)
-    //   [184)      timeout struct: seconds field
-    //   [192)      timeout struct: micro/nanoseconds field
+    //   [168)      pollfd: fd (4), events (2), revents (2)
+    //   [176)      padding
+    //   [184)      timespec: seconds field (Linux)
+    //   [192)      timespec: nanoseconds field (Linux)
     //   [200)      accepted fd
     //   [208..224) padding for 16-byte alignment
     emitter.instruction("sub sp, sp, #224");                                    // allocate the helper frame
@@ -73,51 +74,39 @@ pub fn emit_stream_socket_accept(emitter: &mut Emitter) {
     emitter.instruction("str x0, [sp, #16]");                                   // save the listening fd
     emitter.instruction("str x1, [sp, #24]");                                   // save the timeout in microseconds
 
-    // -- timeout < 0 skips the select gate and blocks indefinitely --
+    // -- timeout < 0 skips the poll gate and blocks indefinitely --
     emitter.instruction("cmp x1, #0");                                          // is the timeout negative (infinite)?
     emitter.instruction("b.lt __rt_ssa_blocking_accept");                       // jump straight to accept for the infinite case
 
-    // -- prepare the fd_set: zero both words, then set the bit for our fd --
-    emitter.instruction("str xzr, [sp, #168]");                                 // clear fd_set word 0
-    emitter.instruction("str xzr, [sp, #176]");                                 // clear fd_set word 1
-    emitter.instruction("cmp x0, #128");                                        // fds beyond 127 fall outside the two-word bitmap
-    emitter.instruction("b.ge __rt_ssa_fail_clear");                            // out-of-range fd: bail out
-    emitter.instruction("mov x9, x0");                                          // descriptor index for the bit position
-    emitter.instruction("cmp x9, #64");                                         // does the descriptor fall into word 0?
-    emitter.instruction("b.lt __rt_ssa_set_word0");                             // descriptor < 64: set the bit in word 0
-    emitter.instruction("sub x9, x9, #64");                                     // subtract 64 to address word 1
-    emitter.instruction("mov x10, #1");                                         // bit seed for word 1
-    emitter.instruction("lsl x10, x10, x9");                                    // shift the bit into the descriptor position
-    emitter.instruction("str x10, [sp, #176]");                                 // set the descriptor bit in word 1
-    emitter.instruction("b __rt_ssa_fdset_done");                               // skip word-0 setup
-    emitter.label("__rt_ssa_set_word0");
-    emitter.instruction("mov x10, #1");                                         // bit seed for word 0
-    emitter.instruction("lsl x10, x10, x9");                                    // shift the bit into the descriptor position
-    emitter.instruction("str x10, [sp, #168]");                                 // set the descriptor bit in word 0
-    emitter.label("__rt_ssa_fdset_done");
+    // -- one pollfd for the listening descriptor: events = POLLIN, revents = 0 --
+    emitter.instruction("cmp w0, #0");                                          // poll ignores a negative descriptor instead of failing
+    emitter.instruction("b.lt __rt_ssa_fail_clear");                            // not a descriptor: bail out
+    emitter.instruction("str w0, [sp, #168]");                                  // pollfd.fd = the listening descriptor
+    emitter.instruction("mov w9, #1");                                          // POLLIN = 1 in the low half, revents = 0 in the high half
+    emitter.instruction("str w9, [sp, #172]");                                  // pollfd.events and pollfd.revents
 
-    // -- build the timeout struct from timeout_us --
+    // -- poll(&pollfd, 1, timeout_ms) on macOS; ppoll(&pollfd, 1, &timespec, NULL, 0) on Linux --
     emitter.instruction("ldr x9, [sp, #24]");                                   // reload the timeout in microseconds
-    emitter.instruction("mov x10, #0x4240");                                    // low 16 bits of 1_000_000 (0xF4240)
-    emitter.instruction("movk x10, #0xF, lsl #16");                             // upper bits make x10 = 1_000_000 (one second in us)
-    emitter.instruction("udiv x11, x9, x10");                                   // seconds = timeout_us / 1_000_000
-    emitter.instruction("msub x12, x11, x10, x9");                              // micro_remainder = timeout_us - seconds*1_000_000
-    emitter.instruction("str x11, [sp, #184]");                                 // store the timeout seconds field
     if linux {
+        emitter.instruction("mov x10, #0x4240");                                // low 16 bits of 1_000_000 (0xF4240)
+        emitter.instruction("movk x10, #0xF, lsl #16");                         // upper bits make x10 = 1_000_000 (one second in us)
+        emitter.instruction("udiv x11, x9, x10");                               // seconds = timeout_us / 1_000_000
+        emitter.instruction("msub x12, x11, x10, x9");                          // micro_remainder = timeout_us - seconds*1_000_000
         emitter.instruction("mov x10, #1000");                                  // a microsecond holds 1000 nanoseconds
-        emitter.instruction("mul x12, x12, x10");                               // convert microseconds to nanoseconds for timespec
+        emitter.instruction("mul x12, x12, x10");                               // convert microseconds to nanoseconds
+        emitter.instruction("str x11, [sp, #184]");                             // store the timespec seconds field
+        emitter.instruction("str x12, [sp, #192]");                             // store the timespec nanoseconds field
+        emitter.instruction("add x2, sp, #184");                                // pointer to the timespec
+        emitter.instruction("mov x3, #0");                                      // signal mask pointer (NULL)
+        emitter.instruction("mov x4, #0");                                      // signal mask size
+    } else {
+        emitter.instruction("mov x10, #1000");                                  // a millisecond holds 1000 microseconds
+        emitter.instruction("udiv x2, x9, x10");                                // timeout in milliseconds, truncated as php-src does
     }
-    emitter.instruction("str x12, [sp, #192]");                                 // store the timeout fractional field
-
-    // -- select(nfds=128, readfds=&fd_set, writefds=NULL, exceptfds=NULL, &timeout) --
-    emitter.instruction("mov x0, #128");                                        // examine descriptors 0..127
-    emitter.instruction("add x1, sp, #168");                                    // pointer to the readfds fd_set
-    emitter.instruction("mov x2, #0");                                          // no writefds
-    emitter.instruction("mov x3, #0");                                          // no exceptfds
-    emitter.instruction("add x4, sp, #184");                                    // pointer to the timeout struct
-    emitter.instruction("mov x5, #0");                                          // signal mask pointer (NULL); ignored by macOS select
-    emitter.syscall(93);
-    emitter.instruction("cmp x0, #0");                                          // did select fail or time out?
+    emitter.instruction("add x0, sp, #168");                                    // pointer to the pollfd
+    emitter.instruction("mov x1, #1");                                          // one descriptor
+    emitter.syscall(230);
+    emitter.instruction("cmp x0, #0");                                          // did poll fail or time out?
     emitter.instruction("b.le __rt_ssa_fail_clear");                            // 0 = timeout, <0 = error → report failure
 
     emitter.label("__rt_ssa_blocking_accept");
@@ -212,10 +201,10 @@ fn emit_stream_socket_accept_linux_x86_64(emitter: &mut Emitter) {
     //   [-16]  saved timeout_us
     //   [-144) sockaddr buffer (128 bytes)
     //   [-152) addrlen (4 + 4 pad)
-    //   [-160) fd_set word 0 (covers fds 0..63)
-    //   [-168) fd_set word 1 (covers fds 64..127)
-    //   [-176) timeout struct: seconds field
-    //   [-184) timeout struct: nanoseconds field
+    //   [-160) pollfd: fd (4), events (2), revents (2)
+    //   [-168) padding
+    //   [-184) timespec: seconds field
+    //   [-176) timespec: nanoseconds field
     //   [-192) accepted fd
     emitter.instruction("push rbp");                                            // preserve the caller frame pointer
     emitter.instruction("mov rbp, rsp");                                        // establish the helper frame pointer
@@ -223,49 +212,34 @@ fn emit_stream_socket_accept_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov QWORD PTR [rbp - 8], rdi");                        // save the listening fd
     emitter.instruction("mov QWORD PTR [rbp - 16], rsi");                       // save the timeout in microseconds
 
-    // -- timeout < 0 skips the select gate and blocks indefinitely --
+    // -- timeout < 0 skips the poll gate and blocks indefinitely --
     emitter.instruction("cmp rsi, 0");                                          // is the timeout negative (infinite)?
     emitter.instruction("jl __rt_ssa_blocking_accept_x86");                     // jump straight to accept for the infinite case
 
-    // -- prepare the fd_set: zero both words, then set the bit for our fd --
-    emitter.instruction("mov QWORD PTR [rbp - 160], 0");                        // clear fd_set word 0
-    emitter.instruction("mov QWORD PTR [rbp - 168], 0");                        // clear fd_set word 1
-    emitter.instruction("cmp rdi, 128");                                        // fds beyond 127 fall outside the two-word bitmap
-    emitter.instruction("jae __rt_ssa_fail_clear_x86");                         // out-of-range fd: bail out
-    emitter.instruction("cmp rdi, 64");                                         // does the descriptor fall into word 0?
-    emitter.instruction("jge __rt_ssa_set_word1_x86");                          // descriptor >= 64: set the bit in word 1
-    emitter.instruction("mov rcx, rdi");                                        // descriptor index for the shift count
-    emitter.instruction("mov rax, 1");                                          // bit seed
-    emitter.instruction("shl rax, cl");                                         // shift the bit into the descriptor position
-    emitter.instruction("mov QWORD PTR [rbp - 160], rax");                      // set the descriptor bit in word 0
-    emitter.instruction("jmp __rt_ssa_fdset_done_x86");                         // skip word-1 setup
-    emitter.label("__rt_ssa_set_word1_x86");
-    emitter.instruction("mov rcx, rdi");                                        // descriptor index for the shift count
-    emitter.instruction("sub rcx, 64");                                         // subtract 64 to address word 1
-    emitter.instruction("mov rax, 1");                                          // bit seed
-    emitter.instruction("shl rax, cl");                                         // shift the bit into the descriptor position
-    emitter.instruction("mov QWORD PTR [rbp - 168], rax");                      // set the descriptor bit in word 1
-    emitter.label("__rt_ssa_fdset_done_x86");
+    // -- one pollfd for the listening descriptor: events = POLLIN, revents = 0 --
+    emitter.instruction("test edi, edi");                                       // poll ignores a negative descriptor instead of failing
+    emitter.instruction("js __rt_ssa_fail_clear_x86");                          // not a descriptor: bail out
+    emitter.instruction("mov DWORD PTR [rbp - 160], edi");                      // pollfd.fd = the listening descriptor
+    emitter.instruction("mov DWORD PTR [rbp - 156], 1");                        // pollfd.events = POLLIN, pollfd.revents = 0
 
-    // -- build the timeout struct from timeout_us --
+    // -- build the timespec from timeout_us --
     emitter.instruction("mov rax, QWORD PTR [rbp - 16]");                       // reload the timeout in microseconds
     emitter.instruction("xor edx, edx");                                        // clear the division high word
     emitter.instruction("mov rcx, 1000000");                                    // one second in microseconds
     emitter.instruction("div rcx");                                             // rax = seconds, rdx = micro_remainder
-    emitter.instruction("mov QWORD PTR [rbp - 176], rax");                      // store the timeout seconds field
-    emitter.instruction("imul rdx, rdx, 1000");                                 // convert microseconds to nanoseconds for timespec
-    emitter.instruction("mov QWORD PTR [rbp - 184], rdx");                      // store the timeout nanoseconds field
+    emitter.instruction("mov QWORD PTR [rbp - 184], rax");                      // store the timespec seconds field
+    emitter.instruction("imul rdx, rdx, 1000");                                 // convert microseconds to nanoseconds
+    emitter.instruction("mov QWORD PTR [rbp - 176], rdx");                      // store the timespec nanoseconds field
 
-    // -- pselect6(nfds=128, readfds, writefds=NULL, exceptfds=NULL, &timeout, sigmask=NULL) --
-    emitter.instruction("mov edi, 128");                                        // examine descriptors 0..127
-    emitter.instruction("lea rsi, [rbp - 160]");                                // pointer to the readfds fd_set
-    emitter.instruction("xor edx, edx");                                        // no writefds
-    emitter.instruction("xor r10d, r10d");                                      // no exceptfds
-    emitter.instruction("lea r8, [rbp - 176]");                                 // pointer to the timeout struct
-    emitter.instruction("xor r9d, r9d");                                        // signal mask pointer (NULL)
-    emitter.instruction("mov eax, 270");                                        // Linux x86_64 syscall 270 = pselect6
-    emitter.instruction("syscall");                                             // wait for descriptor readiness
-    emitter.instruction("cmp rax, 0");                                          // did select fail or time out?
+    // -- ppoll(&pollfd, nfds=1, &timespec, sigmask=NULL, sigsetsize=0) --
+    emitter.instruction("lea rdi, [rbp - 160]");                                // pointer to the pollfd
+    emitter.instruction("mov esi, 1");                                          // one descriptor
+    emitter.instruction("lea rdx, [rbp - 184]");                                // pointer to the timespec
+    emitter.instruction("xor r10d, r10d");                                      // signal mask pointer (NULL)
+    emitter.instruction("xor r8d, r8d");                                        // signal mask size
+    emitter.instruction("mov eax, 271");                                        // Linux x86_64 syscall 271 = ppoll
+    emitter.instruction("syscall");                                             // wait for a pending connection
+    emitter.instruction("cmp rax, 0");                                          // did ppoll fail or time out?
     emitter.instruction("jle __rt_ssa_fail_clear_x86");                         // 0 = timeout, <0 = error → report failure
 
     emitter.label("__rt_ssa_blocking_accept_x86");
