@@ -1,6 +1,6 @@
 # Fixes not upstream yet
 
-This fork carries 248 fix and feature commits that upstream elephc (`9435998e5a`) does not have.
+This fork carries 250 fix and feature commits that upstream elephc (`798b818820`) does not have.
 13 of them are in an open pull request on [illegalstudio/elephc](https://github.com/illegalstudio/elephc/pulls); the rest are not sent.
 The list should shrink: a row leaves when upstream merges the fix, or fixes the same bug its own way,
 and the fork drops its copy at the next sync.
@@ -257,3 +257,5 @@ Generated from `git log upstream/main..main` and our upstream pull requests. Do 
 | [`e707837931`](https://github.com/Ignibyte/aic_compiler/commit/e707837931) | fix | pdo | check pgsql server certificates as libpq does for each sslmode | not sent |
 | [`ca9a5a92ea`](https://github.com/Ignibyte/aic_compiler/commit/ca9a5a92ea) | feat | openssl | load asymmetric keys, sign and verify like ext/openssl | not sent |
 | [`91a8a8809a`](https://github.com/Ignibyte/aic_compiler/commit/91a8a8809a) | fix | streams | select descriptors up to FD_SETSIZE in stream_select | not sent |
+| [`b092538637`](https://github.com/Ignibyte/aic_compiler/commit/b092538637) | fix | streams | wait for stream_socket_accept with poll instead of select | not sent |
+| [`ba9dd6f770`](https://github.com/Ignibyte/aic_compiler/commit/ba9dd6f770) | fix | pdo | send pgsql parameters as text, as libpq does | not sent |
