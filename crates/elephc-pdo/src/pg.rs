@@ -34,7 +34,7 @@ use std::thread::JoinHandle;
 
 use futures_util::{future::poll_fn, pin_mut, SinkExt, TryStreamExt};
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
-use tokio_postgres::types::{to_sql_checked, IsNull, Kind, ToSql, Type};
+use tokio_postgres::types::{to_sql_checked, Format, IsNull, Kind, ToSql, Type};
 use tokio_postgres::{
     AsyncMessage, Client as AsyncClient, Config, Connection, Error as PgError, NoTls, Row,
     SimpleQueryMessage, Statement,
@@ -49,17 +49,16 @@ pub enum Cell {
     Bytes(Vec<u8>),
 }
 
-/// A pending bound parameter value (before it is encoded for the inferred
-/// PostgreSQL parameter type at execute time).
+/// A pending bound parameter value.
 #[derive(Clone)]
 pub enum Bind {
     Null,
     Int(i64),
     Float(f64),
     Text(String),
-    /// Raw bytes, bound directly (bypassing the text re-encoding `Param::to_sql`
-    /// otherwise does) so a BLOB-style parameter round-trips embedded NUL bytes
-    /// and arbitrary binary content unchanged.
+    /// Raw bytes, sent in binary format (every other bind is sent as text) so a
+    /// BLOB-style parameter round-trips embedded NUL bytes and arbitrary binary
+    /// content unchanged.
     Bytes(Vec<u8>),
 }
 
@@ -306,104 +305,63 @@ struct PgActiveStream {
     worker: Option<JoinHandle<()>>,
 }
 
-/// Encodes a pending `Bind` according to the inferred PostgreSQL parameter type,
-/// so the value crosses the wire in the format the server expects.
+/// One statement parameter: the pending `Bind`, sent in text format so the server parses it
+/// with the target type's own input function, as libpq does for PDO.
 struct Param {
     bind: Bind,
-    ty: Type,
+}
+
+impl Param {
+    /// Returns whether the value travels in binary format: a LOB's raw bytes, and a text value
+    /// holding a NUL byte, which a text-format parameter cannot carry.
+    fn is_binary(&self) -> bool {
+        match &self.bind {
+            Bind::Bytes(_) => true,
+            Bind::Text(text) => text.as_bytes().contains(&0),
+            Bind::Null | Bind::Int(_) | Bind::Float(_) => false,
+        }
+    }
 }
 
 impl std::fmt::Debug for Param {
-    /// Formats the inferred PostgreSQL target type without exposing the bound value.
+    /// Formats the parameter without exposing the bound value.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Param({:?})", self.ty)
+        f.write_str("Param(..)")
     }
 }
 
 impl ToSql for Param {
-    /// Re-encodes the pending PDO bind for the type inferred by PostgreSQL.
+    /// Writes the pending PDO bind's bytes, leaving the conversion to the server.
     fn to_sql(
         &self,
-        ty: &Type,
+        _ty: &Type,
         out: &mut tokio_postgres::types::private::BytesMut,
     ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        if let Bind::Null = self.bind {
-            return Ok(IsNull::Yes);
+        match &self.bind {
+            Bind::Null => return Ok(IsNull::Yes),
+            Bind::Int(v) => out.extend_from_slice(v.to_string().as_bytes()),
+            Bind::Float(v) => out.extend_from_slice(v.to_string().as_bytes()),
+            Bind::Text(text) => out.extend_from_slice(text.as_bytes()),
+            Bind::Bytes(bytes) => out.extend_from_slice(bytes),
         }
-        if let Bind::Bytes(b) = &self.bind {
-            // Raw bytes bind directly regardless of the inferred parameter type
-            // (calling `to_sql` rather than `to_sql_checked` skips the `accepts`
-            // gate), so a BLOB parameter's embedded NUL / non-UTF-8 bytes reach
-            // the server unchanged instead of going through the text re-encoding
-            // below.
-            return b.to_sql(ty, out);
-        }
-        // PDO/PHP sends parameters as text and lets the server coerce them to the
-        // column type. We replicate that: take the bound value's canonical string
-        // form and re-encode it for the parameter type the prepared statement
-        // inferred. A value that cannot parse into the target type surfaces as a
-        // query error (an unparseable timestamp, etc.).
-        let s = match &self.bind {
-            Bind::Int(v) => v.to_string(),
-            Bind::Float(v) => v.to_string(),
-            Bind::Text(t) => t.clone(),
-            Bind::Bytes(_) => unreachable!("handled above"),
-            Bind::Null => unreachable!(),
-        };
-        let st = s.trim();
-        match *ty {
-            Type::BOOL => matches!(st, "1" | "t" | "true" | "TRUE" | "on").to_sql(ty, out),
-            Type::INT2 => st.parse::<i16>()?.to_sql(ty, out),
-            Type::INT4 => st.parse::<i32>()?.to_sql(ty, out),
-            Type::INT8 | Type::OID => st.parse::<i64>()?.to_sql(ty, out),
-            Type::FLOAT4 => st.parse::<f32>()?.to_sql(ty, out),
-            Type::FLOAT8 => st.parse::<f64>()?.to_sql(ty, out),
-            Type::NUMERIC => st.parse::<rust_decimal::Decimal>()?.to_sql(ty, out),
-            Type::DATE => st.parse::<chrono::NaiveDate>()?.to_sql(ty, out),
-            Type::TIME => st.parse::<chrono::NaiveTime>()?.to_sql(ty, out),
-            Type::TIMESTAMP => parse_naive_datetime(st)?.to_sql(ty, out),
-            Type::TIMESTAMPTZ => parse_datetime_utc(st)?.to_sql(ty, out),
-            Type::UUID => st.parse::<uuid::Uuid>()?.to_sql(ty, out),
-            Type::JSON | Type::JSONB => {
-                serde_json::from_str::<serde_json::Value>(&s)?.to_sql(ty, out)
-            }
-            // Text family and anything else: send the text and let the server
-            // parse it (the `accepts` override below allows the unknown type).
-            _ => s.to_sql(ty, out),
-        }
+        Ok(IsNull::No)
     }
 
-    /// Accepts every inferred target type because `to_sql` performs the required conversion.
+    /// Accepts every inferred target type because the server converts the text.
     fn accepts(_ty: &Type) -> bool {
-        // The value is re-encoded for whatever type the prepared statement
-        // inferred for this parameter, so accept every target type.
         true
     }
 
+    /// Sends text, as PDO does, except for the values only binary format can carry.
+    fn encode_format(&self, _ty: &Type) -> Format {
+        if self.is_binary() {
+            Format::Binary
+        } else {
+            Format::Text
+        }
+    }
+
     to_sql_checked!();
-}
-
-/// Parses a `timestamp` text value (`YYYY-MM-DD HH:MM:SS[.ffffff]`, with a space
-/// or `T` separator) into a `NaiveDateTime` for binding.
-fn parse_naive_datetime(s: &str) -> Result<chrono::NaiveDateTime, chrono::ParseError> {
-    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f"))
-}
-
-/// Parses a `timestamptz` text value into a UTC `DateTime` for binding. Accepts a
-/// trailing offset (`+00`, `+00:00`, `Z`); a value with no offset is taken as UTC.
-fn parse_datetime_utc(
-    s: &str,
-) -> Result<chrono::DateTime<chrono::Utc>, Box<dyn std::error::Error + Sync + Send>> {
-    use chrono::TimeZone;
-    if let Ok(dt) = chrono::DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%#z") {
-        return Ok(dt.with_timezone(&chrono::Utc));
-    }
-    if let Ok(dt) = chrono::DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f%#z") {
-        return Ok(dt.with_timezone(&chrono::Utc));
-    }
-    let naive = parse_naive_datetime(s)?;
-    Ok(chrono::Utc.from_utc_datetime(&naive))
 }
 
 /// Parses a PDO `pgsql:` DSN (semicolon-separated `key=value` pairs) into a
@@ -2938,15 +2896,11 @@ impl PgStmt {
             .statement
             .as_ref()
             .expect("native PostgreSQL statement missing its prepared handle");
-        let param_types: Vec<Type> = statement.params().to_vec();
         let params: Vec<Param> = self
             .binds
             .iter()
-            .zip(param_types.into_iter())
-            .map(|(bind, ty)| Param {
-                bind: bind.clone(),
-                ty,
-            })
+            .take(statement.params().len())
+            .map(|bind| Param { bind: bind.clone() })
             .collect();
         if !self.buffered && !statement.columns().is_empty() {
             let stream_id = conn.start_stream(statement.clone(), params)?;

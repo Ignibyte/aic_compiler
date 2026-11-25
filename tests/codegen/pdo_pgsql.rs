@@ -503,6 +503,40 @@ $db->exec("DROP TABLE pg_rich");
     );
 }
 
+/// Parameters reach the server as text, as libpq sends PDO's, so every type the server infers
+/// parses its own input: an array, a range, an interval, an inet, an infinite timestamp, a
+/// timestamptz read in the session's time zone and a bytea hex value. They were re-encoded in
+/// binary for a fixed list of types, so an array literal read as a malformed array (54000).
+#[test]
+#[ignore]
+fn test_pgsql_parameters_parse_as_server_text() {
+    let out = compile_and_run(&pg_program(
+        r#"
+$path = $db->prepare("SELECT '{\"a\":{\"b\":7}}'::jsonb #>> ?::text[]");
+$path->execute(["{a,b}"]);
+echo $path->fetchColumn(), "\n";
+$ids = $db->prepare("SELECT count(*)::text FROM generate_series(1, 5) AS n WHERE n = ANY(?::int[])");
+$ids->execute(["{2,4,9}"]);
+echo $ids->fetchColumn(), "\n";
+$db->exec("SET TIME ZONE 'America/Chicago'");
+$row = $db->prepare("SELECT upper(?::int4range)::text, (?::interval)::text, host(?::inet), (?::timestamp)::text, (?::timestamptz AT TIME ZONE 'UTC')::text, encode(?::bytea, 'escape'), (?::bool)::text");
+$row->execute(["[1,5)", "1 day 2 hours", "10.0.0.1/8", "infinity", "2026-01-15 08:00:00", "\\x6162", "yes"]);
+echo implode("|", (array) $row->fetch(PDO::FETCH_NUM)), "\n";
+try {
+    $bad = $db->prepare("SELECT ?::int");
+    $bad->execute(["seven"]);
+    echo "accepted\n";
+} catch (PDOException $error) {
+    echo $error->getCode(), "\n";
+}
+"#,
+    ));
+    assert_eq!(
+        out,
+        "7\n2\n5|1 day 02:00:00|10.0.0.1|infinity|2026-01-15 14:00:00|ab|true\n22P02\n"
+    );
+}
+
 /// The default exception error mode throws a catchable `PDOException` on bad SQL,
 /// and `ERRMODE_SILENT` makes `exec()` return `false` instead.
 #[test]
