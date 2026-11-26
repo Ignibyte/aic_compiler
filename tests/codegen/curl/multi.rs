@@ -144,6 +144,37 @@ fn multi_info_read_returns_the_same_handle_object() {
     );
 }
 
+/// `curl_multi_info_read()` writes the finished transfer's `CURLcode` onto its easy handle,
+/// as php-src's `ch->err.no = tmp_msg->data.result` does: `curl_errno()` and `curl_error()`
+/// on the handle then report the transfer the message describes, not the `0` / `""` the
+/// handle held while it ran. `rtmp://` fails inside libcurl (no handler since curl 8.20.0),
+/// so the fixture opens no socket.
+#[test]
+fn multi_info_read_sets_the_easy_handle_errno() {
+    if skip_without_curl_native("multi_info_read_sets_the_easy_handle_errno") {
+        return;
+    }
+    let out = compile_and_run(
+        r#"<?php
+        $mh = curl_multi_init();
+        $bad = curl_init("rtmp://127.0.0.1/x");
+        curl_multi_add_handle($mh, $bad);
+        echo curl_errno($bad), "|", curl_error($bad), "\n";
+        $running = 0;
+        do {
+            curl_multi_exec($mh, $running);
+            if ($running > 0) {
+                curl_multi_select($mh, 1.0);
+            }
+        } while ($running > 0);
+        while (($info = curl_multi_info_read($mh)) !== false) {
+            echo $info['result'], " ", curl_errno($bad), " ", curl_error($bad), "\n";
+        }
+        "#,
+    );
+    assert_eq!(out, "0|\n1 1 Protocol \"rtmp\" not supported\n");
+}
+
 /// The `$queued_messages` by-reference parameter is OPTIONAL: omitting it must compile and
 /// run (the lowering hazard this task's brief called out), and an empty queue must answer
 /// `false` without touching a caller variable — php-src returns before its own

@@ -1525,7 +1525,7 @@ unsafe fn bytes_to_cstring(ptr: *const u8, len: usize) -> Option<CString> {
 
 /// Extracts the NUL-terminated message libcurl wrote into a
 /// `CURLOPT_ERRORBUFFER` buffer, up to (and excluding) the first NUL byte.
-fn extract_error_message(buf: &[u8]) -> Vec<u8> {
+pub(crate) fn extract_error_message(buf: &[u8]) -> Vec<u8> {
     let end = buf.iter().position(|&byte| byte == 0).unwrap_or(buf.len());
     buf[..end].to_vec()
 }

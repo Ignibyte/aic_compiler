@@ -203,6 +203,22 @@ fn easy_id_of(ptr: *mut CURL) -> i64 {
         .map_or(0, |(&id, _)| id)
 }
 
+/// Records a finished transfer's `CURLcode` and error text on its easy handle, as php-src's
+/// `curl_multi_info_read()` does (`ch->err.no = tmp_msg->data.result`), so `curl_errno()` and
+/// `curl_error()` on the handle report the transfer the message describes. Takes only the
+/// easy table's lock, so it runs before the multi table is locked again.
+fn record_transfer_result(easy_id: i64, result: i64) {
+    let mut guard = handles::lock_recover(handles::handles());
+    if let Some(entry) = guard.get_mut(&easy_id) {
+        entry.last_errno = i32::try_from(result).unwrap_or(i32::MAX);
+        entry.last_error = if result == i64::from(easy::CURLE_OK) {
+            Vec::new()
+        } else {
+            crate::abi::extract_error_message(&entry.error_buf)
+        };
+    }
+}
+
 /// Classifies a `curl_multi_setopt()` option number, the multi-side mirror of
 /// `crate::options::option_kind` and a MEMORY-SAFETY boundary for the same
 /// reason: `curl_multi_setopt` is variadic and reads its third argument purely
@@ -514,6 +530,7 @@ pub extern "C" fn elephc_curl_multi_info_read(multi_id: i64, field: i64) -> i64 
         // happens BEFORE the multi table is locked again below; taking them in
         // the other order anywhere would invite a lock-order inversion.
         let easy_id = easy_id_of(easy_ptr);
+        record_transfer_result(easy_id, result);
         let mut guard = handles::lock_recover(multis());
         let Some(entry) = guard.get_mut(&multi_id) else {
             return 0;
