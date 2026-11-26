@@ -34,7 +34,7 @@ use std::thread::JoinHandle;
 
 use futures_util::{future::poll_fn, pin_mut, SinkExt, TryStreamExt};
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
-use tokio_postgres::types::{to_sql_checked, Format, IsNull, Kind, ToSql, Type};
+use tokio_postgres::types::{to_sql_checked, Format, FromSql, IsNull, Kind, ToSql, Type};
 use tokio_postgres::{
     AsyncMessage, Client as AsyncClient, Config, Connection, Error as PgError, NoTls, Row,
     SimpleQueryMessage, Statement,
@@ -3463,6 +3463,38 @@ fn type_len(ty: &Type) -> i64 {
     }
 }
 
+/// A `json` or `jsonb` column read as the text PostgreSQL prints for it, which is what
+/// php-src's pdo_pgsql hands PHP (it reads every column in text format). The binary
+/// format carries that text already: `json` is the stored text itself, and `jsonb` is a
+/// version byte (`1`) followed by `jsonb_out`'s text, with its `": "` and `", "`
+/// spacing, its key order and its numerics as written. Decoding through a JSON value
+/// and re-serializing it would print `{"a":1}` where PHP prints `{"a": 1}`.
+struct JsonText(String);
+
+impl<'a> FromSql<'a> for JsonText {
+    /// Takes the text out of the binary value, refusing a jsonb format version other
+    /// than `1` (the only one PostgreSQL has defined) and text that is not UTF-8.
+    fn from_sql(
+        ty: &Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
+        let text = if *ty == Type::JSONB {
+            match raw.split_first() {
+                Some((1, rest)) => rest,
+                _ => return Err("unsupported jsonb binary format version".into()),
+            }
+        } else {
+            raw
+        };
+        Ok(JsonText(std::str::from_utf8(text)?.to_string()))
+    }
+
+    /// Accepts the two JSON types only.
+    fn accepts(ty: &Type) -> bool {
+        matches!(*ty, Type::JSON | Type::JSONB)
+    }
+}
+
 /// Decodes a result row's columns into PHP-friendly `Cell` scalars, mapping each
 /// PostgreSQL type to int/float/text and NULLs to `Cell::Null`. Types without a
 /// direct scalar decoding (e.g. arrays) fall back to a text attempt, then null.
@@ -3535,10 +3567,10 @@ fn decode_row(row: &Row) -> Vec<Cell> {
                     .get::<_, Option<chrono::DateTime<chrono::Utc>>>(i)
                     .map(|t| Cell::Text(t.format("%Y-%m-%d %H:%M:%S%.f+00").to_string()))
                     .unwrap_or(Cell::Null),
-                // json/jsonb: the JSON value re-serialized as a compact string.
+                // json/jsonb: the server's own text, as php-src's pdo_pgsql returns it.
                 Type::JSON | Type::JSONB => row
-                    .get::<_, Option<serde_json::Value>>(i)
-                    .map(|v| Cell::Text(v.to_string()))
+                    .get::<_, Option<JsonText>>(i)
+                    .map(|v| Cell::Text(v.0))
                     .unwrap_or(Cell::Null),
                 Type::UUID => row
                     .get::<_, Option<uuid::Uuid>>(i)

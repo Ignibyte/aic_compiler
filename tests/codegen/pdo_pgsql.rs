@@ -503,6 +503,43 @@ $db->exec("DROP TABLE pg_rich");
     );
 }
 
+/// A `json` column reads back as the text that was stored and a `jsonb` column as the text
+/// PostgreSQL prints for it (`": "` and `", "` spacing, keys by length then bytes, `1.50`
+/// kept), on both the simple-query path and a prepared statement, as php-src's pdo_pgsql
+/// returns them. The prepared path decoded the value and re-serialized it compact
+/// (`{"a":[1,2,{"k":null}],"bb":"x","zz":1.5}`).
+#[test]
+#[ignore]
+fn test_pgsql_json_reads_as_server_text() {
+    let out = compile_and_run(&pg_program(
+        r#"
+$db->exec("DROP TABLE IF EXISTS pg_json_text");
+$db->exec("CREATE TABLE pg_json_text (j JSON, b JSONB)");
+$ins = $db->prepare("INSERT INTO pg_json_text VALUES (?, ?)");
+$doc = '{"zz":1.50,"a": [1,2, {"k":null}],"bb":"x"}';
+$ins->execute([$doc, $doc]);
+$r = $db->query("SELECT j, b, b->'a' AS part, '[]'::jsonb AS e FROM pg_json_text")->fetch(PDO::FETCH_ASSOC);
+echo $r["j"], "\n", $r["b"], "\n", $r["part"], "\n", $r["e"], "\n";
+$st = $db->prepare("SELECT j, b FROM pg_json_text WHERE b->>'bb' = ?");
+$st->execute(["x"]);
+$p = $st->fetch(PDO::FETCH_ASSOC);
+echo $p["j"], "\n", $p["b"], "\n";
+$db->exec("DROP TABLE pg_json_text");
+"#,
+    ));
+    assert_eq!(
+        out,
+        concat!(
+            "{\"zz\":1.50,\"a\": [1,2, {\"k\":null}],\"bb\":\"x\"}\n",
+            "{\"a\": [1, 2, {\"k\": null}], \"bb\": \"x\", \"zz\": 1.50}\n",
+            "[1, 2, {\"k\": null}]\n",
+            "[]\n",
+            "{\"zz\":1.50,\"a\": [1,2, {\"k\":null}],\"bb\":\"x\"}\n",
+            "{\"a\": [1, 2, {\"k\": null}], \"bb\": \"x\", \"zz\": 1.50}\n",
+        )
+    );
+}
+
 /// Parameters reach the server as text, as libpq sends PDO's, so every type the server infers
 /// parses its own input: an array, a range, an interval, an inet, an infinite timestamp, a
 /// timestamptz read in the session's time zone and a bytea hex value. They were re-encoded in
