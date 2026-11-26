@@ -432,6 +432,42 @@ echo date("Y-m-d H:i:s", $lower);
     assert_eq!(out, "2024-06-15 12:00:00,2024-06-15 12:30:00");
 }
 
+/// Verifies `strtotime` honors a whole-hour `±HH` offset after a time, the form PostgreSQL
+/// prints for `timestamptz` (`2024-06-15 12:30:45+00`), with a space or `T` separator and
+/// after an `HH:MM` time, and that it equals the `±HH:MM` spelling. It returned `false`.
+#[test]
+fn test_strtotime_whole_hour_offset() {
+    let out = compile_and_run(
+        r#"<?php
+date_default_timezone_set("UTC");
+echo gmdate("Y-m-d H:i:s", strtotime("2024-06-15 12:30:45+00")), ",";
+echo gmdate("Y-m-d H:i:s", strtotime("2024-06-15 12:30:45-03")), ",";
+echo gmdate("Y-m-d H:i:s", strtotime("2024-06-15T12:30:45+05")), ",";
+echo gmdate("Y-m-d H:i:s", strtotime("2024-06-15 12:30-03")), ",";
+echo strtotime("2024-06-15 12:30:45+00") === strtotime("2024-06-15 12:30:45+00:00") ? "=" : "!";
+"#,
+    );
+    assert_eq!(
+        out,
+        "2024-06-15 12:30:45,2024-06-15 15:30:45,2024-06-15 07:30:45,2024-06-15 15:30:00,="
+    );
+}
+
+/// Verifies a `DateTimeImmutable` built from PostgreSQL's `timestamptz` text (`+00`, `-03`)
+/// parses instead of throwing `DateMalformedStringException`.
+#[test]
+fn test_datetime_accepts_a_whole_hour_offset() {
+    let out = compile_and_run(
+        r#"<?php
+date_default_timezone_set("UTC");
+$a = new DateTimeImmutable("2026-11-17 08:30:00+00");
+$b = new DateTimeImmutable("2026-11-17 08:30:00.250000-03");
+echo $a->getTimestamp(), ",", $b->getTimestamp(), ",", $b->format("u");
+"#,
+    );
+    assert_eq!(out, "1794904200,1794915000,250000");
+}
+
 /// Verifies `strtotime` returns `false` (PHP's failure value) for malformed ISO-like strings
 /// that have extra junk after the datetime; a strict `=== false` check distinguishes failure
 /// from any valid timestamp.
