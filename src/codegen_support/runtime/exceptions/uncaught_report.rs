@@ -575,7 +575,7 @@ fn emit_report_uncaught_exception_x86_64(emitter: &mut Emitter) {
     emitter.label("__rt_uncaught_exit");
     emitter.instruction("call __rt_run_exit_hook");                             // shut hosted PHP extensions down (RSHUTDOWN, MSHUTDOWN)
     emitter.instruction(&format!("mov edi, {}", UNCAUGHT_EXIT_STATUS));         // PHP exits 255 for an uncaught exception
-    emitter.instruction("mov eax, 60");                                         // Linux x86_64 syscall 60 = exit
+    emitter.instruction("mov eax, 231");                                        // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
     emitter.instruction("syscall");                                             // exit the process after reporting the throwable
     emitter.instruction("ud2");                                                 // keep the terminal syscall from falling through into the next helper
 
@@ -588,7 +588,7 @@ fn emit_report_uncaught_exception_x86_64(emitter: &mut Emitter) {
     emitter.instruction("and rsp, -16");                                        // align the stack for the exit hook (this path never returns)
     emitter.instruction("call __rt_run_exit_hook");                             // shut hosted PHP extensions down (RSHUTDOWN, MSHUTDOWN)
     emitter.instruction(&format!("mov edi, {}", UNCAUGHT_EXIT_STATUS));         // same status as the reporting path
-    emitter.instruction("mov eax, 60");                                         // syscall 60 = exit
+    emitter.instruction("mov eax, 231");                                        // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
     emitter.instruction("syscall");                                             // exit the process after the fallback diagnostic
     emitter.instruction("ud2");                                                 // terminate control flow if the exit syscall unexpectedly returns
 
@@ -831,7 +831,7 @@ fn emit_report_uncaught_exception_x86_64(emitter: &mut Emitter) {
     emitter.instruction("call __rt_debuginfo_fatal_text");                      // the fatal line with its location
     emitter.instruction("call __rt_run_exit_hook");                             // shut hosted PHP extensions down (RSHUTDOWN, MSHUTDOWN)
     emitter.instruction(&format!("mov edi, {}", UNCAUGHT_EXIT_STATUS));         // PHP exits 255 on a fatal error
-    emitter.instruction("mov eax, 60");                                         // Linux x86_64 syscall 60 = exit
+    emitter.instruction("mov eax, 231");                                        // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
     emitter.instruction("syscall");                                             // terminate the process
     emitter.instruction("ud2");                                                 // terminate control flow if the exit syscall unexpectedly returns
 

@@ -406,7 +406,7 @@ fn emit_concat_scratch_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov eax, 1");                                          // Linux x86_64 syscall 1 = write
     emitter.instruction("syscall");                                             // emit the fatal allocation-overflow message before terminating
     emitter.instruction("mov edi, 1");                                          // exit code 1 for the allocation-overflow abort path
-    emitter.instruction("mov eax, 60");                                         // Linux x86_64 syscall 60 = exit
+    emitter.instruction("mov eax, 231");                                        // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
     emitter.instruction("syscall");                                             // terminate the process after reporting the impossible allocation
 }
 
@@ -479,7 +479,7 @@ fn emit_concat_headroom_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov eax, 1");                                          // Linux x86_64 syscall 1 = write
     emitter.instruction("syscall");                                             // emit the fatal capacity diagnostic
     emitter.instruction("mov edi, 255");                                        // PHP exits with 255 on an uncaught fatal error
-    emitter.instruction("mov eax, 60");                                         // Linux x86_64 syscall 60 = exit
+    emitter.instruction("mov eax, 231");                                        // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
     emitter.instruction("syscall");                                             // terminate after reporting the oversized result
 }
 

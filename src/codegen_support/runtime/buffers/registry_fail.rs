@@ -45,6 +45,6 @@ fn emit_buffer_registry_fail_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("syscall");                                             // emit the registry-exhaustion diagnostic
     abi::emit_cdylib_exit_escape(emitter);
     emitter.instruction("mov rdi, 70");                                         // report a deterministic software failure status
-    emitter.instruction("mov rax, 60");                                         // select the Linux x86_64 exit syscall
+    emitter.instruction("mov rax, 231");                                        // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
     emitter.instruction("syscall");                                             // terminate without returning to buffer allocation
 }
