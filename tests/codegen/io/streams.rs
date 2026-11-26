@@ -3237,6 +3237,67 @@ foreach ([70, 140] as $count) {
     assert_eq!(out, "x idle\nx idle\n");
 }
 
+/// Verifies `stream_socket_accept()` takes a float timeout, as PHP's `?float` parameter does: with
+/// no client it waits about that long, then returns false, and with one pending it accepts it.
+#[test]
+fn test_stream_socket_accept_float_timeout() {
+    let out = compile_and_run(
+        r#"<?php
+$server = stream_socket_server("tcp://127.0.0.1:0");
+$start = microtime(true);
+$none = @stream_socket_accept($server, 0.3);
+$waited = microtime(true) - $start;
+echo $none === false ? "false" : "accepted", " ", $waited >= 0.25 && $waited < 5.0 ? "waited" : "wrong wait", "\n";
+$client = stream_socket_client("tcp://" . stream_socket_get_name($server, false));
+$peer = stream_socket_accept($server, 1.5);
+fwrite($client, "x");
+echo $peer === false ? "missed" : fread($peer, 1), "\n";
+"#,
+    );
+    assert_eq!(out, "false waited\nx\n");
+}
+
+/// Verifies `stream_socket_accept()` with a null timeout accepts a pending client: null asks for
+/// `default_socket_timeout`, the same wait as an omitted timeout.
+#[test]
+fn test_stream_socket_accept_null_timeout_accepts() {
+    let out = compile_and_run(
+        r#"<?php
+$server = stream_socket_server("tcp://127.0.0.1:0");
+$client = stream_socket_client("tcp://" . stream_socket_get_name($server, false));
+$peer = stream_socket_accept($server, null);
+fwrite($client, "y");
+echo $peer === false ? "missed" : fread($peer, 1), "\n";
+"#,
+    );
+    assert_eq!(out, "y\n");
+}
+
+/// Verifies an omitted and a null `stream_socket_accept()` timeout each pass PHP's
+/// `default_socket_timeout`, 60 seconds as 60,000,000 microseconds, rather than an unlimited wait.
+/// The wait itself outlasts the runner's binary timeout, so the lowered immediate is checked.
+#[test]
+fn test_stream_socket_accept_default_timeout_is_sixty_seconds() {
+    let dir = make_cli_test_dir("elephc_accept_default_timeout");
+    let (user_asm, _runtime_asm, _libraries) = compile_source_to_asm_with_options(
+        r#"<?php
+$server = stream_socket_server("tcp://127.0.0.1:0");
+$first = stream_socket_accept($server);
+$second = stream_socket_accept($server, null);
+"#,
+        &dir,
+        8_388_608,
+        false,
+        false,
+    );
+    let _ = fs::remove_dir_all(&dir);
+    let loads = match target().arch {
+        Arch::X86_64 => user_asm.matches(", 60000000").count(),
+        Arch::AArch64 => user_asm.matches("movk x0, #0x393, lsl #16").count(),
+    };
+    assert_eq!(loads, 2, "{user_asm}");
+}
+
 /// Verifies compiled PHP output for stream socket accept peer name inet.
 #[test]
 fn test_stream_socket_accept_peer_name_inet() {

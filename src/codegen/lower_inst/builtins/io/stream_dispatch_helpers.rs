@@ -92,26 +92,44 @@ pub(super) fn lower_stream_get_contents_read_all(ctx: &mut FunctionContext<'_>) 
     abi::emit_call_label(ctx.emitter, "__rt_stream_get_contents");
 }
 
-/// Materializes `stream_socket_accept` timeout as microseconds or `-1`.
+/// PHP's `default_socket_timeout`, in microseconds: the wait of an omitted or null timeout.
+const DEFAULT_SOCKET_TIMEOUT_MICROS: i64 = 60_000_000;
+
+/// The bits of `1_000_000.0`, the microseconds in a second, as an IEEE 754 double.
+const MICROS_PER_SECOND_F64_BITS: i64 = 0x412E_8480_0000_0000;
+
+/// Materializes `stream_socket_accept` timeout as microseconds; a negative value waits without limit.
+///
+/// PHP's parameter is `?float`: an omitted or null timeout waits `default_socket_timeout` (60 s),
+/// an int or float waits that many seconds, truncated to microseconds as PHP's own conversion
+/// does, and a negative one (NaN included, as `timeout >= 0.0` fails) waits until a client comes.
 pub(super) fn lower_stream_socket_accept_timeout(
     ctx: &mut FunctionContext<'_>,
     inst: &Instruction,
 ) -> Result<()> {
     let Some(timeout) = inst.operands.get(1).copied() else {
-        emit_fd_result(ctx, -1);
+        emit_fd_result(ctx, DEFAULT_SOCKET_TIMEOUT_MICROS);
         return Ok(());
     };
     if matches!(
         ctx.raw_value_php_type(timeout)?.codegen_repr(),
         PhpType::Void | PhpType::Never
     ) {
-        emit_fd_result(ctx, -1);
+        emit_fd_result(ctx, DEFAULT_SOCKET_TIMEOUT_MICROS);
         return Ok(());
     }
-    require_int(
-        ctx.load_value_to_result(timeout)?.codegen_repr(),
-        "stream_socket_accept timeout",
-    )?;
+    match ctx.load_value_to_result(timeout)?.codegen_repr() {
+        PhpType::Float => emit_float_seconds_to_micros(ctx),
+        ty => {
+            require_int(ty, "stream_socket_accept timeout")?;
+            emit_int_seconds_to_micros(ctx);
+        }
+    }
+    Ok(())
+}
+
+/// Converts the integer result register from seconds to microseconds.
+fn emit_int_seconds_to_micros(ctx: &mut FunctionContext<'_>) {
     match ctx.emitter.target.arch {
         Arch::AArch64 => {
             ctx.emitter.instruction("mov x9, #0x4240");                         // load low bits of 1_000_000 microseconds per second
@@ -122,7 +140,25 @@ pub(super) fn lower_stream_socket_accept_timeout(
             ctx.emitter.instruction("imul rax, rax, 1000000");                  // convert timeout seconds to microseconds
         }
     }
-    Ok(())
+}
+
+/// Converts the float result register from seconds to whole microseconds in the integer result
+/// register, truncating toward zero; NaN and out-of-range values come out negative.
+fn emit_float_seconds_to_micros(ctx: &mut FunctionContext<'_>) {
+    match ctx.emitter.target.arch {
+        Arch::AArch64 => {
+            abi::emit_load_int_immediate(ctx.emitter, "x9", MICROS_PER_SECOND_F64_BITS);
+            ctx.emitter.instruction("fmov d1, x9");                             // move the 1_000_000.0 multiplier into a float register
+            ctx.emitter.instruction("fmul d0, d0, d1");                         // convert timeout seconds to microseconds
+            ctx.emitter.instruction("fcvtzs x0, d0");                           // truncate the microseconds toward zero into the integer result
+        }
+        Arch::X86_64 => {
+            abi::emit_load_int_immediate(ctx.emitter, "r10", MICROS_PER_SECOND_F64_BITS);
+            ctx.emitter.instruction("movq xmm1, r10");                          // move the 1_000_000.0 multiplier into a float register
+            ctx.emitter.instruction("mulsd xmm0, xmm1");                        // convert timeout seconds to microseconds
+            ctx.emitter.instruction("cvttsd2si rax, xmm0");                     // truncate the microseconds toward zero into the integer result
+        }
+    }
 }
 
 /// Stores `_accept_peer_*` into a local string slot while preserving the result.
