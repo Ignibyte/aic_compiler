@@ -172,6 +172,6 @@ fn emit_array_new_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("syscall");                                             // print the fatal array-size message to stderr
     abi::emit_cdylib_exit_escape(emitter);
     emitter.instruction("mov edi, 1");                                          // exit code 1 for an unrepresentable array size
-    emitter.instruction("mov eax, 60");                                         // Linux x86_64 syscall 60 = exit
+    emitter.instruction("mov eax, 231");                                        // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
     emitter.instruction("syscall");                                             // terminate the process after reporting the array-size failure
 }

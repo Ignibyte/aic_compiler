@@ -615,7 +615,7 @@ pub(super) fn emit_parser(emitter: &mut Emitter) {
     emitter.instruction("mov eax, 1");                                          // Linux write syscall number
     emitter.instruction("syscall");                                             // report the recursive parser limit
     emitter.instruction("mov edi, 1");                                          // non-zero failure status
-    emitter.instruction("mov eax, 60");                                         // Linux exit syscall number
+    emitter.instruction("mov eax, 231");                                        // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
     emitter.instruction("syscall");                                             // terminate without returning to the overflowing caller
 
     // Back-references clone a registered value with its payload retain. Lowercase r

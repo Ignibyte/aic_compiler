@@ -946,7 +946,7 @@ fn emit_dynamic_exit(ctx: &mut FunctionContext<'_>) {
             abi::emit_exit_hook(ctx.emitter);
             crate::codegen::frame::emit_instr_terminate(ctx);
             ctx.emitter.instruction("mov rdi, rbx");                            // move the computed exit code into the SysV first-argument register
-            ctx.emitter.instruction("mov eax, 60");                             // Linux x86_64 syscall 60 = exit
+            ctx.emitter.instruction("mov eax, 231");                            // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
             ctx.emitter.instruction("syscall");                                 // terminate the process through the Linux x86_64 syscall ABI
         }
         (Platform::MacOS, Arch::X86_64) => {

@@ -125,6 +125,6 @@ fn emit_x86_64(emitter: &mut Emitter) {
     emitter.instruction("syscall");                                             // write the allocation diagnostic
     abi::emit_cdylib_exit_escape(emitter);
     emitter.instruction("mov edi, 1");                                          // report allocation failure
-    emitter.instruction("mov eax, 60");                                         // select the Linux exit syscall
+    emitter.instruction("mov eax, 231");                                        // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
     emitter.instruction("syscall");                                             // terminate after reporting allocation failure
 }

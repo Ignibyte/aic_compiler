@@ -193,7 +193,7 @@ pub(super) fn emit_absent_metadata_fatal(emitter: &mut Emitter) {
             emitter.instruction("mov eax, 1");                                  // Linux x86_64 syscall 1 = write
             emitter.instruction("syscall");                                     // write the internal metadata diagnostic to stderr
             emitter.instruction(&format!("mov edi, {}", UNCAUGHT_EXIT_STATUS)); // exit with PHP's uncaught-throwable status
-            emitter.instruction("mov eax, 60");                                 // Linux x86_64 syscall 60 = exit
+            emitter.instruction("mov eax, 231");                                // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
             emitter.instruction("syscall");                                     // exit rather than misreport the broken chain as a non-match
         }
     }

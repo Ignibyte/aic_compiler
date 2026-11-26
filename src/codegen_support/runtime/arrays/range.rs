@@ -188,6 +188,6 @@ fn emit_range_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("mov eax, 1");                                          // Linux x86_64 syscall 1 = write
     emitter.instruction("syscall");                                             // print the fatal range-size message to stderr
     emitter.instruction("mov edi, 1");                                          // exit code 1 for an unrepresentable range size
-    emitter.instruction("mov eax, 60");                                         // Linux x86_64 syscall 60 = exit
+    emitter.instruction("mov eax, 231");                                        // Linux x86_64 syscall 231 = exit_group: end every thread, as PHP does
     emitter.instruction("syscall");                                             // terminate the process after reporting the range-size failure
 }
