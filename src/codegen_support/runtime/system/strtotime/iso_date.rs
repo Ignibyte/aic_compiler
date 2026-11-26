@@ -270,7 +270,7 @@ fn emit_pad_short_date_linux_x86_64(emitter: &mut Emitter) {
 /// Inputs: trimmed ptr at `[sp+48]`, trimmed len at `[sp+56]`.
 /// Parses `YYYY-MM-DD` (10 bytes), `YYYY-MM-DD HH:MM` (16 bytes), and `YYYY-MM-DD HH:MM:SS` (19 bytes).
 /// Accepts date/time separator as space, `T`, or `t`.
-/// Honors a trailing timezone (flag at `[sp+84]`): a numeric `±HH:MM`/`±HHMM`/`Z`/`UTC`/`GMT`
+/// Honors a trailing timezone (flag at `[sp+84]`): a numeric `±HH:MM`/`±HHMM`/`±HH`/`Z`/`UTC`/`GMT`
 /// offset (timegm minus offset), or a Continent/City IANA name (set the zone, `mktime`, restore).
 /// Builds `struct tm` at `[sp+0..47]`; fills tm_wday, tm_yday, tm_isdst before calling `mktime`.
 /// Exits via `__rt_strtotime_fail` on parse error, or `__rt_strtotime_ret` after `mktime`.
@@ -338,7 +338,7 @@ fn emit_iso_date_arm64(emitter: &mut Emitter) {
     emitter.instruction("cmp w9, #43");                                         // '+' ?
     emitter.instruction("b.eq __rt_strtotime_iso_zone_compact_go");             // signed offset -> parse the +-HHMM digits
     emitter.instruction("cmp w9, #45");                                         // '-' ?
-    emitter.instruction("b.ne __rt_strtotime_iso_zone_word");                   // not signed -> try a UTC/GMT word
+    emitter.instruction("b.ne __rt_strtotime_iso_zone_hour");                   // not signed -> try a whole-hour +-HH
     emitter.label("__rt_strtotime_iso_zone_compact_go");
     emitter.instruction("ldrb w10, [x13, #-4]");                                // first HH digit
     emitter.instruction("sub w10, w10, #48");                                   // to digit
@@ -366,6 +366,39 @@ fn emit_iso_date_arm64(emitter: &mut Emitter) {
     emitter.label("__rt_strtotime_iso_zone_compact_done");
     emitter.instruction("mov w10, #5");                                         // zone_len = 5
     emitter.instruction("mov w12, #1");                                         // explicit
+    emitter.instruction("b __rt_strtotime_iso_zone_word");                      // keep the +-HHMM zone; the word/IANA checks leave it pending
+    // -- whole-hour "+-HH" after a time ("08:30:00+00", as PostgreSQL prints timestamptz):
+    // -- sign at len-3, ":" at len-6 so a bare "YYYY-MM-DD" date never reads as an offset.
+    // -- Uses only w9/w14/w15/w16, so a miss leaves zone_len/offset/flag (w10/w11/w12) as they were --
+    emitter.label("__rt_strtotime_iso_zone_hour");
+    emitter.instruction("ldrb w9, [x13, #-3]");                                 // candidate sign
+    emitter.instruction("cmp w9, #43");                                         // '+' ?
+    emitter.instruction("b.eq __rt_strtotime_iso_zone_hour_go");                // signed -> check the shape
+    emitter.instruction("cmp w9, #45");                                         // '-' ?
+    emitter.instruction("b.ne __rt_strtotime_iso_zone_word");                   // not signed -> try a UTC/GMT word
+    emitter.label("__rt_strtotime_iso_zone_hour_go");
+    emitter.instruction("ldrb w14, [x13, #-6]");                                // the byte before the time's last field
+    emitter.instruction("cmp w14, #58");                                        // ':' (the sign follows a time) ?
+    emitter.instruction("b.ne __rt_strtotime_iso_zone_word");                   // no -> not a whole-hour offset
+    emitter.instruction("ldrb w14, [x13, #-2]");                                // HH tens
+    emitter.instruction("sub w14, w14, #48");                                   // to digit
+    emitter.instruction("cmp w14, #9");                                         // numeric ?
+    emitter.instruction("b.hi __rt_strtotime_iso_zone_word");                   // no -> not an offset
+    emitter.instruction("ldrb w15, [x13, #-1]");                                // HH ones
+    emitter.instruction("sub w15, w15, #48");                                   // to digit
+    emitter.instruction("cmp w15, #9");                                         // numeric ?
+    emitter.instruction("b.hi __rt_strtotime_iso_zone_word");                   // no -> not an offset
+    emitter.instruction("mov w16, #10");                                        // decimal base for the digit pair
+    emitter.instruction("madd w14, w14, w16, w15");                             // HH = tens*10 + ones
+    emitter.instruction("mov w16, #3600");                                      // seconds per hour
+    emitter.instruction("mul w11, w14, w16");                                   // offset = HH*3600
+    emitter.instruction("cmp w9, #45");                                         // '-' ?
+    emitter.instruction("b.ne __rt_strtotime_iso_zone_hour_done");              // '+' keeps the offset positive
+    emitter.instruction("neg w11, w11");                                        // negative
+    emitter.label("__rt_strtotime_iso_zone_hour_done");
+    emitter.instruction("mov w10, #3");                                         // zone_len = 3
+    emitter.instruction("mov w12, #1");                                         // explicit
+    emitter.instruction("b __rt_strtotime_iso_zone_done");                      // apply the parsed zone
     // -- trailing "UTC"/"GMT" word: explicit UTC (offset stays 0, like Z) --
     emitter.label("__rt_strtotime_iso_zone_word");
     emitter.instruction("ldrb w9, [x13, #-3]");                                 // 3rd-from-last char
@@ -710,7 +743,7 @@ fn emit_iso_date_linux_x86_64(emitter: &mut Emitter) {
     emitter.instruction("cmp eax, 43");                                         // '+' ?
     emitter.instruction("je __rt_strtotime_iso_zone_compact_go_linux_x86_64");  // signed offset -> parse the +-HHMM digits
     emitter.instruction("cmp eax, 45");                                         // '-' ?
-    emitter.instruction("jne __rt_strtotime_iso_zone_word_linux_x86_64");       // not signed -> try a UTC/GMT word
+    emitter.instruction("jne __rt_strtotime_iso_zone_hour_linux_x86_64");       // not signed -> try a whole-hour +-HH
     emitter.label("__rt_strtotime_iso_zone_compact_go_linux_x86_64");
     emitter.instruction("movzx eax, BYTE PTR [rcx - 4]");                       // first HH digit
     emitter.instruction("sub eax, 48");                                         // to digit
@@ -738,6 +771,38 @@ fn emit_iso_date_linux_x86_64(emitter: &mut Emitter) {
     emitter.label("__rt_strtotime_iso_zone_compact_done_linux_x86_64");
     emitter.instruction("mov r10d, 5");                                         // zone_len = 5
     emitter.instruction("mov r11d, 1");                                         // explicit
+    emitter.instruction("jmp __rt_strtotime_iso_zone_word_linux_x86_64");       // keep the +-HHMM zone; the word/IANA checks leave it pending
+    // -- whole-hour "+-HH" after a time ("08:30:00+00", as PostgreSQL prints timestamptz):
+    // -- sign at len-3, ":" at len-6 so a bare "YYYY-MM-DD" date never reads as an offset.
+    // -- Uses only rax/rdx/r8, so a miss leaves zone_len/offset/flag (r10d/r9d/r11d) as they were --
+    emitter.label("__rt_strtotime_iso_zone_hour_linux_x86_64");
+    emitter.instruction("movzx r8d, BYTE PTR [rcx - 3]");                       // candidate sign
+    emitter.instruction("cmp r8d, 43");                                         // '+' ?
+    emitter.instruction("je __rt_strtotime_iso_zone_hour_go_linux_x86_64");     // signed -> check the shape
+    emitter.instruction("cmp r8d, 45");                                         // '-' ?
+    emitter.instruction("jne __rt_strtotime_iso_zone_word_linux_x86_64");       // not signed -> try a UTC/GMT word
+    emitter.label("__rt_strtotime_iso_zone_hour_go_linux_x86_64");
+    emitter.instruction("movzx eax, BYTE PTR [rcx - 6]");                       // the byte before the time's last field
+    emitter.instruction("cmp eax, 58");                                         // ':' (the sign follows a time) ?
+    emitter.instruction("jne __rt_strtotime_iso_zone_word_linux_x86_64");       // no -> not a whole-hour offset
+    emitter.instruction("movzx eax, BYTE PTR [rcx - 2]");                       // HH tens
+    emitter.instruction("sub eax, 48");                                         // to digit
+    emitter.instruction("cmp eax, 9");                                          // numeric ?
+    emitter.instruction("ja __rt_strtotime_iso_zone_word_linux_x86_64");        // no -> not an offset
+    emitter.instruction("movzx edx, BYTE PTR [rcx - 1]");                       // HH ones
+    emitter.instruction("sub edx, 48");                                         // to digit
+    emitter.instruction("cmp edx, 9");                                          // numeric ?
+    emitter.instruction("ja __rt_strtotime_iso_zone_word_linux_x86_64");        // no -> not an offset
+    emitter.instruction("imul eax, eax, 10");                                   // HH tens*10
+    emitter.instruction("add eax, edx");                                        // HH
+    emitter.instruction("imul r9d, eax, 3600");                                 // offset = HH*3600
+    emitter.instruction("cmp r8d, 45");                                         // '-' ?
+    emitter.instruction("jne __rt_strtotime_iso_zone_hour_done_linux_x86_64"); // '+' keeps the offset positive
+    emitter.instruction("neg r9d");                                             // negative offset
+    emitter.label("__rt_strtotime_iso_zone_hour_done_linux_x86_64");
+    emitter.instruction("mov r10d, 3");                                         // zone_len = 3
+    emitter.instruction("mov r11d, 1");                                         // explicit
+    emitter.instruction("jmp __rt_strtotime_iso_zone_done_linux_x86_64");       // apply the parsed zone
     // -- trailing "UTC"/"GMT" word: explicit UTC (offset stays 0, like Z) --
     emitter.label("__rt_strtotime_iso_zone_word_linux_x86_64");
     emitter.instruction("movzx eax, BYTE PTR [rcx - 3]");                       // 3rd-from-last char
