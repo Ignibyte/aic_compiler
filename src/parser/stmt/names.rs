@@ -26,6 +26,25 @@ pub(crate) fn name_part_from_token(
     }
 }
 
+/// Reads `true`, `false` or `null` at `pos` as a name segment, by its source spelling, where PHP
+/// takes it as one: after a namespace separator (`\N\null()`), or as a call's name (`null()`),
+/// since a function may be named after them. Elsewhere the token stays the literal.
+pub(crate) fn literal_name_part_at(
+    tokens: &[SpannedToken],
+    pos: usize,
+    after_separator: bool,
+) -> Option<String> {
+    let (token, metadata) = tokens.get(pos)?;
+    if !matches!(token, Token::True | Token::False | Token::Null) {
+        return None;
+    }
+    let called = matches!(tokens.get(pos + 1), Some((Token::LParen, _)));
+    if !after_separator && !called {
+        return None;
+    }
+    token.word_spelling(metadata).map(str::to_string)
+}
+
 /// Returns whether the token at `pos` starts a PHP class-like name.
 pub(crate) fn name_starts_at(tokens: &[SpannedToken], pos: usize) -> bool {
     match tokens.get(pos) {
@@ -80,6 +99,13 @@ pub(crate) fn parse_name(
                 parts.push(
                     name_part_from_token(token, metadata)
                         .expect("name part was checked immediately above"),
+                );
+                *pos += 1;
+            }
+            Some(_) if literal_name_part_at(tokens, *pos, parts.len() > namespace_len).is_some() => {
+                parts.push(
+                    literal_name_part_at(tokens, *pos, parts.len() > namespace_len)
+                        .expect("literal name part was checked immediately above"),
                 );
                 *pos += 1;
             }

@@ -54,7 +54,9 @@ pub(super) fn parse_prefix(
     // namespace-local constant of the same name can never shadow them.
     if tokens[*pos].0 == Token::Backslash {
         if let Some((next, metadata)) = tokens.get(*pos + 1) {
-            let literal_constant = matches!(next, Token::True | Token::False | Token::Null);
+            // `\null()` calls a function named `null`; the bare `\null` is the constant.
+            let literal_constant = matches!(next, Token::True | Token::False | Token::Null)
+                && !matches!(tokens.get(*pos + 2), Some((Token::LParen, _)));
             let continues_name = matches!(
                 tokens.get(*pos + 2),
                 Some((Token::Backslash | Token::DoubleColon | Token::LParen, _))
@@ -78,6 +80,11 @@ pub(super) fn parse_prefix(
                 return Ok(expr);
             }
         }
+    }
+
+    // `null()`, `true()` and `false()` call a function of that name (see `literal_name_part_at`).
+    if crate::parser::stmt::literal_name_part_at(tokens, *pos, false).is_some() {
+        return parse_named_expr(tokens, pos, span);
     }
 
     match &tokens[*pos].0 {
