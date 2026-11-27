@@ -1,6 +1,6 @@
 //! Purpose:
 //! End-to-end tests for the PHP-written stdlib prelude (`src/stdlib_prelude/*.php`): `pack` and
-//! `unpack`.
+//! `unpack`, and `get_debug_type`.
 //!
 //! Called from:
 //! - `cargo test --test codegen_tests stdlib_builtins` through Rust's test harness.
@@ -178,4 +178,98 @@ class Tok {
         "main.php",
     );
     assert_eq!(out, "0102|42\n");
+}
+
+/// Parity with PHP 8.5 for `get_debug_type()` over every value kind: scalars, arrays, named,
+/// enum, closure and anonymous objects (bare, extending, implementing), and open and closed
+/// resources, called directly, fully qualified, as a first-class callable and by name.
+#[test]
+fn test_stdlib_get_debug_type_matches_php() {
+    let source = r####"<?php
+namespace App\Probe;
+interface Shape {}
+interface Named {}
+class Base {}
+final class Square extends Base implements Shape {}
+enum Suit { case Hearts; }
+$values = [null, true, false, 0, -7, 1.5, NAN, '', 'text', [], [1, 2], new Square(), Suit::Hearts,
+    function (): int { return 1; }, new \ArrayObject([]), new class {}, new class extends Base {},
+    new class implements Named, Shape {}];
+foreach ($values as $value) {
+    echo get_debug_type($value), "\n";
+}
+$f = fopen('php://memory', 'r');
+echo get_debug_type($f), "\n";
+fclose($f);
+echo get_debug_type($f), "\n";
+var_dump(function_exists('get_debug_type'));
+$named = get_debug_type(...);
+echo $named(3), "|", \get_debug_type('x'), "|", call_user_func('get_debug_type', 2.0), "\n";
+echo get_debug_type(1), ' ', get_debug_type(new \ArrayObject()), "\n";
+"####;
+    let expected = r####"null
+bool
+bool
+int
+int
+float
+float
+string
+string
+array
+array
+App\Probe\Square
+App\Probe\Suit
+Closure
+ArrayObject
+class@anonymous
+App\Probe\Base@anonymous
+App\Probe\Named@anonymous
+resource (stream)
+resource (closed)
+bool(true)
+int|string|float
+int ArrayObject
+"####;
+    assert_eq!(compile_and_run(source), expected);
+}
+
+/// Parity with PHP 8.5: anonymous classes declared inside a function in the global namespace are
+/// named by their first interface or their parent, and `get_debug_type` works as a callable string.
+#[test]
+fn test_stdlib_get_debug_type_anonymous_in_global_scope_matches_php() {
+    let source = r####"<?php
+interface Greeter {}
+interface Other {}
+class Root {}
+function make(int $kind): object {
+    if ($kind === 0) { return new class implements Other, Greeter {}; }
+    if ($kind === 1) { return new class extends Root implements Greeter {}; }
+    return new class {};
+}
+foreach ([0, 1, 2] as $kind) {
+    echo get_debug_type(make($kind)), "\n";
+}
+$list = [new Root(), 'x', 4];
+echo implode(',', array_map('get_debug_type', $list)), "\n";
+"####;
+    let expected = r####"Other@anonymous
+Root@anonymous
+class@anonymous
+Root,string,int
+"####;
+    assert_eq!(compile_and_run(source), expected);
+}
+
+/// A namespaced user `get_debug_type` keeps its own body while `\get_debug_type` still reaches PHP's.
+#[test]
+fn test_stdlib_get_debug_type_user_declaration_wins() {
+    let source = r####"<?php
+namespace Mine;
+function get_debug_type(mixed $value): string { return 'mine'; }
+echo get_debug_type(1), "|", \get_debug_type(1), "\n";
+"####;
+    let expected = r####"mine|int
+"####;
+    assert_eq!(compile_and_run(source), expected);
 }

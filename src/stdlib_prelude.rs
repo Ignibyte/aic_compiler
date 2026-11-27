@@ -1,6 +1,6 @@
 //! Purpose:
 //! Injects PHP-written implementations of standard-library functions that elephc has no
-//! native builtin for: `pack` and `unpack`.
+//! native builtin for: `pack`, `unpack` and `get_debug_type`.
 //!
 //! Called from:
 //! - `crate::pipeline::compile()`, AFTER `autoload::run` (so vendor/PSR-4 code is visible) and
@@ -19,8 +19,18 @@
 //!   ever parsed.
 //! - `pack`/`unpack` cover the full integer/string/hex/float code set; unknown codes throw a
 //!   `ValueError` naming the code.
+//! - `get_debug_type` composes the type predicates with `get_class`, `get_parent_class` and
+//!   `get_resource_type`, so an anonymous class reads as PHP spells it (`class@anonymous`,
+//!   `Parent@anonymous`, `Interface@anonymous`) whatever its internal name. An anonymous class
+//!   with interfaces and no parent is named by its first interface, which the class-relation
+//!   builtins cannot read from an `object` at run time, so [`name_interface_anonymous_classes`]
+//!   writes one `instanceof` branch per such class of the program into the helper.
 
-use crate::parser::ast::Program;
+use crate::parser::ast::{Program, Stmt, StmtKind};
+use crate::synthetic_class::{e_instanceof, e_str, e_var, s_if, s_return};
+
+/// The helper in `stdlib_prelude/get_debug_type.php` that names an object.
+const DEBUG_TYPE_OBJECT_HELPER: &str = "__elephc_get_debug_type_object";
 
 /// One injectable function: the PHP name the program references and the source declaring it
 /// (plus any `__elephc_*` helpers it needs).
@@ -33,6 +43,7 @@ struct StdlibFunction {
 const FUNCTIONS: &[StdlibFunction] = &[
     StdlibFunction { name: "pack", source: include_str!("stdlib_prelude/pack.php") },
     StdlibFunction { name: "unpack", source: include_str!("stdlib_prelude/unpack.php") },
+    StdlibFunction { name: "get_debug_type", source: include_str!("stdlib_prelude/get_debug_type.php") },
 ];
 
 /// Returns whether `name` is a function this prelude can declare.
@@ -70,8 +81,11 @@ fn inject_on_compiler_stack(
         }
         let tokens = crate::lexer::tokenize(function.source)
             .unwrap_or_else(|e| panic!("stdlib prelude `{}` must tokenize: {e:?}", function.name));
-        let declarations = crate::parser::parse_internal(&tokens)
+        let mut declarations = crate::parser::parse_internal(&tokens)
             .unwrap_or_else(|e| panic!("stdlib prelude `{}` must parse: {e:?}", function.name));
+        if function.name == "get_debug_type" {
+            name_interface_anonymous_classes(&mut declarations, &program);
+        }
         combined.extend(declarations);
     }
     if combined.is_empty() {
@@ -82,6 +96,56 @@ fn inject_on_compiler_stack(
     inventory.record_program("stdlib", &combined);
     combined.extend(program);
     Ok(combined)
+}
+
+/// Prepends to the `get_debug_type` object helper one `instanceof` branch for each anonymous
+/// class in `program` that has interfaces and no parent, answering `<first interface>@anonymous`
+/// as PHP does. Anonymous declarations are hoisted to the top level (or a namespace block's body)
+/// by the parser and already carry resolved names.
+fn name_interface_anonymous_classes(declarations: &mut Program, program: &Program) {
+    let mut branches = Vec::new();
+    collect_interface_anonymous_branches(program, &mut branches);
+    if branches.is_empty() {
+        return;
+    }
+    for declaration in declarations.iter_mut() {
+        if let StmtKind::FunctionDecl { name, body, .. } = &mut declaration.kind {
+            if name == DEBUG_TYPE_OBJECT_HELPER {
+                body.splice(0..0, branches);
+                return;
+            }
+        }
+    }
+}
+
+/// Collects the `instanceof` branches for [`name_interface_anonymous_classes`] from `stmts`.
+fn collect_interface_anonymous_branches(stmts: &[Stmt], branches: &mut Vec<Stmt>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::ClassDecl { name, extends: None, implements, .. }
+                if is_anonymous_class_decl(name) =>
+            {
+                let Some(first) = implements.first() else {
+                    continue;
+                };
+                let interface = first.as_str().trim_start_matches('\\');
+                branches.push(s_if(
+                    e_instanceof(e_var("value"), name.trim_start_matches('\\')),
+                    vec![s_return(e_str(&format!("{interface}@anonymous")))],
+                    vec![],
+                    None,
+                ));
+            }
+            StmtKind::NamespaceBlock { body, .. } => collect_interface_anonymous_branches(body, branches),
+            _ => {}
+        }
+    }
+}
+
+/// Returns whether a resolved class name is an anonymous class's: its last segment is the
+/// parser's synthetic name, which the namespace it was declared in prefixes.
+fn is_anonymous_class_decl(name: &str) -> bool {
+    crate::parser::is_anonymous_class_name(name.rsplit('\\').next().unwrap_or(name))
 }
 
 #[cfg(test)]
