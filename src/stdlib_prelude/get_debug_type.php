@@ -1,10 +1,7 @@
 <?php
 function __elephc_get_debug_type_object(object $value): string {
     $class = get_class($value);
-    if (!str_contains($class, '@anonymous')) { return $class; }
-    $parent = get_parent_class($value);
-    if (is_string($parent) && $parent !== '') { return $parent . '@anonymous'; }
-    return 'class@anonymous';
+    return str_contains($class, '@anonymous') ? 'class@anonymous' : $class;
 }
 function get_debug_type(mixed $value): string {
     if ($value === null) { return 'null'; }

@@ -19,12 +19,13 @@
 //!   ever parsed.
 //! - `pack`/`unpack` cover the full integer/string/hex/float code set; unknown codes throw a
 //!   `ValueError` naming the code.
-//! - `get_debug_type` composes the type predicates with `get_class`, `get_parent_class` and
-//!   `get_resource_type`, so an anonymous class reads as PHP spells it (`class@anonymous`,
-//!   `Parent@anonymous`, `Interface@anonymous`) whatever its internal name. An anonymous class
-//!   with interfaces and no parent is named by its first interface, which the class-relation
-//!   builtins cannot read from an `object` at run time, so [`name_interface_anonymous_classes`]
-//!   writes one `instanceof` branch per such class of the program into the helper.
+//! - `get_debug_type` composes the type predicates with `get_class` and `get_resource_type`, so
+//!   an anonymous class reads as PHP spells it (`class@anonymous`, `Parent@anonymous`,
+//!   `Interface@anonymous`) whatever its internal name. An anonymous class is named by its parent,
+//!   else its first interface, which the class-relation builtins cannot read from an `object` at
+//!   run time (and `get_parent_class()` in an injected body leaves a method adapter unlinked under
+//!   eval), so [`name_anonymous_classes`] writes one `instanceof` branch per such class of the
+//!   program into the helper.
 
 use crate::parser::ast::{Program, Stmt, StmtKind};
 use crate::synthetic_class::{e_instanceof, e_str, e_var, s_if, s_return};
@@ -84,7 +85,7 @@ fn inject_on_compiler_stack(
         let mut declarations = crate::parser::parse_internal(&tokens)
             .unwrap_or_else(|e| panic!("stdlib prelude `{}` must parse: {e:?}", function.name));
         if function.name == "get_debug_type" {
-            name_interface_anonymous_classes(&mut declarations, &program);
+            name_anonymous_classes(&mut declarations, &program);
         }
         combined.extend(declarations);
     }
@@ -99,12 +100,13 @@ fn inject_on_compiler_stack(
 }
 
 /// Prepends to the `get_debug_type` object helper one `instanceof` branch for each anonymous
-/// class in `program` that has interfaces and no parent, answering `<first interface>@anonymous`
-/// as PHP does. Anonymous declarations are hoisted to the top level (or a namespace block's body)
-/// by the parser and already carry resolved names.
-fn name_interface_anonymous_classes(declarations: &mut Program, program: &Program) {
+/// class in `program` that extends a class or implements an interface, answering
+/// `<parent>@anonymous`, else `<first interface>@anonymous`, as PHP does. Anonymous declarations
+/// are hoisted to the top level (or a namespace block's body) by the parser and already carry
+/// resolved names.
+fn name_anonymous_classes(declarations: &mut Program, program: &Program) {
     let mut branches = Vec::new();
-    collect_interface_anonymous_branches(program, &mut branches);
+    collect_anonymous_branches(program, &mut branches);
     if branches.is_empty() {
         return;
     }
@@ -118,25 +120,23 @@ fn name_interface_anonymous_classes(declarations: &mut Program, program: &Progra
     }
 }
 
-/// Collects the `instanceof` branches for [`name_interface_anonymous_classes`] from `stmts`.
-fn collect_interface_anonymous_branches(stmts: &[Stmt], branches: &mut Vec<Stmt>) {
+/// Collects the `instanceof` branches for [`name_anonymous_classes`] from `stmts`.
+fn collect_anonymous_branches(stmts: &[Stmt], branches: &mut Vec<Stmt>) {
     for stmt in stmts {
         match &stmt.kind {
-            StmtKind::ClassDecl { name, extends: None, implements, .. }
-                if is_anonymous_class_decl(name) =>
-            {
-                let Some(first) = implements.first() else {
+            StmtKind::ClassDecl { name, extends, implements, .. } if is_anonymous_class_decl(name) => {
+                let Some(named) = extends.as_ref().or(implements.first()) else {
                     continue;
                 };
-                let interface = first.as_str().trim_start_matches('\\');
+                let spelling = named.as_str().trim_start_matches('\\');
                 branches.push(s_if(
                     e_instanceof(e_var("value"), name.trim_start_matches('\\')),
-                    vec![s_return(e_str(&format!("{interface}@anonymous")))],
+                    vec![s_return(e_str(&format!("{spelling}@anonymous")))],
                     vec![],
                     None,
                 ));
             }
-            StmtKind::NamespaceBlock { body, .. } => collect_interface_anonymous_branches(body, branches),
+            StmtKind::NamespaceBlock { body, .. } => collect_anonymous_branches(body, branches),
             _ => {}
         }
     }

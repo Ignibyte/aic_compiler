@@ -273,3 +273,23 @@ echo get_debug_type(1), "|", \get_debug_type(1), "\n";
 "####;
     assert_eq!(compile_and_run(source), expected);
 }
+
+/// `get_debug_type()` links in a program that can reach `eval` and declares a `Stringable` class it
+/// never builds: the injected helper names anonymous classes from compile-time branches rather
+/// than `get_parent_class()`, whose eval-reachable lowering left that class's `__toString` adapter
+/// unlinked (the survey's `ThemeBindingHelpers`, a trait that only imports the function).
+#[test]
+fn test_stdlib_get_debug_type_links_beside_eval_and_stringable() {
+    let source = r####"<?php
+namespace App\Probe;
+final readonly class Html implements \Stringable
+{
+    public function __construct(public string $markup) {}
+    public function __toString(): string { return $this->markup; }
+}
+function describe(\Closure $provider): string { $value = $provider(); return get_debug_type($value); }
+if (getenv("ELEPHC_NEVER_SET") === "set") { eval(""); }
+echo get_debug_type(3), "|", get_debug_type([1]), "\n";
+"####;
+    assert_eq!(compile_and_run(source), "int|array\n");
+}
