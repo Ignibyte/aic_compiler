@@ -31,6 +31,9 @@ const HASH_CONTEXT_FUNCTIONS: &[&str] = &[
     "array_unique",
     "array_diff_assoc",
     "array_intersect_assoc",
+    "array_replace",
+    "array_replace_recursive",
+    "array_merge_recursive",
 ];
 
 /// Returns whether any top-level statement references the incremental-hashing

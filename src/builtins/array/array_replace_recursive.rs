@@ -9,7 +9,8 @@
 //!   params, no variadic), matching the registry signature. The
 //!   param-derived bounds already require exactly 2 arguments, so no `min_args`/
 //!   `max_args` override is needed; `check_arity` owns the arity contract.
-//! - `check` enforces that both arguments are associative arrays or
+//! - `check` sends a declared `array`, an empty array or a list of non-scalars to the
+//!   key-set prelude's PHP helper; otherwise both arguments must be associative arrays or
 //!   indexed arrays of scalars, and the result is the two-input hash result type. A
 //!   check hook is required because the return type depends on the inferred arguments.
 
@@ -35,8 +36,13 @@ builtin! {
 fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     let ty1 = cx.checker.infer_type(&cx.args[0], cx.env)?;
     let ty2 = cx.checker.infer_type(&cx.args[1], cx.env)?;
-    let accepted =
-        |t: &PhpType| matches!(t, PhpType::AssocArray { .. }) || t.is_scalar_indexed_array();
+    let accepted = crate::key_set_prelude::natively_hashable;
+    let array = crate::key_set_prelude::is_array_or_mixed_operand;
+    if !(accepted(&ty1) && accepted(&ty2)) && array(&ty1) && array(&ty2) {
+        if let Some(ty) = crate::key_set_prelude::retarget(cx, crate::key_set_prelude::REPLACE_RECURSIVE) {
+            return Ok(ty);
+        }
+    }
     if !accepted(&ty1) || !accepted(&ty2) {
         return Err(CompileError::new(
             cx.span,
