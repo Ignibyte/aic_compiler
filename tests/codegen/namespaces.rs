@@ -1368,3 +1368,38 @@ namespace { var_dump(namespace\true, namespace\null, namespace\INF); }
     );
     assert_eq!(out, "n\nn\nApp\\true\nVendor\\PHP_EOL|nl\n1 big t\nbool(true)\nNULL\nfloat(INF)\n");
 }
+
+/// Parity with PHP 8.5: functions may be named `null`, `true` or `false` (in any case) and are
+/// called bare, fully qualified, namespace-relative and as a first-class callable, while the
+/// same words stay literals everywhere else.
+#[test]
+fn test_functions_named_after_literals_match_php() {
+    let source = r####"<?php
+namespace Lib;
+function null(): string { return 'n'; }
+function TRUE(int $x = 1): string { return 't' . $x; }
+function false(): string { return 'f'; }
+class Box { public function null(): int { return 2; } public static function true(): int { return 3; } }
+echo null(), \Lib\null(), namespace\null(), true(5), \Lib\TRUE(), False(), "\n";
+$f = null(...);
+echo $f(), call_user_func('Lib\false'), (new Box())->null(), Box::true(), "\n";
+var_dump(function_exists('Lib\null'), \null, \true, \false, null, TRUE, false === false);
+$v = null ?? true;
+echo match (true) { $v === true => 'yes', default => 'no' }, "\n";
+function pick(?bool $flag = null, bool $other = true): string { return $flag === null && $other ? 'default' : 'set'; }
+echo pick(), pick(false), "\n";
+"####;
+    let expected = r####"nnnt5t1f
+nf23
+bool(true)
+NULL
+bool(true)
+bool(false)
+NULL
+bool(true)
+bool(true)
+yes
+defaultset
+"####;
+    assert_eq!(compile_and_run(source), expected);
+}

@@ -33,8 +33,14 @@ pub(super) fn parse_function_decl(
         *pos += 1;
     }
 
-    let name = match tokens.get(*pos).map(|(t, _)| t) {
-        Some(Token::Identifier(n)) => n.clone(),
+    // PHP accepts `true`, `false` and `null` as function names (`function null()`), which the
+    // lexer turns into literal tokens; read them by their source spelling.
+    let name = match tokens.get(*pos) {
+        Some((Token::Identifier(n), _)) => n.clone(),
+        Some((token @ (Token::True | Token::False | Token::Null), metadata)) => token
+            .word_spelling(metadata)
+            .expect("literal tokens have a word spelling")
+            .to_string(),
         _ => return Err(CompileError::new(span, "Expected function name")),
     };
     *pos += 1;
