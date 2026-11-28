@@ -244,6 +244,7 @@ Aliases: `(integer)`, `(double)`, `(real)`, `(boolean)`.
 | `intval()`      | `intval($value, $base = 10): int` | Converts to integer. `$base` applies only to a string `$value`; base `0` auto-detects `0x`/`0b`/a leading octal zero |
 | `strval()`      | `strval($val): string`       | Convert to string              |
 | `gettype()`     | `gettype($val): string`      | Returns type name              |
+| `get_debug_type()` | `get_debug_type($val): string` | Returns the type name PHP uses in diagnostics (`int`, `null`, a class name, `Parent@anonymous`, `resource (stream)`) |
 | `empty()`       | `empty($val): bool`          | Returns true if value is falsy |
 | `unset()`       | `unset($var, ...$vars): void` | Unbinds one or more variables. On an eligible local a later read is a compile error, in both modes — see [Local retyping](#local-retyping) |
 | `settype()`     | `settype($var, $type): bool` | Changes variable type in place |
