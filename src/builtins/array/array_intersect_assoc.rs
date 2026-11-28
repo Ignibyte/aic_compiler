@@ -43,7 +43,7 @@ fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     let ty2 = cx.checker.infer_type(&cx.args[1], cx.env)?;
     let accepted =
         |t: &PhpType| matches!(t, PhpType::AssocArray { .. }) || t.is_scalar_indexed_array();
-    let array = crate::key_set_prelude::is_array_operand;
+    let array = crate::key_set_prelude::is_array_or_mixed_operand;
     if array(&ty1) && array(&ty2) {
         let helper = crate::key_set_prelude::ASSOC_INTERSECT;
         if let Some(ty) = crate::key_set_prelude::retarget(cx, helper) {

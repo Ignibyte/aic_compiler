@@ -1,5 +1,8 @@
 //! Purpose:
-//! Integration tests for associative-array set/merge builtins: `array_replace`.
+//! Integration tests for associative-array set/merge builtins: `array_replace`, and the
+//! key-set prelude helpers `array_replace()`, `array_replace_recursive()`,
+//! `array_merge_recursive()`, `array_diff_assoc()` and `array_intersect_assoc()` use for operands
+//! the native helpers refuse.
 //!
 //! Called from:
 //! - `cargo test` through Rust's test harness.
@@ -560,4 +563,67 @@ for ($i = 0; $i < 3; $i++) {
         "expected clean heap, got: {}",
         out.stderr
     );
+}
+
+/// Parity with PHP 8.5 for the five two-hash builtins over operands the native helpers refuse: a
+/// declared `array` parameter and return, an empty literal and constant, lists of strings and
+/// arrays, a `mixed` element of a constant, and `array_merge_recursive()`'s list folding, null
+/// and object handling. The heap stays balanced.
+#[test]
+fn test_two_hash_builtins_take_every_array_operand() {
+    let out = compile_and_run_with_heap_debug(r####"<?php
+final class Defaults
+{
+    const EMPTY = [];
+    const OPTIONS = ['mode' => 'fast', 'tags' => ['a', 'b'], 'depth' => ['max' => 3, 'min' => 1]];
+}
+function options(array $overrides): array
+{
+    return array_replace_recursive(Defaults::OPTIONS, $overrides);
+}
+function shallow(array $overrides): array
+{
+    return array_replace(Defaults::OPTIONS, $overrides);
+}
+function show(string $label, array $value): void
+{
+    echo $label, ': ', json_encode($value), "\n";
+}
+show('replace', shallow(['mode' => 'slow', 'depth' => ['max' => 9]]));
+show('replace_recursive', options(['tags' => [1 => 'B', 2 => 'c'], 'depth' => ['max' => 9], 'new' => null]));
+show('replace_empty', array_replace([], ['q' => 1]));
+show('replace_const_empty', array_replace(Defaults::EMPTY, ['q' => 1]));
+show('replace_lists', array_replace([[1], [2]], [1 => [3]]));
+show('replace_strings', array_replace(['a', 'b'], [1 => 'B', 3 => 'D']));
+show('recursive_scalar_over_array', array_replace_recursive(['k' => ['x' => 1]], ['k' => 'flat']));
+show('recursive_array_over_scalar', array_replace_recursive(['k' => 'flat'], ['k' => ['x' => 1]]));
+show('merge_recursive', array_merge_recursive(
+    ['a' => 1, 'b' => ['x'], 5 => 'five', 'n' => null],
+    ['a' => 2, 'b' => ['y', 'k' => 'v'], 9 => 'nine', 'n' => 'set', 'c' => [1]]
+));
+show('merge_recursive_nested', array_merge_recursive(['d' => ['e' => 'one']], ['d' => ['e' => 'two']]));
+show('merge_recursive_lists', array_merge_recursive([['p'], 'q'], ['r', ['s']]));
+show('diff_assoc', array_diff_assoc(Defaults::OPTIONS['tags'], ['a', 'x']));
+show('intersect_assoc', array_intersect_assoc(['a', 'b', 'c'], [1 => 'b', 2 => 'z']));
+$o = new stdClass();
+$o->p = 1;
+show('merge_recursive_object', array_merge_recursive(['o' => 'x'], ['o' => $o]));
+"####);
+    assert!(out.success, "{}", out.stderr);
+    assert_eq!(out.stdout, r####"replace: {"mode":"slow","tags":["a","b"],"depth":{"max":9}}
+replace_recursive: {"mode":"fast","tags":["a","B","c"],"depth":{"max":9,"min":1},"new":null}
+replace_empty: {"q":1}
+replace_const_empty: {"q":1}
+replace_lists: [[1],[3]]
+replace_strings: {"0":"a","1":"B","3":"D"}
+recursive_scalar_over_array: {"k":"flat"}
+recursive_array_over_scalar: {"k":{"x":1}}
+merge_recursive: {"a":[1,2],"b":{"0":"x","1":"y","k":"v"},"0":"five","n":[null,"set"],"1":"nine","c":[1]}
+merge_recursive_nested: {"d":{"e":["one","two"]}}
+merge_recursive_lists: [["p"],"q","r",["s"]]
+diff_assoc: {"1":"b"}
+intersect_assoc: {"1":"b"}
+merge_recursive_object: {"o":{"0":"x","p":1}}
+"####);
+    assert!(out.stderr.contains("HEAP DEBUG: leak summary: clean"), "{}", out.stderr);
 }

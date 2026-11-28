@@ -1,14 +1,17 @@
 //! Purpose:
 //! Declares `__elephc_array_intersect_key()` and `__elephc_array_diff_key()`, and the value-set
 //! helpers `__elephc_array_diff()`, `__elephc_array_intersect()`, `__elephc_array_unique()`,
-//! `__elephc_array_diff_assoc()` and `__elephc_array_intersect_assoc()`: ordinary PHP functions
+//! `__elephc_array_diff_assoc()` and `__elephc_array_intersect_assoc()`, and the replace helpers
+//! `__elephc_array_replace()`, `__elephc_array_replace_recursive()` and
+//! `__elephc_array_merge_recursive()`: ordinary PHP functions
 //! that take any PHP array, injected when a program calls one of the builtins they stand in for.
 //!
 //! Called from:
 //! - `crate::pipeline::compile()` and the integration-test frontend, before name resolution.
 //! - The builtin checks of `array_intersect_key`, `array_diff_key`, `array_diff`,
-//!   `array_intersect`, `array_unique`, `array_diff_assoc` and `array_intersect_assoc`, which
-//!   retarget a call through [`retarget`].
+//!   `array_intersect`, `array_unique`, `array_diff_assoc`, `array_intersect_assoc`,
+//!   `array_replace`, `array_replace_recursive` and `array_merge_recursive`, which retarget a
+//!   call through [`retarget`].
 //!
 //! Key details:
 //! - The native helpers take two hashes. A declared `array` (a class constant, a parameter, a
@@ -21,6 +24,10 @@
 //!   and compare raw slots, and the native `_assoc` helper leaks on x86_64, so every call of these
 //!   four with array operands is retargeted; `array_unique()` keeps its native helpers for the
 //!   element types they compare by value.
+//! - `array_replace()` and `array_replace_recursive()` go to their helpers only where the native
+//!   hash helpers refuse an operand (see [`natively_hashable`]): a declared `array`, an empty
+//!   array, a list of non-scalars. Every `array_merge_recursive()` call with array operands goes
+//!   to its helper, since the native one nests an existing list and skips object conversion.
 //! - The retarget tests the prelude's DECLARATION (`fn_decls`), not a resolved signature:
 //!   signatures resolve lazily, so a function body checked before the prelude's (a parameter
 //!   declared `array`) would otherwise find no helper and fall back to the refusal.
@@ -48,6 +55,13 @@ pub(crate) const ASSOC_DIFF: &str = "__elephc_array_diff_assoc";
 /// The prelude function `array_intersect_assoc()` is retargeted to.
 pub(crate) const ASSOC_INTERSECT: &str = "__elephc_array_intersect_assoc";
 
+/// The prelude function `array_replace()` is retargeted to.
+pub(crate) const REPLACE: &str = "__elephc_array_replace";
+/// The prelude function `array_replace_recursive()` is retargeted to.
+pub(crate) const REPLACE_RECURSIVE: &str = "__elephc_array_replace_recursive";
+/// The prelude function `array_merge_recursive()` is retargeted to.
+pub(crate) const MERGE_RECURSIVE: &str = "__elephc_array_merge_recursive";
+
 /// Every prelude function a call can be retargeted to.
 const HELPERS: &[&str] = &[
     INTERSECT,
@@ -57,12 +71,16 @@ const HELPERS: &[&str] = &[
     VALUE_UNIQUE,
     ASSOC_DIFF,
     ASSOC_INTERSECT,
+    REPLACE,
+    REPLACE_RECURSIVE,
+    MERGE_RECURSIVE,
 ];
 
 /// The prelude sources, ordinary PHP.
 const SOURCES: &[&str] = &[
     include_str!("key_set_prelude/key_sets.php"),
     include_str!("key_set_prelude/value_sets.php"),
+    include_str!("key_set_prelude/replace_sets.php"),
 ];
 
 /// Parses the prelude declarations.
@@ -82,6 +100,19 @@ pub(crate) fn is_array_operand(ty: &crate::types::PhpType) -> bool {
             ty.codegen_repr(),
             crate::types::PhpType::Array(_) | crate::types::PhpType::AssocArray { .. }
         )
+}
+
+/// Whether `ty` is an operand the native two-hash helpers take: a hash, or a list of scalars they
+/// convert to one.
+pub(crate) fn natively_hashable(ty: &crate::types::PhpType) -> bool {
+    matches!(ty, crate::types::PhpType::AssocArray { .. }) || ty.is_scalar_indexed_array()
+}
+
+/// Whether `ty` may reach a prelude helper's `array` parameter: an array operand, or a `mixed`
+/// value (an element of a heterogeneous constant, say), which the parameter checks at run time
+/// with the TypeError PHP raises.
+pub(crate) fn is_array_or_mixed_operand(ty: &crate::types::PhpType) -> bool {
+    is_array_operand(ty) || ty.codegen_repr() == crate::types::PhpType::Mixed
 }
 
 /// Retargets the builtin call `cx` checks to the prelude function `helper`.

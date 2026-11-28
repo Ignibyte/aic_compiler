@@ -9,8 +9,9 @@
 //!   arm requires exactly 2 arguments. `min_args: 2, max_args: 2` reproduce that
 //!   enforcement in `check_arity` only; `function_sig` and the parity gate keep the
 //!   variadic shape from the golden.
-//! - `check` validates that both arguments are associative or scalar-indexed arrays and
-//!   returns an `AssocArray` whose value type is always `Mixed` (scalar collisions
+//! - `check` sends every call with array operands to the key-set prelude's PHP helper,
+//!   which follows php-src where the native helper does not; without the prelude both
+//!   arguments must be associative or scalar-indexed arrays, and it returns an `AssocArray` whose value type is always `Mixed` (scalar collisions
 //!   combine into lists). The key type widens to `Mixed` when the two input key types
 //!   disagree.
 //! - Arity is pre-validated by `check_arity`; the hook can assume exactly 2 args.
@@ -36,9 +37,16 @@ builtin! {
 fn check(cx: &mut BuiltinCheckCtx) -> Result<PhpType, CompileError> {
     let ty1 = cx.checker.infer_type(&cx.args[0], cx.env)?;
     let ty2 = cx.checker.infer_type(&cx.args[1], cx.env)?;
-    let accepted = |t: &PhpType| {
-        matches!(t, PhpType::AssocArray { .. }) || t.is_scalar_indexed_array()
-    };
+    let accepted = crate::key_set_prelude::natively_hashable;
+    let array = crate::key_set_prelude::is_array_or_mixed_operand;
+    // Every call with array operands goes to the prelude: the native helper wraps an existing
+    // list in another list (`['b' => ['x']]` merged with `['b' => ['y']]` gives `[['x'], 'y']`)
+    // and does not convert an object operand to its properties.
+    if array(&ty1) && array(&ty2) {
+        if let Some(ty) = crate::key_set_prelude::retarget(cx, crate::key_set_prelude::MERGE_RECURSIVE) {
+            return Ok(ty);
+        }
+    }
     if !accepted(&ty1) || !accepted(&ty2) {
         return Err(CompileError::new(
             cx.span,
