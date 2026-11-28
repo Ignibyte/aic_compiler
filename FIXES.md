@@ -1,6 +1,6 @@
 # Fixes not upstream yet
 
-This fork carries 255 fix and feature commits that upstream elephc (`d430f58367`) does not have.
+This fork carries 259 fix and feature commits that upstream elephc (`66080cd26d`) does not have.
 13 of them are in an open pull request on [illegalstudio/elephc](https://github.com/illegalstudio/elephc/pulls); the rest are not sent.
 The list should shrink: a row leaves when upstream merges the fix, or fixes the same bug its own way,
 and the fork drops its copy at the next sync.
@@ -264,3 +264,7 @@ Generated from `git log upstream/main..main` and our upstream pull requests. Do 
 | [`2dacdf1b69`](https://github.com/Ignibyte/aic_compiler/commit/2dacdf1b69) | fix | - | curl_multi_info_read() sets the easy handle's curl_errno() | not sent |
 | [`0ab11e71a5`](https://github.com/Ignibyte/aic_compiler/commit/0ab11e71a5) | fix | - | PDO pgsql reads json and jsonb as the server's text | not sent |
 | [`be46326975`](https://github.com/Ignibyte/aic_compiler/commit/be46326975) | fix | - | strtotime() accepts a whole-hour ±HH offset after a time | not sent |
+| [`0ccfc0ea99`](https://github.com/Ignibyte/aic_compiler/commit/0ccfc0ea99) | fix | - | get_debug_type() as a stdlib prelude function | not sent |
+| [`97cc54f85f`](https://github.com/Ignibyte/aic_compiler/commit/97cc54f85f) | fix | - | functions named null, true or false parse and resolve | not sent |
+| [`3d782ee480`](https://github.com/Ignibyte/aic_compiler/commit/3d782ee480) | fix | - | array_replace() and its siblings take every array operand | not sent |
+| [`4def4bb48f`](https://github.com/Ignibyte/aic_compiler/commit/4def4bb48f) | fix | - | get_debug_type() names anonymous classes without get_parent_class() | not sent |
